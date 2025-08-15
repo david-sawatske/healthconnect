@@ -1,0 +1,13 @@
+enum Role { PATIENT PROVIDER ADVOCATE }
+
+type User @model
+@auth(rules: [
+    { allow: owner, ownerField: "id", identityClaim: "sub", operations: [read, update] },
+    { allow: private, operations: [read] }
+]) {
+    id: ID!
+    email: AWSEmail!
+    displayName: String!
+    role: Role!
+    avatarKey: String
+}

@@ -1,0 +1,11 @@
+{
+  "AppSyncApiName": "healthconnect",
+  "DynamoDBBillingMode": "PAY_PER_REQUEST",
+  "DynamoDBEnableServerSideEncryption": false,
+  "AuthCognitoUserPoolId": {
+    "Fn::GetAtt": [
+      "authhealthconnect97a44150",
+      "Outputs.UserPoolId"
+    ]
+  }
+}
