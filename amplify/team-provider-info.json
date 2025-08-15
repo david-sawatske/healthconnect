@@ -1,0 +1,20 @@
+{
+  "dev": {
+    "awscloudformation": {
+      "AuthRoleName": "amplify-healthconnect-dev-79cce-authRole",
+      "UnauthRoleArn": "arn:aws:iam::996180473601:role/amplify-healthconnect-dev-79cce-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::996180473601:role/amplify-healthconnect-dev-79cce-authRole",
+      "Region": "us-east-1",
+      "DeploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
+      "UnauthRoleName": "amplify-healthconnect-dev-79cce-unauthRole",
+      "StackName": "amplify-healthconnect-dev-79cce",
+      "StackId": "arn:aws:cloudformation:us-east-1:996180473601:stack/amplify-healthconnect-dev-79cce/a5152180-73ac-11f0-9ce4-0afffc47a04b",
+      "AmplifyAppId": "d2hd0jl3l5wcrg"
+    },
+    "categories": {
+      "auth": {
+        "healthconnect97a44150": {}
+      }
+    }
+  }
+}
