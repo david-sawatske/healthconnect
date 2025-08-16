@@ -6,6 +6,8 @@
     "defaultAuthType": {
       "mode": "AMAZON_COGNITO_USER_POOLS",
       "cognitoUserPoolId": "authhealthconnect97a44150"
-    }
+    },
+    "conflictResolution": {},
+    "additionalAuthTypes": []
   }
 }

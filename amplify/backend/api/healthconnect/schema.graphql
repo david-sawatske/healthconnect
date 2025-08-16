@@ -1,13 +1,68 @@
 enum Role { PATIENT PROVIDER ADVOCATE }
+enum MessageType { TEXT IMAGE VIDEO }
+enum InviteStatus { PENDING APPROVED REVOKED }
 
-type User @model
+type User
+@model
 @auth(rules: [
     { allow: owner, ownerField: "id", identityClaim: "sub", operations: [read, update] },
-    { allow: private, operations: [read] }
+    { allow: private, operations: [create, read] }
 ]) {
     id: ID!
     email: AWSEmail!
     displayName: String!
     role: Role!
     avatarKey: String
+}
+
+type Conversation
+@model
+@auth(rules: [
+    { allow: owner, ownerField: "memberIds", identityClaim: "sub", operations: [read, update] },
+    { allow: owner, ownerField: "createdBy", identityClaim: "sub", operations: [read, update, delete] },
+    { allow: private, operations: [create] }
+]) {
+    id: ID!
+    title: String
+    isGroup: Boolean!
+    memberIds: [String!]!
+    createdBy: String!
+    messages: [Message] @hasMany(indexName: "byConversation", fields: ["id"])
+    createdAt: AWSDateTime
+}
+
+type Message
+@model
+@auth(rules: [
+    { allow: owner, ownerField: "memberIds", identityClaim: "sub", operations: [read] },
+    { allow: owner, ownerField: "senderId", identityClaim: "sub", operations: [create, update, delete] }
+]) {
+    id: ID!
+    conversationId: ID! @index(name: "byConversation", queryField: "messagesByConversation", sortKeyFields: ["createdAt"])
+    senderId: String!
+    memberIds: [String!]!
+    type: MessageType!
+    body: String
+    mediaKey: String
+    thumbnailKey: String
+    createdAt: AWSDateTime
+}
+
+type AdvocateInvite
+@model
+@auth(rules: [
+    { allow: owner, ownerField: "patientId", identityClaim: "sub", operations: [read, update] },
+    { allow: owner, ownerField: "providerId", identityClaim: "sub", operations: [read, update] },
+    { allow: owner, ownerField: "advocateId", identityClaim: "sub", operations: [read] },
+    { allow: owner, ownerField: "createdBy", identityClaim: "sub", operations: [create, read] }
+]) {
+    id: ID!
+    patientId: String!
+    providerId: String!
+    advocateId: String!
+    conversationId: ID!
+    status: InviteStatus!
+    createdBy: String!
+    approvedBy: String
+    approvedAt: AWSDateTime
 }
