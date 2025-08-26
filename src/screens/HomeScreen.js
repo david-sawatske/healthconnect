@@ -1,3 +1,4 @@
+// src/screens/HomeScreen.js
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -7,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  TouchableOpacity,
 } from "react-native";
 import { signOut, getCurrentUser, fetchUserAttributes } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/api";
@@ -14,14 +16,14 @@ import { generateClient } from "aws-amplify/api";
 const client = generateClient();
 
 const GetUser = `
-    query GetUser($id: ID!) {
-      getUser(id: $id) {
-        id
-        email
-        displayName
-        role
-      }
+  query GetUser($id: ID!) {
+    getUser(id: $id) {
+      id
+      email
+      displayName
+      role
     }
+  }
 `;
 
 const ListMyConversations = `
@@ -63,11 +65,12 @@ export default function HomeScreen({ navigation }) {
     (async () => {
       try {
         const user = await getCurrentUser();
-        const sub = user.userId;
-        setSub(sub);
+        const mySub = user.userId;
+        setSub(mySub);
+
         const res = await client.graphql({
           query: GetUser,
-          variables: { id: sub },
+          variables: { id: mySub },
         });
         const profile = res?.data?.getUser;
 
@@ -158,7 +161,12 @@ export default function HomeScreen({ navigation }) {
             data={convos}
             keyExtractor={(c) => c.id}
             renderItem={({ item }) => (
-              <View style={styles.convoRow}>
+              <TouchableOpacity
+                style={styles.convoRow}
+                onPress={() =>
+                  navigation.navigate("Chat", { conversation: item })
+                }
+              >
                 <Text style={styles.convoTitle}>
                   {item.title || "Untitled conversation"}
                 </Text>
@@ -166,7 +174,7 @@ export default function HomeScreen({ navigation }) {
                   Members:{" "}
                   {Array.isArray(item.memberIds) ? item.memberIds.length : 0}
                 </Text>
-              </View>
+              </TouchableOpacity>
             )}
             ListEmptyComponent={
               <Text style={{ opacity: 0.7 }}>No conversations yet.</Text>
@@ -185,12 +193,7 @@ export default function HomeScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: "center",
-    padding: 20,
-    alignItems: "center",
-  },
+  container: { flex: 1, padding: 20 },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
   welcome: { fontSize: 18, textAlign: "center" },
   sectionTitle: {
@@ -199,4 +202,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     alignSelf: "flex-start",
   },
+  convoRow: {
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: "#ddd",
+  },
+  convoTitle: { fontSize: 16 },
+  convoMeta: { fontSize: 12, opacity: 0.7, marginTop: 4 },
 });
