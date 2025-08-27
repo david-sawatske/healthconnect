@@ -12,6 +12,7 @@ import amplifyConfig from "./src/amplifyconfiguration.json";
 import AuthScreen from "./src/screens/AuthScreen";
 import HomeScreen from "./src/screens/HomeScreen";
 import ChatScreen from "./src/screens/ChatScreen";
+import InviteScreen from "./src/screens/InviteScreen";
 
 Amplify.configure(amplifyConfig);
 
@@ -24,6 +25,7 @@ export default function App() {
         <Stack.Screen name="Auth" component={AuthScreen} />
         <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Chat" component={ChatScreen} />
+        <Stack.Screen name="Invite" component={InviteScreen} />
       </Stack.Navigator>
       <StatusBar style="auto" />
     </NavigationContainer>

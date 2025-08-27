@@ -15,3 +15,25 @@ export const ListMyConversations = /* GraphQL */ `
     }
   }
 `;
+
+export const GetConversation = /* GraphQL */ `
+  query GetConversation($id: ID!) {
+    getConversation(id: $id) {
+      id
+      title
+      memberIds
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+export const UpdateConversation = /* GraphQL */ `
+  mutation UpdateConversation($input: UpdateConversationInput!) {
+    updateConversation(input: $input) {
+      id
+      memberIds
+      updatedAt
+    }
+  }
+`;

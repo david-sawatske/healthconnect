@@ -52,13 +52,11 @@ type AdvocateInvite
 @model
 @auth(rules: [
     { allow: owner, ownerField: "patientId", identityClaim: "sub", operations: [read, update] },
-    { allow: owner, ownerField: "providerId", identityClaim: "sub", operations: [read, update] },
     { allow: owner, ownerField: "advocateId", identityClaim: "sub", operations: [read] },
     { allow: owner, ownerField: "createdBy", identityClaim: "sub", operations: [create, read] }
 ]) {
     id: ID!
     patientId: String!
-    providerId: String!
     advocateId: String!
     conversationId: ID!
     status: InviteStatus!

@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
+import { GetUser } from "../graphql/users";
 
 const client = generateClient();
 
@@ -66,10 +67,11 @@ const OnCreateMessage = /* GraphQL */ `
   }
 `;
 
-export default function ChatScreen({ route }) {
+export default function ChatScreen({ route, navigation }) {
   const conversation = route?.params?.conversation;
   const conversationId = conversation?.id;
-  const [me, setMe] = useState({ sub: "" });
+  const [me, setMe] = useState(null);
+  const [role, setRole] = useState("");
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const listRef = useRef(null);
@@ -79,6 +81,15 @@ export default function ChatScreen({ route }) {
       try {
         const u = await getCurrentUser();
         setMe({ sub: u.userId });
+
+        const { data } = await client.graphql({
+          query: GetUser,
+          variables: { id: u.userId },
+          authMode: "userPool",
+        });
+        if (data?.getUser?.role) {
+          setRole(data.getUser.role);
+        }
       } catch (err) {
         console.log("Failed to load current user", err);
       }
@@ -120,6 +131,18 @@ export default function ChatScreen({ route }) {
 
     return () => sub?.unsubscribe?.();
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversation || role !== "PATIENT") return;
+    navigation.setOptions({
+      headerRight: () => (
+        <Button
+          title="Invite"
+          onPress={() => navigation.navigate("Invite", { conversation })}
+        />
+      ),
+    });
+  }, [navigation, conversation, role]);
 
   const handleSend = async () => {
     const body = text.trim();

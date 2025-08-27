@@ -2,16 +2,9 @@ export const CreateAdvocateInvite = /* GraphQL */ `
   mutation CreateAdvocateInvite($input: CreateAdvocateInviteInput!) {
     createAdvocateInvite(input: $input) {
       id
-      patientId
-      providerId
       advocateId
       conversationId
       status
-      createdBy
-      approvedBy
-      approvedAt
-      createdAt
-      updatedAt
     }
   }
 `;
@@ -24,9 +17,7 @@ export const ApproveAdvocateInvite = /* GraphQL */ `
       approvedBy
       approvedAt
       conversationId
-      advocateId
       patientId
-      providerId
       updatedAt
     }
   }
@@ -47,7 +38,6 @@ export const GetAdvocateInvite = /* GraphQL */ `
     getAdvocateInvite(id: $id) {
       id
       patientId
-      providerId
       advocateId
       conversationId
       status
@@ -66,7 +56,6 @@ export const ListMyAdvocateInvites = /* GraphQL */ `
       filter: {
         or: [
           { patientId: { eq: $sub } }
-          { providerId: { eq: $sub } }
           { advocateId: { eq: $sub } }
           { createdBy: { eq: $sub } }
         ]
@@ -77,7 +66,6 @@ export const ListMyAdvocateInvites = /* GraphQL */ `
       items {
         id
         patientId
-        providerId
         advocateId
         conversationId
         status
