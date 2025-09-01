@@ -8,6 +8,8 @@ import {
   DeclineAdvocateInvite
 } from '../graphql/advocateInvites';
 import { GetConversation, UpdateConversation } from '../graphql/conversations';
+import { ApproveInviteServer } from '../graphql/customMutations';
+
 
 const client = generateClient();
 
@@ -56,42 +58,21 @@ export default function InviteApprovalScreen() {
   }, [meSub]);
 
   const approve = async (invite) => {
-    console.log('meSub:', meSub, 'invite.advocateId:', invite.advocateId);
     if (!invite?.id) return;
     setBusy(true);
     try {
-      // 1) Mark invite APPROVED
-      await client.graphql({
-        query: ApproveAdvocateInvite,
-        variables: {
-          input: {
-            id: invite.id,
-            status: 'APPROVED',
-            approvedBy: meSub,
-            approvedAt: new Date().toISOString()
-          }
-        },
-        authMode: 'userPool'
+      const { data } = await client.graphql({
+        query: ApproveInviteServer,
+        variables: { inviteId: invite.id },
+        authMode: 'userPool',
       });
 
-      // 2) Add advocate to conversation.memberIds
-      const convId = invite.conversationId;
-      const convRes = await client.graphql({
-        query: GetConversation,
-        variables: { id: convId },
-        authMode: 'userPool'
-      });
-      const currentMembers = convRes?.data?.getConversation?.memberIds ?? [];
-      const members = Array.from(new Set([...currentMembers, invite.advocateId]));
-
-      await client.graphql({
-        query: UpdateConversation,
-        variables: { input: { id: convId, memberIds: members } },
-        authMode: 'userPool'
-      });
-
-      Alert.alert('Invite approved', 'You now have access to the conversation.');
-      loadInvites();
+      if (data?.approveInvite?.status === 'APPROVED') {
+        Alert.alert('Invite approved', 'You now have access to the conversation.');
+        loadInvites();
+      } else {
+        Alert.alert('Error', 'Approval did not complete.');
+      }
     } catch (e) {
       console.log('Approve failed', e);
       Alert.alert('Error', 'Could not approve invite.');

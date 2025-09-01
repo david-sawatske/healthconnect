@@ -1,22 +1,30 @@
-import {
+/* Amplify Params - DO NOT EDIT
+	API_HEALTHCONNECT_GRAPHQLAPIENDPOINTOUTPUT
+	API_HEALTHCONNECT_GRAPHQLAPIIDOUTPUT
+	ENV
+	REGION
+Amplify Params - DO NOT EDIT */
+"use strict";
+
+const {
   DynamoDBClient,
   GetItemCommand,
   UpdateItemCommand,
-} from "@aws-sdk/client-dynamodb";
+} = require("@aws-sdk/client-dynamodb");
 
 const ddb = new DynamoDBClient({ region: process.env.AWS_REGION });
 
-const INVITE_TABLE = process.env.API_HEALTHCONNECT_ADVOCATEINVITETABLE_NAME;
-const CONVO_TABLE = process.env.API_HEALTHCONNECT_CONVERSATIONTABLE_NAME;
+const INVITE_TABLE = "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev";
+const CONVO_TABLE = "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev";
 
 function unmarshallStringArray(attr) {
-  if (!attr) return [];
-  if (attr.L) return attr.L.map((x) => x.S);
-  return [];
+  if (!attr || !attr.L) return [];
+  return attr.L.map((x) => x.S);
 }
 
-export const handler = async (event) => {
+exports.handler = async (event) => {
   console.log("event:", JSON.stringify(event, null, 2));
+
   try {
     const sub = event?.identity?.sub;
     const inviteId = event?.arguments?.inviteId;
@@ -38,12 +46,9 @@ export const handler = async (event) => {
     const status = inv.status?.S;
     const conversationId = inv.conversationId?.S;
 
-    if (advocateId !== sub) {
-      throw new Error("Unauthorized: only invited advocate can approve");
-    }
-    if (status !== "PENDING") {
-      throw new Error(`Invalid status: ${status}`);
-    }
+    if (advocateId !== sub) throw new Error("Unauthorized: wrong advocate");
+    if (status !== "PENDING") throw new Error(`Invalid status: ${status}`);
+    if (!conversationId) throw new Error("Invite missing conversationId");
 
     const convoRes = await ddb.send(
       new GetItemCommand({
@@ -78,12 +83,10 @@ export const handler = async (event) => {
       new UpdateItemCommand({
         TableName: INVITE_TABLE,
         Key: { id: { S: inviteId } },
-        ConditionExpression: "status = :p",
+        ConditionExpression: "#s = :p",
         UpdateExpression:
           "SET #s = :a, approvedBy = :by, approvedAt = :t, updatedAt = :u",
-        ExpressionAttributeNames: {
-          "#s": "status",
-        },
+        ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: {
           ":p": { S: "PENDING" },
           ":a": { S: "APPROVED" },
