@@ -150,6 +150,15 @@ export default function HomeScreen({ navigation }) {
         {role ? ` as ${role}` : ""}.
       </Text>
 
+      {role === "ADVOCATE" && (
+        <View style={{ marginTop: 12, alignSelf: "stretch" }}>
+          <Button
+            title="View Invites"
+            onPress={() => navigation.navigate("InviteApproval")}
+          />
+        </View>
+      )}
+
       <View style={{ marginTop: 16, alignSelf: "stretch" }}>
         <Text style={styles.sectionTitle}>Your Conversations</Text>
         {loadingConvos && convos.length === 0 ? (
