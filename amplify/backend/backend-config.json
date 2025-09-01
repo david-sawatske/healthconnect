@@ -52,5 +52,40 @@
       "providerPlugin": "awscloudformation",
       "service": "Cognito"
     }
+  },
+  "function": {
+    "approveInvite": {
+      "build": true,
+      "dependsOn": [
+        {
+          "attributes": [
+            "GraphQLAPIIdOutput",
+            "GraphQLAPIEndpointOutput"
+          ],
+          "category": "api",
+          "resourceName": "healthconnect"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
+    }
+  },
+  "parameters": {
+    "AMPLIFY_function_approveInvite_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    }
   }
 }

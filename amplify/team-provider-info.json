@@ -17,6 +17,12 @@
       },
       "api": {
         "healthconnect": {}
+      },
+      "function": {
+        "approveInvite": {
+          "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
+          "s3Key": "amplify-builds/approveInvite-73335179344648506f39-build.zip"
+        }
       }
     }
   }

@@ -64,3 +64,8 @@ type AdvocateInvite
     approvedBy: String
     approvedAt: AWSDateTime
 }
+
+type Mutation {
+    approveInvite(inviteId: ID!): AdvocateInvite
+    @function(name: "approveInvite-${env}")
+}
