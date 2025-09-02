@@ -13,7 +13,8 @@
     },
     "categories": {
       "auth": {
-        "healthconnect97a44150": {}
+        "healthconnect97a44150": {},
+        "userPoolGroups": {}
       },
       "api": {
         "healthconnect": {}

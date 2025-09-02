@@ -1,4 +1,4 @@
-enum Role { PATIENT PROVIDER ADVOCATE }
+enum Role { PATIENT PROVIDER ADVOCATE ADMIN }
 enum MessageType { TEXT IMAGE VIDEO }
 enum InviteStatus { PENDING APPROVED REVOKED }
 
@@ -6,7 +6,8 @@ type User
 @model
 @auth(rules: [
     { allow: owner, ownerField: "id", identityClaim: "sub", operations: [read, update] },
-    { allow: private, operations: [create, read] }
+    { allow: private, operations: [create, read] },
+    { allow: groups, groups: ["Admin"], operations: [create, read, update, delete] }
 ]) {
     id: ID!
     email: AWSEmail!
@@ -20,7 +21,8 @@ type Conversation
 @auth(rules: [
     { allow: owner, ownerField: "memberIds", identityClaim: "sub", operations: [read, update] },
     { allow: owner, ownerField: "createdBy", identityClaim: "sub", operations: [read, update, delete] },
-    { allow: private, operations: [create] }
+    { allow: private, operations: [create] },
+    { allow: groups, groups: ["Admin"], operations: [create, read, update, delete] }
 ]) {
     id: ID!
     title: String
@@ -35,7 +37,8 @@ type Message
 @model
 @auth(rules: [
     { allow: owner, ownerField: "memberIds", identityClaim: "sub", operations: [read] },
-    { allow: owner, ownerField: "senderId", identityClaim: "sub", operations: [create, update, delete] }
+    { allow: owner, ownerField: "senderId", identityClaim: "sub", operations: [create, update, delete] },
+    { allow: groups, groups: ["Admin"], operations: [create, read, update, delete] }
 ]) {
     id: ID!
     conversationId: ID! @index(name: "byConversation", queryField: "messagesByConversation", sortKeyFields: ["createdAt"])
@@ -53,7 +56,8 @@ type AdvocateInvite
 @auth(rules: [
     { allow: owner, ownerField: "patientId", identityClaim: "sub", operations: [read, update] },
     { allow: owner, ownerField: "advocateId", identityClaim: "sub", operations: [read, update] },
-    { allow: owner, ownerField: "createdBy", identityClaim: "sub", operations: [create, read] }
+    { allow: owner, ownerField: "createdBy", identityClaim: "sub", operations: [create, read] },
+    { allow: groups, groups: ["Admin"], operations: [create, read, update, delete] }
 ]) {
     id: ID!
     patientId: String!
