@@ -1,20 +1,27 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, Button, Alert } from 'react-native';
-import { generateClient } from 'aws-amplify/api';
-import { getCurrentUser } from 'aws-amplify/auth';
+import React, { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  ActivityIndicator,
+  Button,
+  Alert,
+} from "react-native";
+import { generateClient } from "aws-amplify/api";
+import { getCurrentUser } from "aws-amplify/auth";
 import {
   ListMyAdvocateInvites,
   ApproveAdvocateInvite,
-  DeclineAdvocateInvite
-} from '../graphql/advocateInvites';
-import { GetConversation, UpdateConversation } from '../graphql/conversations';
-import { ApproveInviteServer } from '../graphql/customMutations';
-
+  DeclineAdvocateInvite,
+} from "../graphql/advocateInvites";
+import { GetConversation, UpdateConversation } from "../graphql/conversations";
+import { ApproveInviteServer } from "../graphql/customMutations";
 
 const client = generateClient();
 
 export default function InviteApprovalScreen() {
-  const [meSub, setMeSub] = useState('');
+  const [meSub, setMeSub] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [invites, setInvites] = useState([]);
@@ -26,7 +33,7 @@ export default function InviteApprovalScreen() {
         const u = await getCurrentUser();
         setMeSub(u.userId);
       } catch (e) {
-        console.log('Failed to get current user', e);
+        console.log("Failed to get current user", e);
       } finally {
         setLoading(false);
       }
@@ -40,14 +47,16 @@ export default function InviteApprovalScreen() {
       const { data } = await client.graphql({
         query: ListMyAdvocateInvites,
         variables: { sub: meSub, limit: 25, nextToken: cursor ?? undefined },
-        authMode: 'userPool'
+        authMode: "userPool",
       });
       const page = data?.listAdvocateInvites;
-      setInvites((prev) => (cursor ? [...prev, ...(page?.items ?? [])] : (page?.items ?? [])));
+      setInvites((prev) =>
+        cursor ? [...prev, ...(page?.items ?? [])] : (page?.items ?? []),
+      );
       setNextToken(page?.nextToken ?? null);
     } catch (e) {
-      console.log('List invites failed', e);
-      Alert.alert('Error', 'Could not load invites.');
+      console.log("List invites failed", e);
+      Alert.alert("Error", "Could not load invites.");
     } finally {
       setBusy(false);
     }
@@ -64,38 +73,36 @@ export default function InviteApprovalScreen() {
       const { data } = await client.graphql({
         query: ApproveInviteServer,
         variables: { inviteId: invite.id },
-        authMode: 'userPool',
+        authMode: "userPool"
       });
-
-      if (data?.approveInvite?.status === 'APPROVED') {
-        Alert.alert('Invite approved', 'You now have access to the conversation.');
-        loadInvites();
+      if (data?.approveInvite?.status === "APPROVED") {
+        Alert.alert("Approved", "You joined the conversation.");
+        setInvites((prev) => prev.filter((i) => i.id !== invite.id));
       } else {
-        Alert.alert('Error', 'Approval did not complete.');
+        Alert.alert("Error", "Approval did not complete.");
       }
     } catch (e) {
-      console.log('Approve failed', e);
-      Alert.alert('Error', 'Could not approve invite.');
+      console.log("Approve failed", e);
+      Alert.alert("Error", "Could not approve invite.");
     } finally {
       setBusy(false);
     }
   };
 
   const decline = async (invite) => {
-    console.log(invite);
     if (!invite?.id) return;
     setBusy(true);
     try {
       await client.graphql({
         query: DeclineAdvocateInvite,
-        variables: { input: { id: invite.id, status: 'DECLINED' } },
-        authMode: 'userPool'
+        variables: { input: { id: invite.id, status: "DECLINED" } },
+        authMode: "userPool",
       });
-      Alert.alert('Invite declined', 'Invite has been declined.');
-      loadInvites();
+      Alert.alert("Declined", "Invite has been declined.");
+      setInvites((prev) => prev.filter((i) => i.id !== invite.id));
     } catch (e) {
-      console.log('Decline failed', e);
-      Alert.alert('Error', 'Could not decline invite.');
+      console.log("Decline failed", e);
+      Alert.alert("Error", "Could not decline invite.");
     } finally {
       setBusy(false);
     }
@@ -114,20 +121,24 @@ export default function InviteApprovalScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Your Invites</Text>
       {busy && invites.length === 0 ? (
-        <View style={styles.center}><ActivityIndicator /></View>
+        <View style={styles.center}>
+          <ActivityIndicator />
+        </View>
       ) : (
         <FlatList
           data={invites}
           keyExtractor={(i) => i.id}
           renderItem={({ item }) => (
             <View style={styles.card}>
-              <Text style={styles.row}>Conversation: {item.conversationId}</Text>
+              <Text style={styles.row}>
+                Conversation: {item.conversationId}
+              </Text>
               <Text style={styles.row}>Status: {item.status}</Text>
               <View style={styles.actions}>
                 <Button
                   title="Approve"
                   onPress={() => approve(item)}
-                  disabled={item.status === 'APPROVED'}
+                  disabled={item.status === "APPROVED"}
                 />
                 <Button
                   title="Decline"
@@ -148,15 +159,15 @@ export default function InviteApprovalScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  title: { fontSize: 18, fontWeight: "600", marginBottom: 12 },
   card: {
     padding: 12,
     borderRadius: 10,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#ddd',
-    marginBottom: 10
+    borderColor: "#ddd",
+    marginBottom: 10,
   },
   row: { fontSize: 14, marginBottom: 6 },
-  actions: { flexDirection: 'row', gap: 12, marginTop: 6 }
+  actions: { flexDirection: "row", gap: 12, marginTop: 6 },
 });

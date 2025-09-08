@@ -54,11 +54,7 @@ export const ListMyAdvocateInvites = /* GraphQL */ `
   query ListMyAdvocateInvites($sub: String!, $limit: Int, $nextToken: String) {
     listAdvocateInvites(
       filter: {
-        or: [
-          { patientId: { eq: $sub } }
-          { advocateId: { eq: $sub } }
-          { createdBy: { eq: $sub } }
-        ]
+        and: [{ advocateId: { eq: $sub } }, { status: { eq: PENDING } }]
       }
       limit: $limit
       nextToken: $nextToken
@@ -69,9 +65,6 @@ export const ListMyAdvocateInvites = /* GraphQL */ `
         advocateId
         conversationId
         status
-        createdBy
-        approvedBy
-        approvedAt
         createdAt
         updatedAt
       }
