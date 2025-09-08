@@ -22,7 +22,7 @@
       "function": {
         "approveInvite": {
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
-          "s3Key": "amplify-builds/approveInvite-78393175666f48345353-build.zip"
+          "s3Key": "amplify-builds/approveInvite-6163626f2f673443514c-build.zip"
         }
       }
     }

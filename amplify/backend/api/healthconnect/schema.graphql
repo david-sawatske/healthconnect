@@ -1,6 +1,6 @@
 enum Role { PATIENT PROVIDER ADVOCATE ADMIN }
 enum MessageType { TEXT IMAGE VIDEO }
-enum InviteStatus { PENDING APPROVED REVOKED }
+enum InviteStatus { PENDING APPROVED DECLINED }
 
 type User
 @model

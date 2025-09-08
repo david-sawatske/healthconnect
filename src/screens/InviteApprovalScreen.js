@@ -82,12 +82,13 @@ export default function InviteApprovalScreen() {
   };
 
   const decline = async (invite) => {
+    console.log(invite);
     if (!invite?.id) return;
     setBusy(true);
     try {
       await client.graphql({
         query: DeclineAdvocateInvite,
-        variables: { input: { id: invite.id, status: 'DENIED' } },
+        variables: { input: { id: invite.id, status: 'DECLINED' } },
         authMode: 'userPool'
       });
       Alert.alert('Invite declined', 'Invite has been declined.');
@@ -128,7 +129,11 @@ export default function InviteApprovalScreen() {
                   onPress={() => approve(item)}
                   disabled={item.status === 'APPROVED'}
                 />
-                <Button title="Decline" onPress={() => decline(item)} />
+                <Button
+                  title="Decline"
+                  onPress={() => decline(item)}
+                  color="red"
+                />
               </View>
             </View>
           )}
