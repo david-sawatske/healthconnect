@@ -11,8 +11,16 @@ const {
   GetItemCommand,
   UpdateItemCommand,
 } = require("@aws-sdk/client-dynamodb");
-
 const ddb = new DynamoDBClient({ region: process.env.AWS_REGION });
+
+const crypto = require("crypto");
+function uuid() {
+  return crypto.randomUUID
+    ? crypto.randomUUID()
+    : [4, 2, 2, 2, 6]
+        .map((n, i) => crypto.randomBytes(n).toString("hex"))
+        .join("-");
+}
 
 const INVITE_TABLE = "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev";
 const CONVO_TABLE = "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev";
@@ -93,6 +101,23 @@ exports.handler = async (event) => {
           ":by": { S: advocateId },
           ":t": { S: now },
           ":u": { S: now },
+        },
+      }),
+    );
+
+    const msgId = uuid();
+    await ddb.send(
+      new (require("@aws-sdk/client-dynamodb").PutItemCommand)({
+        TableName: "Message-5izqvjgcw5e5zdbimlgzknen3m-dev",
+        Item: {
+          id: { S: msgId },
+          conversationId: { S: conversationId },
+          senderId: { S: "system" }, // informational
+          memberIds: { L: memberIdsList.L }, // current members (includes advocate)
+          type: { S: "SYSTEM" },
+          body: { S: "An advocate has joined the conversation." },
+          createdAt: { S: now },
+          updatedAt: { S: now },
         },
       }),
     );

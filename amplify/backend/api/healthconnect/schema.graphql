@@ -1,5 +1,5 @@
 enum Role { PATIENT PROVIDER ADVOCATE ADMIN }
-enum MessageType { TEXT IMAGE VIDEO }
+enum MessageType { TEXT IMAGE VIDEO SYSTEM }
 enum InviteStatus { PENDING APPROVED DECLINED }
 
 type User

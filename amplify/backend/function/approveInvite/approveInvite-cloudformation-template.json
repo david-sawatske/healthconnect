@@ -150,7 +150,8 @@
                   ],
                   "Resource": [
                     "arn:aws:dynamodb:us-east-1:996180473601:table/AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev",
-                    "arn:aws:dynamodb:us-east-1:996180473601:table/Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev"
+                    "arn:aws:dynamodb:us-east-1:996180473601:table/Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",
+                    "arn:aws:dynamodb:us-east-1:996180473601:table/Message-5izqvjgcw5e5zdbimlgzknen3m-dev"
                   ]
                 }
               ]
