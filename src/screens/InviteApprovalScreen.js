@@ -6,8 +6,9 @@ import {
   FlatList,
   ActivityIndicator,
   Button,
-  Alert,
+  Alert
 } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
 import {
@@ -21,6 +22,7 @@ import { ApproveInviteServer } from "../graphql/customMutations";
 const client = generateClient();
 
 export default function InviteApprovalScreen() {
+  const navigation = useNavigation();
   const [meSub, setMeSub] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -73,14 +75,29 @@ export default function InviteApprovalScreen() {
       const { data } = await client.graphql({
         query: ApproveInviteServer,
         variables: { inviteId: invite.id },
-        authMode: "userPool"
+        authMode: "userPool",
       });
-      if (data?.approveInvite?.status === "APPROVED") {
-        Alert.alert("Approved", "You joined the conversation.");
+
+      const approved = data?.approveInvite;
+      if (approved?.status === "APPROVED") {
+        const convoId = approved.conversationId;
+        try {
+          const { data: convoData } = await client.graphql({
+            query: GetConversation,
+            variables: { id: convoId },
+            authMode: "userPool",
+          });
+          const conversation = convoData?.getConversation || { id: convoId };
+          navigation.navigate("Chat", { conversation });
+        } catch {
+          navigation.navigate("Chat", { conversation: { id: convoId } });
+        }
+
         setInvites((prev) => prev.filter((i) => i.id !== invite.id));
-      } else {
-        Alert.alert("Error", "Approval did not complete.");
+        return;
       }
+
+      Alert.alert("Error", "Approval did not complete.");
     } catch (e) {
       console.log("Approve failed", e);
       Alert.alert("Error", "Could not approve invite.");
