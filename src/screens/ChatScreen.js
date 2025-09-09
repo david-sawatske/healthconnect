@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,9 +8,16 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  Image,
+  TouchableOpacity,
+  Alert,
+  Linking,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as DocumentPicker from "expo-document-picker";
 import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
+import { getUrl, uploadData } from "aws-amplify/storage";
 
 const client = generateClient();
 
@@ -33,6 +40,8 @@ const MessagesByConversation = /* GraphQL */ `
         memberIds
         type
         body
+        mediaKey
+        thumbnailKey
         createdAt
       }
       nextToken
@@ -49,6 +58,8 @@ const CreateMessage = /* GraphQL */ `
       memberIds
       type
       body
+      mediaKey
+      thumbnailKey
       createdAt
     }
   }
@@ -60,7 +71,10 @@ const OnCreateMessage = /* GraphQL */ `
       id
       conversationId
       senderId
+      memberIds
       body
+      mediaKey
+      thumbnailKey
       type
       createdAt
     }
@@ -78,7 +92,28 @@ const GetUser = /* GraphQL */ `
   }
 `;
 
+function extFromName(name = "") {
+  const m = name.toLowerCase().match(/\.(\w+)$/);
+  return m ? m[1] : "";
+}
+function guessType({ mimeType, name }) {
+  const ext = extFromName(name);
+  if (
+    (mimeType || "").startsWith("image/") ||
+    ["png", "jpg", "jpeg", "gif", "webp", "heic"].includes(ext)
+  )
+    return "IMAGE";
+  if (
+    (mimeType || "").startsWith("video/") ||
+    ["mp4", "mov", "m4v", "webm"].includes(ext)
+  )
+    return "VIDEO";
+  return "FILE";
+}
+
 export default function ChatScreen({ route }) {
+  const insets = useSafeAreaInsets();
+
   const conversation = route?.params?.conversation;
   const conversationId = conversation?.id;
   const memberIds = Array.isArray(conversation?.memberIds)
@@ -88,6 +123,7 @@ export default function ChatScreen({ route }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [usersById, setUsersById] = useState({});
+  const [sending, setSending] = useState(false);
   const listRef = useRef(null);
 
   useEffect(() => {
@@ -176,6 +212,7 @@ export default function ChatScreen({ route }) {
     const body = text.trim();
     if (!body || !conversationId || !me?.sub) return;
     try {
+      setSending(true);
       const { data } = await client.graphql({
         query: CreateMessage,
         variables: {
@@ -201,6 +238,59 @@ export default function ChatScreen({ route }) {
       setText("");
     } catch (err) {
       console.log("Failed to send message", err);
+      Alert.alert("Error", "Failed to send message.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleAttach = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: "*/*" });
+      if (result.canceled) return;
+
+      const file = result.assets?.[0];
+      if (!file?.uri) return;
+
+      const fileType = guessType({ mimeType: file.mimeType, name: file.name });
+      const key = `uploads/${conversationId}/${Date.now()}-${(
+        file.name || "file"
+      ).replace(/\s+/g, "_")}`;
+
+      const blob = await fetch(file.uri).then((r) => r.blob());
+
+      await uploadData({
+        key,
+        data: blob,
+        options: { contentType: file.mimeType || undefined },
+      }).result;
+
+      const { data } = await client.graphql({
+        query: CreateMessage,
+        variables: {
+          input: {
+            conversationId,
+            senderId: me.sub,
+            memberIds: conversation.memberIds ?? [me.sub],
+            type: fileType, // "IMAGE" | "VIDEO" | "FILE"
+            mediaKey: key,
+          },
+        },
+        authMode: "userPool",
+      });
+
+      const created = data?.createMessage;
+      if (created) {
+        setMessages((prev) =>
+          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
+        );
+        requestAnimationFrame(() =>
+          listRef.current?.scrollToEnd?.({ animated: true }),
+        );
+      }
+    } catch (e) {
+      console.log("Attach failed:", e);
+      Alert.alert("Upload failed", "Could not upload attachment.");
     }
   };
 
@@ -247,6 +337,58 @@ export default function ChatScreen({ route }) {
     }
   };
 
+  function MediaBubble({ mediaKey, type }) {
+    const [url, setUrl] = useState(null);
+
+    useEffect(() => {
+      let mounted = true;
+      (async () => {
+        try {
+          const u = await getUrl({
+            key: mediaKey,
+            options: { expiresIn: 300 },
+          });
+          if (mounted) setUrl(u?.url?.toString?.() || null);
+        } catch (e) {
+          console.log("getUrl failed", e);
+        }
+      })();
+      return () => {
+        mounted = false;
+      };
+    }, [mediaKey]);
+
+    if (!url) {
+      return <Text style={{ opacity: 0.6 }}>Loading attachment…</Text>;
+    }
+
+    if (type === "IMAGE") {
+      return (
+        <Image
+          source={{ uri: url }}
+          style={{
+            width: 220,
+            height: 220,
+            borderRadius: 8,
+            backgroundColor: "#ddd",
+            marginTop: 6,
+          }}
+          resizeMode="cover"
+        />
+      );
+    }
+
+    const label = type === "VIDEO" ? "Open video" : "Open file";
+    return (
+      <TouchableOpacity
+        onPress={() => Linking.openURL(url)}
+        style={styles.attachBtn}
+      >
+        <Text style={styles.attachBtnText}>{label}</Text>
+      </TouchableOpacity>
+    );
+  }
+
   const renderItem = ({ item }) => {
     const isSystem = item.type === "SYSTEM";
     const mine = item.senderId === me?.sub;
@@ -267,7 +409,18 @@ export default function ChatScreen({ route }) {
           <Text style={styles.sender}>{name}</Text>
           <Text style={badgeStyleForRole(role, item.type)}>{role}</Text>
         </View>
-        <Text style={styles.body}>{item.body}</Text>
+
+        {item.type === "TEXT" && !!item.body && (
+          <Text style={styles.body}>{item.body}</Text>
+        )}
+
+        {(item.type === "IMAGE" ||
+          item.type === "VIDEO" ||
+          item.type === "FILE") &&
+          !!item.mediaKey && (
+            <MediaBubble mediaKey={item.mediaKey} type={item.type} />
+          )}
+
         <Text style={styles.meta}>
           {new Date(item.createdAt ?? Date.now()).toLocaleTimeString()}
         </Text>
@@ -290,7 +443,20 @@ export default function ChatScreen({ route }) {
           listRef.current?.scrollToEnd?.({ animated: true })
         }
       />
-      <View style={styles.inputRow}>
+
+      <View
+        style={[
+          styles.inputRow,
+          {
+            paddingBottom: Math.max(12, insets.bottom || 0),
+            backgroundColor: "#fff",
+          },
+        ]}
+      >
+        <TouchableOpacity style={styles.attach} onPress={handleAttach}>
+          <Text style={styles.attachIcon}>+</Text>
+        </TouchableOpacity>
+
         <TextInput
           style={styles.input}
           placeholder="Type a message…"
@@ -299,7 +465,11 @@ export default function ChatScreen({ route }) {
           onSubmitEditing={handleSend}
           returnKeyType="send"
         />
-        <Button title="Send" onPress={handleSend} disabled={!text.trim()} />
+        <Button
+          title={sending ? "Sending…" : "Send"}
+          onPress={handleSend}
+          disabled={!text.trim() || sending}
+        />
       </View>
     </KeyboardAvoidingView>
   );
@@ -364,4 +534,28 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
     borderRadius: 10,
   },
+  attach: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#ccc",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fafafa",
+    marginRight: 8,
+  },
+  attachIcon: {
+    fontSize: 20,
+    fontWeight: "700",
+  },
+  attachBtn: {
+    marginTop: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: "#f2f2f2",
+    alignSelf: "flex-start",
+  },
+  attachBtnText: { fontSize: 13, fontWeight: "600" },
 });
