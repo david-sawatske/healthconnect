@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   FlatList,
   TouchableOpacity,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { signOut, getCurrentUser, fetchUserAttributes } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/api";
 
@@ -97,27 +98,36 @@ export default function HomeScreen({ navigation }) {
     })();
   }, [navigation]);
 
-  const loadConversations = async (cursor = null) => {
-    if (!sub) return;
-    setLoadingConvos(true);
-    try {
-      const res = await client.graphql({
-        query: ListMyConversations,
-        variables: { sub, limit: 25, nextToken: cursor ?? undefined },
-        authMode: "userPool",
-      });
-      const page = res?.data?.listConversations;
-      setConvos((prev) =>
-        cursor ? [...prev, ...(page?.items ?? [])] : (page?.items ?? []),
-      );
-      setNextToken(page?.nextToken ?? null);
-    } catch (e) {
-      console.log("List conversations failed:", e);
-      Alert.alert("Error", "Could not fetch conversations.");
-    } finally {
-      setLoadingConvos(false);
-    }
-  };
+  useFocusEffect(
+    useCallback(() => {
+      if (sub) loadConversations();
+    }, [sub, loadConversations]),
+  );
+
+  const loadConversations = useCallback(
+    async (cursor = null) => {
+      if (!sub) return;
+      setLoadingConvos(true);
+      try {
+        const res = await client.graphql({
+          query: ListMyConversations,
+          variables: { sub, limit: 25, nextToken: cursor ?? undefined },
+          authMode: "userPool",
+        });
+        const page = res?.data?.listConversations;
+        setConvos((prev) =>
+          cursor ? [...prev, ...(page?.items ?? [])] : (page?.items ?? []),
+        );
+        setNextToken(page?.nextToken ?? null);
+      } catch (e) {
+        console.log("List conversations failed:", e);
+        Alert.alert("Error", "Could not fetch conversations.");
+      } finally {
+        setLoadingConvos(false);
+      }
+    },
+    [sub],
+  );
 
   useEffect(() => {
     if (sub) loadConversations();
