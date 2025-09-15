@@ -14,12 +14,23 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.HealthConnect"
+      "bundleIdentifier": "com.anonymous.HealthConnect",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Video calls with your provider.",
+        "NSMicrophoneUsageDescription": "Audio during video calls."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#ffffff",
+        "permissions": [
+          "android.permission.CAMERA",
+          "android.permission.RECORD_AUDIO",
+          "android.permission.MODIFY_AUDIO_SETTINGS",
+          "android.permission.BLUETOOTH",
+          "android.permission.BLUETOOTH_CONNECT"
+        ]
       },
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.HealthConnect"
