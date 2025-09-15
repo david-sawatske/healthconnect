@@ -14,6 +14,7 @@ import HomeScreen from "./src/screens/HomeScreen";
 import ChatScreen from "./src/screens/ChatScreen";
 import InviteScreen from "./src/screens/InviteScreen";
 import InviteApprovalScreen from './src/screens/InviteApprovalScreen';
+import CallScreen from './src/screens/CallScreen';
 
 Amplify.configure(amplifyConfig);
 
@@ -28,6 +29,11 @@ export default function App() {
         <Stack.Screen name="Chat" component={ChatScreen} />
         <Stack.Screen name="Invite" component={InviteScreen} />
         <Stack.Screen name="InviteApproval" component={InviteApprovalScreen} />
+        <Stack.Screen
+          name="Call"
+          component={CallScreen}
+          options={{ headerShown: false }} // full-screen video
+        />
       </Stack.Navigator>
       <StatusBar style="auto" />
     </NavigationContainer>

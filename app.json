@@ -12,6 +12,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+
+    "plugins": ["@config-plugins/react-native-webrtc"],
+
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.HealthConnect",
@@ -20,21 +23,23 @@
         "NSMicrophoneUsageDescription": "Audio during video calls."
       }
     },
+
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff",
-        "permissions": [
-          "android.permission.CAMERA",
-          "android.permission.RECORD_AUDIO",
-          "android.permission.MODIFY_AUDIO_SETTINGS",
-          "android.permission.BLUETOOTH",
-          "android.permission.BLUETOOTH_CONNECT"
-        ]
+        "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.anonymous.HealthConnect"
+      "package": "com.anonymous.HealthConnect",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT"
+      ]
     },
+
     "web": {
       "favicon": "./assets/favicon.png"
     }

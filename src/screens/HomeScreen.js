@@ -159,6 +159,17 @@ export default function HomeScreen({ navigation }) {
         {role ? ` as ${role}` : ""}.
       </Text>
 
+      <Button
+        title="Start Video Call"
+        onPress={() =>
+          navigation.navigate("Call", {
+            conversationId: "c720c1d1-b725-49ce-a578-2d355db9a2c0",
+            peerId: "c4c83418-b041-70ba-bafb-51f0c6bed157",
+            isCaller: true,
+          })
+        }
+      />
+
       {role === "ADVOCATE" && (
         <View style={{ marginTop: 12, alignSelf: "stretch" }}>
           <Button
