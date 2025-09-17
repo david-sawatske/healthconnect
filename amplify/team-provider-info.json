@@ -24,6 +24,9 @@
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
           "s3Key": "amplify-builds/approveInvite-534f51503631544a4d62-build.zip"
         }
+      },
+      "storage": {
+        "chatMedia": {}
       }
     }
   }

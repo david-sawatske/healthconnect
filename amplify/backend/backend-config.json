@@ -103,5 +103,10 @@
         }
       ]
     }
+  },
+  "storage": {
+    "chatMedia": {
+      "dependsOn": []
+    }
   }
 }

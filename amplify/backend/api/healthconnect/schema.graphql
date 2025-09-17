@@ -4,21 +4,18 @@ enum Role {
   ADVOCATE
   ADMIN
 }
+
 enum MessageType {
   TEXT
   IMAGE
   VIDEO
   SYSTEM
 }
+
 enum InviteStatus {
   PENDING
   APPROVED
   DECLINED
-}
-enum CallStatus {
-  RINGING
-  CONNECTED
-  ENDED
 }
 
 type User
@@ -162,6 +159,18 @@ type Mutation {
     @function(name: "approveInvite-${env}")
 }
 
+enum CallStatus {
+  RINGING
+  CONNECTED
+  ENDED
+}
+
+enum SignalType {
+  OFFER
+  ANSWER
+  ICE
+}
+
 type CallSession
   @model
   @auth(
@@ -169,18 +178,27 @@ type CallSession
       {
         allow: owner
         ownerField: "createdBy"
-        operations: [create, read, delete]
+        operations: [create, read, update, delete]
       }
-      { allow: private, operations: [read] }
+      { allow: private, operations: [read, update] }
     ]
   ) {
   id: ID!
+
   conversationId: ID!
+    @index(
+      name: "byConversation"
+      queryField: "callSessionsByConversation"
+      sortKeyFields: ["createdAt"]
+    )
+
   participantIds: [ID!]!
   createdBy: ID!
   status: CallStatus!
   startedAt: AWSDateTime
   endedAt: AWSDateTime
+  createdAt: AWSDateTime
+  updatedAt: AWSDateTime
 }
 
 type CallSignal
@@ -192,18 +210,20 @@ type CallSignal
     ]
   ) {
   id: ID!
+
   conversationId: ID!
+    @index(
+      name: "byConversation"
+      queryField: "callSignalsByConversation"
+      sortKeyFields: ["createdAt"]
+    )
+
   callSessionId: ID!
   senderId: ID!
   type: SignalType!
   payload: AWSJSON!
-  createdAt: AWSDateTime!
-}
-
-enum SignalType {
-  OFFER
-  ANSWER
-  ICE
+  createdAt: AWSDateTime
+  updatedAt: AWSDateTime
 }
 
 type Subscription {

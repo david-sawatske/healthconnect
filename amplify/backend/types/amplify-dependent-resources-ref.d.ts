@@ -27,5 +27,11 @@ export type AmplifyDependentResourcesAttributes = {
       "Name": "string",
       "Region": "string"
     }
+  },
+  "storage": {
+    "chatMedia": {
+      "BucketName": "string",
+      "Region": "string"
+    }
   }
 }
