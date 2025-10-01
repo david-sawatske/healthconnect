@@ -109,6 +109,8 @@ export default function CallScreen({ route }) {
     _setCallSessionId(id);
   };
 
+  const answeredOnceRef = useRef(false);
+
   const [status, setStatus] = useState("IDLE");
   const [isCaller, setIsCaller] = useState(false);
   const [hasLocal, setHasLocal] = useState(false);
@@ -265,35 +267,11 @@ export default function CallScreen({ route }) {
               if (!callSessionIdRef.current)
                 setCallSessionId(sig.callSessionId);
 
-              const offer =
-                typeof sig.payload === "string"
-                  ? JSON.parse(sig.payload)
-                  : sig.payload;
+              log(
+                "OFFER received on CallScreen subscription; waiting for user action in ChatScreen",
+              );
 
-              if (!pc.currentRemoteDescription) {
-                await pc.setRemoteDescription(offer);
-                log("setRemoteDescription(offer) OK");
-              }
-
-              await getLocalStream();
-
-              if (isClosed(pcRef.current)) {
-                log("PC closed before answer; recreating + re-binding tracks");
-                pc = ensurePC();
-                localStreamRef.current?.getTracks?.forEach((t) =>
-                  pc.addTrack(t, localStreamRef.current),
-                );
-              }
-
-              pc = ensurePC();
-              log("createAnswer on pc", pc?._peerConnectionId);
-              const answer = await pc.createAnswer();
-              log("setLocalDescription(answer)");
-              await pc.setLocalDescription(answer);
-              log("sending ANSWER");
-              await sendSignal("ANSWER", answer, sig.callSessionId);
-              setStatus("RINGING");
-              setIsCaller(false);
+              return;
             }
 
             if (sig.type === "ANSWER" && isCaller) {
@@ -334,7 +312,14 @@ export default function CallScreen({ route }) {
   useEffect(() => {
     (async () => {
       if (!incomingOffer || !incomingSessionId || !me?.sub) return;
-      log("auto-accept path", { incomingSessionId });
+      
+      if (answeredOnceRef.current) {
+        log("answer already processed; skipping");
+        return;
+      }
+      answeredOnceRef.current = true;
+
+      log("answering incoming call (user accepted)", { incomingSessionId });
 
       try {
         if (!callSessionIdRef.current) setCallSessionId(incomingSessionId);
@@ -348,31 +333,32 @@ export default function CallScreen({ route }) {
 
         if (!pc.currentRemoteDescription) {
           await pc.setRemoteDescription(offer);
-          log("auto-accept setRemoteDescription(offer) OK");
+          log("setRemoteDescription(offer) OK");
         }
-
+        
         await getLocalStream();
-
+        
         if (isClosed(pcRef.current)) {
-          log("PC closed after auto-accept getUserMedia; recreating");
+          log("PC closed after getUserMedia; recreating + re-binding tracks");
           pc = ensurePC();
           localStreamRef.current?.getTracks?.forEach((t) =>
-            pc.addTrack(t, localStreamRef.current),
+            pc.addTrack(t, localStreamRef.current)
           );
         }
 
         pc = ensurePC();
-        log("auto-accept createAnswer on pc", pc?._peerConnectionId);
+        log("createAnswer on pc", pc?._peerConnectionId);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        log("auto-accept sending ANSWER");
+        log("sending ANSWER");
         await sendSignal("ANSWER", answer, incomingSessionId);
-
+        
         setStatus("RINGING");
         setIsCaller(false);
       } catch (e) {
-        log("auto-accept error", e);
+        log("accept/answer error", e);
         Alert.alert("Call error", "Failed to accept the incoming call.");
+        answeredOnceRef.current = false;
       }
     })();
   }, [
