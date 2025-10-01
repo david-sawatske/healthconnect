@@ -1,3 +1,4 @@
+// src/screens/CallScreen.js
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,83 +17,56 @@ const log = (...args) => console.log("[CALL]", ...args);
 
 async function safeGql(op, vars, label = "GQL") {
   try {
-    const res = await client.graphql({
-      query: op,
-      variables: vars,
-      authMode: "userPool",
-    });
+    const res = await client.graphql({ query: op, variables: vars, authMode: "userPool" });
     log(label, "OK", JSON.stringify(res?.data)?.slice(0, 300));
     return res;
   } catch (e) {
     const msg = e?.errors?.[0]?.message || e?.message || String(e);
     log(label, "ERROR", msg);
-    try {
-      Alert.alert("GraphQL error", msg);
-    } catch {}
+    try { Alert.alert("GraphQL error", msg); } catch {}
     throw e;
   }
 }
 
 const CreateCallSession = /* GraphQL */ `
-  mutation CreateCallSession($input: CreateCallSessionInput!) {
-    createCallSession(input: $input) {
-      id
-      conversationId
-      participantIds
-      createdBy
-      status
-      createdAt
+    mutation CreateCallSession($input: CreateCallSessionInput!) {
+        createCallSession(input: $input) { id conversationId participantIds createdBy status createdAt }
     }
-  }
 `;
-
 const UpdateCallSession = /* GraphQL */ `
-  mutation UpdateCallSession($input: UpdateCallSessionInput!) {
-    updateCallSession(input: $input) {
-      id
-      status
-      endedAt
-      updatedAt
+    mutation UpdateCallSession($input: UpdateCallSessionInput!) {
+        updateCallSession(input: $input) { id status endedAt updatedAt }
     }
-  }
 `;
-
 const CreateCallSignal = /* GraphQL */ `
-  mutation CreateCallSignal($input: CreateCallSignalInput!) {
-    createCallSignal(input: $input) {
-      id
-      conversationId
-      callSessionId
-      senderId
-      type
-      payload
-      createdAt
+    mutation CreateCallSignal($input: CreateCallSignalInput!) {
+        createCallSignal(input: $input) {
+            id conversationId callSessionId senderId type payload createdAt
+        }
     }
-  }
 `;
-
 const OnSignal = /* GraphQL */ `
-  subscription OnSignal($conversationId: ID!) {
-    onSignal(conversationId: $conversationId) {
-      id
-      conversationId
-      callSessionId
-      senderId
-      type
-      payload
-      createdAt
+    subscription OnSignal($conversationId: ID!) {
+        onSignal(conversationId: $conversationId) {
+            id conversationId callSessionId senderId type payload createdAt
+        }
     }
-  }
+`;
+/** For the in-chat “Call ended” system message */
+const CreateMessage = /* GraphQL */ `
+    mutation CreateMessage($input: CreateMessageInput!) {
+        createMessage(input: $input) { id }
+    }
 `;
 
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
-export default function CallScreen({ route }) {
+export default function CallScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
 
   const conversation = route?.params?.conversation;
   const conversationId = conversation?.id;
-
+  
   const incomingOffer = route?.params?.incomingOffer || null;
   const incomingSessionId = route?.params?.incomingSessionId || null;
 
@@ -101,17 +75,15 @@ export default function CallScreen({ route }) {
   const remoteStreamRef = useRef(null);
   const subRef = useRef(null);
 
-  const [me, setMe] = useState(null);
+  const [me, setMe] = useState(null)
   const [callSessionId, _setCallSessionId] = useState(null);
   const callSessionIdRef = useRef(null);
-  const setCallSessionId = (id) => {
-    callSessionIdRef.current = id;
-    _setCallSessionId(id);
-  };
+  const setCallSessionId = (id) => { callSessionIdRef.current = id; _setCallSessionId(id); };
 
-  const answeredOnceRef = useRef(false);
+  const answeredOnceRef = useRef(false);     
+  const endingRef = useRef(false);           
 
-  const [status, setStatus] = useState("IDLE");
+  const [status, setStatus] = useState("IDLE")
   const [isCaller, setIsCaller] = useState(false);
   const [hasLocal, setHasLocal] = useState(false);
   const [hasRemote, setHasRemote] = useState(false);
@@ -124,20 +96,12 @@ export default function CallScreen({ route }) {
         const u = await getCurrentUser();
         setMe({ sub: u.userId });
         log("currentUser", { sub: u.userId, username: u.username });
-      } catch (e) {
-        log("getCurrentUser failed", e);
-      }
+      } catch (e) { log("getCurrentUser failed", e); }
     })();
   }, []);
 
-  const isClosed = (pc) => {
-    if (!pc) return true;
-    return (
-      pc.connectionState === "closed" ||
-      pc.signalingState === "closed" ||
-      pc.iceConnectionState === "closed"
-    );
-  };
+  const isClosed = (pc) =>
+    !pc || pc.connectionState === "closed" || pc.signalingState === "closed" || pc.iceConnectionState === "closed";
 
   const createPC = useCallback(() => {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -146,17 +110,14 @@ export default function CallScreen({ route }) {
     pc.onicecandidate = (event) => {
       if (event.candidate && callSessionIdRef.current && me?.sub) {
         log("onicecandidate → send ICE");
-        sendSignal("ICE", { candidate: event.candidate }).catch((e) =>
-          log("send ICE error", e),
-        );
+        sendSignal("ICE", { candidate: event.candidate }).catch((e) => log("send ICE error", e));
       }
     };
 
     pc.ontrack = (event) => {
       const [stream] = event.streams || [];
       if (stream) {
-        remoteStreamRef.current = stream;
-        setHasRemote(true);
+        remoteStreamRef.current = stream; setHasRemote(true);
         log("ontrack remote stream", stream?.id);
       }
     };
@@ -173,34 +134,22 @@ export default function CallScreen({ route }) {
   const ensurePC = useCallback(() => {
     const pc = pcRef.current;
     if (pc && !isClosed(pc)) return pc;
-    try {
-      pc?.close?.();
-    } catch {}
+    try { pc?.close?.(); } catch {}
     pcRef.current = createPC();
     return pcRef.current;
   }, [createPC]);
 
   const getLocalStream = useCallback(async () => {
     if (localStreamRef.current) return localStreamRef.current;
-    const constraints = {
-      audio: true,
-      video: {
-        facingMode: "user",
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        frameRate: { ideal: 30 },
-      },
-    };
     log("getUserMedia start");
-    const stream = await mediaDevices.getUserMedia(constraints);
+    const stream = await mediaDevices.getUserMedia({
+      audio: true,
+      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
+    });
     log("getUserMedia OK tracks", stream.getTracks().length);
-    localStreamRef.current = stream;
-    setHasLocal(true);
-
-    const pc = ensurePC();
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    localStreamRef.current = stream; setHasLocal(true);
+    const pc = ensurePC(); stream.getTracks().forEach((t) => pc.addTrack(t, stream));
     log("local tracks added to PC", pc?._peerConnectionId);
-
     return stream;
   }, [ensurePC]);
 
@@ -208,96 +157,110 @@ export default function CallScreen({ route }) {
     async (type, payload, sessionOverride) => {
       const sid = sessionOverride || callSessionIdRef.current;
       if (!me?.sub || !conversationId || !sid) {
-        log("sendSignal skipped (missing fields)", {
-          type,
-          me: !!me?.sub,
-          conversationId,
-          callSessionId: sid,
-        });
+        log("sendSignal skipped (missing fields)", { type, me: !!me?.sub, conversationId, callSessionId: sid });
         return;
       }
       await safeGql(
         CreateCallSignal,
-        {
-          input: {
-            conversationId,
-            callSessionId: sid,
-            senderId: me.sub,
-            type,
-            payload: JSON.stringify(payload),
-          },
-        },
-        `CreateCallSignal:${type}`,
+        { input: { conversationId, callSessionId: sid, senderId: me.sub, type, payload: JSON.stringify(payload) } },
+        `CreateCallSignal:${type}`
       );
     },
-    [me?.sub, conversationId],
+    [me?.sub, conversationId]
   );
+
+  const stopTracksAndPC = () => {
+    try { pcRef.current?.getSenders?.().forEach((s) => s.track?.stop?.()); } catch {}
+    try { pcRef.current?.close?.(); } catch {}
+    pcRef.current = null;
+    try { localStreamRef.current?.getTracks?.forEach((t) => t.stop()); } catch {}
+    localStreamRef.current = null;
+    remoteStreamRef.current = null;
+    setHasLocal(false); setHasRemote(false);
+  };
+
+  const leaveToChat = () => {
+    try { navigation?.goBack?.(); } catch {}
+  };
+
+  const postEndedSystemMessage = async (endedBySub) => {
+    try {
+      await client.graphql({
+        query: CreateMessage,
+        variables: {
+          input: {
+            conversationId,
+            senderId: endedBySub || "system",
+            memberIds: conversation?.memberIds || [],
+            type: "SYSTEM",
+            body: "Call ended",
+          },
+        },
+        authMode: "userPool",
+      });
+    } catch (e) {
+      log("CreateMessage(system: Call ended) failed", e?.message || e);
+    }
+  };
 
   useEffect(() => {
     if (!conversationId) return;
     log("subscribing OnSignal", conversationId);
+    try { subRef.current?.unsubscribe?.(); } catch {}
 
-    try {
-      subRef.current?.unsubscribe?.();
-    } catch {}
     subRef.current = client
-      .graphql({
-        query: OnSignal,
-        variables: { conversationId },
-        authMode: "userPool",
-      })
+      .graphql({ query: OnSignal, variables: { conversationId }, authMode: "userPool" })
       .subscribe({
         next: async ({ data }) => {
           try {
             const sig = data?.onSignal;
-            log(
-              "onSignal event",
-              sig?.type,
-              "from",
-              sig?.senderId,
-              "sess",
-              sig?.callSessionId,
-            );
+            log("onSignal event", sig?.type, "from", sig?.senderId, "sess", sig?.callSessionId);
             if (!sig) return;
-            if (sig.senderId === me?.sub) return;
+            if (sig.senderId === me?.sub) return
 
             let pc = ensurePC();
 
             if (sig.type === "OFFER") {
-              if (!callSessionIdRef.current)
-                setCallSessionId(sig.callSessionId);
-
-              log(
-                "OFFER received on CallScreen subscription; waiting for user action in ChatScreen",
-              );
-
+              if (!callSessionIdRef.current) setCallSessionId(sig.callSessionId);
+              log("OFFER received; waiting for user action in ChatScreen");
               return;
             }
 
             if (sig.type === "ANSWER" && isCaller) {
-              const answer =
-                typeof sig.payload === "string"
-                  ? JSON.parse(sig.payload)
-                  : sig.payload;
+              const answer = typeof sig.payload === "string" ? JSON.parse(sig.payload) : sig.payload;
               if (!pc.currentRemoteDescription) {
                 await pc.setRemoteDescription(answer);
                 log("setRemoteDescription(answer) OK");
               }
+              return;
             }
 
             if (sig.type === "ICE") {
-              const { candidate } =
-                typeof sig.payload === "string"
-                  ? JSON.parse(sig.payload)
-                  : sig.payload;
+              const { candidate } = typeof sig.payload === "string" ? JSON.parse(sig.payload) : sig.payload;
               if (candidate) {
-                try {
-                  await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                  log("addIceCandidate OK");
-                } catch (e) {
-                  log("addIceCandidate failed", e);
-                }
+                try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); log("addIceCandidate OK"); }
+                catch (e) { log("addIceCandidate failed", e); }
               }
+              return;
+            }
+
+            if (sig.type === "BYE") {
+              if (endingRef.current) return
+              endingRef.current = true;
+
+              setStatus("ENDED");
+              try {
+                await safeGql(
+                  UpdateCallSession,
+                  { input: { id: sig.callSessionId || callSessionIdRef.current, status: "ENDED", endedAt: new Date().toISOString() } },
+                  "UpdateCallSession(BYE)"
+                );
+              } catch {}
+
+              stopTracksAndPC();
+              await postEndedSystemMessage(sig.senderId);
+              leaveToChat();
+              return;
             }
           } catch (e) {
             log("onSignal handler error", e);
@@ -307,43 +270,33 @@ export default function CallScreen({ route }) {
       });
 
     return () => subRef.current?.unsubscribe?.();
-  }, [conversationId, me?.sub, ensurePC, getLocalStream, isCaller, sendSignal]);
+  }, [conversationId, me?.sub, ensurePC, isCaller]);
 
   useEffect(() => {
     (async () => {
       if (!incomingOffer || !incomingSessionId || !me?.sub) return;
-      
-      if (answeredOnceRef.current) {
-        log("answer already processed; skipping");
-        return;
-      }
+      if (answeredOnceRef.current) { log("answer already processed; skipping"); return; }
       answeredOnceRef.current = true;
 
       log("answering incoming call (user accepted)", { incomingSessionId });
-
       try {
         if (!callSessionIdRef.current) setCallSessionId(incomingSessionId);
 
         let pc = ensurePC();
 
-        const offer =
-          typeof incomingOffer === "string"
-            ? JSON.parse(incomingOffer)
-            : incomingOffer;
+        const offer = typeof incomingOffer === "string" ? JSON.parse(incomingOffer) : incomingOffer;
 
         if (!pc.currentRemoteDescription) {
           await pc.setRemoteDescription(offer);
           log("setRemoteDescription(offer) OK");
         }
-        
+
         await getLocalStream();
-        
+
         if (isClosed(pcRef.current)) {
           log("PC closed after getUserMedia; recreating + re-binding tracks");
           pc = ensurePC();
-          localStreamRef.current?.getTracks?.forEach((t) =>
-            pc.addTrack(t, localStreamRef.current)
-          );
+          localStreamRef.current?.getTracks?.forEach((t) => pc.addTrack(t, localStreamRef.current));
         }
 
         pc = ensurePC();
@@ -352,7 +305,7 @@ export default function CallScreen({ route }) {
         await pc.setLocalDescription(answer);
         log("sending ANSWER");
         await sendSignal("ANSWER", answer, incomingSessionId);
-        
+
         setStatus("RINGING");
         setIsCaller(false);
       } catch (e) {
@@ -361,14 +314,7 @@ export default function CallScreen({ route }) {
         answeredOnceRef.current = false;
       }
     })();
-  }, [
-    incomingOffer,
-    incomingSessionId,
-    me?.sub,
-    ensurePC,
-    getLocalStream,
-    sendSignal,
-  ]);
+  }, [incomingOffer, incomingSessionId, me?.sub, ensurePC, getLocalStream, sendSignal]);
 
   const startCall = useCallback(async () => {
     if (!me?.sub || !conversationId) return;
@@ -383,9 +329,7 @@ export default function CallScreen({ route }) {
       if (isClosed(pcRef.current)) {
         log("PC closed after getUserMedia; recreating + re-binding tracks");
         pc = ensurePC();
-        localStreamRef.current?.getTracks?.forEach((t) =>
-          pc.addTrack(t, localStreamRef.current),
-        );
+        localStreamRef.current?.getTracks?.forEach((t) => pc.addTrack(t, localStreamRef.current));
       }
 
       setIsCaller(true);
@@ -402,7 +346,7 @@ export default function CallScreen({ route }) {
             startedAt: new Date().toISOString(),
           },
         },
-        "CreateCallSession",
+        "CreateCallSession"
       );
 
       const sessionId = data?.createCallSession?.id;
@@ -416,94 +360,47 @@ export default function CallScreen({ route }) {
         iceConnectionState: pc?.iceConnectionState,
       });
       const offer = await pc.createOffer();
-      log("setLocalDescription(offer)");
       await pc.setLocalDescription(offer);
-
       log("sending OFFER", { callSessionId: sessionId });
       await sendSignal("OFFER", offer, sessionId);
     } catch (e) {
       log("startCall error", e);
       Alert.alert("Call failed", "Unable to start the call.");
-      setStatus("IDLE");
-      setIsCaller(false);
+      setStatus("IDLE"); setIsCaller(false);
     }
-  }, [
-    me?.sub,
-    conversationId,
-    conversation?.memberIds,
-    ensurePC,
-    getLocalStream,
-    sendSignal,
-    status,
-  ]);
+  }, [me?.sub, conversationId, conversation?.memberIds, ensurePC, getLocalStream, sendSignal, status]);
 
   const hangUp = useCallback(async () => {
-    try {
-      setStatus("ENDED");
+    if (endingRef.current) return;
+    endingRef.current = true;
 
-      const sid = callSessionIdRef.current;
-      if (sid) {
-        await safeGql(
-          UpdateCallSession,
-          {
-            input: {
-              id: sid,
-              status: "ENDED",
-              endedAt: new Date().toISOString(),
-            },
-          },
-          "UpdateCallSession",
-        );
-      }
+    setStatus("ENDED");
+
+    const sid = callSessionIdRef.current;
+    try {
+      await sendSignal("BYE", { endedBy: me?.sub }, sid);
     } catch (e) {
-      log("update session on hangup failed", e);
+      log("send BYE failed", e);
     }
 
     try {
-      subRef.current?.unsubscribe?.();
+      await safeGql(
+        UpdateCallSession,
+        { input: { id: sid, status: "ENDED", endedAt: new Date().toISOString() } },
+        "UpdateCallSession(hangUp)"
+      );
     } catch {}
-    subRef.current = null;
 
-    try {
-      pcRef.current?.getSenders?.().forEach((s) => {
-        try {
-          s.track?.stop?.();
-        } catch {}
-      });
-      pcRef.current?.close?.();
-    } catch {}
-    pcRef.current = null;
-
-    try {
-      localStreamRef.current?.getTracks?.forEach((t) => t.stop());
-    } catch {}
-    localStreamRef.current = null;
-    remoteStreamRef.current = null;
-
-    setHasLocal(false);
-    setHasRemote(false);
-    setIsCaller(false);
-    setCallSessionId(null);
-  }, []);
+    stopTracksAndPC();
+    await postEndedSystemMessage(me?.sub);
+    leaveToChat();
+  }, [me?.sub, sendSignal]);
 
   useEffect(() => {
     return () => {
       log("unmount cleanup");
-      try {
-        subRef.current?.unsubscribe?.();
-      } catch {}
-      try {
-        pcRef.current?.getSenders?.().forEach((s) => s.track?.stop?.());
-      } catch {}
-      try {
-        pcRef.current?.close?.();
-      } catch {}
-      pcRef.current = null;
-      try {
-        localStreamRef.current?.getTracks?.forEach((t) => t.stop());
-      } catch {}
-      localStreamRef.current = null;
-      remoteStreamRef.current = null;
+      try { subRef.current?.unsubscribe?.(); } catch {}
+      stopTracksAndPC();
     };
   }, []);
 
@@ -514,39 +411,23 @@ export default function CallScreen({ route }) {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.videoArea}>
         {hasRemote ? (
-          <RTCView
-            streamURL={remote?.toURL?.()}
-            style={styles.remoteVideo}
-            objectFit="cover"
-            mirror={false}
-          />
+          <RTCView streamURL={remote?.toURL?.()} style={styles.remoteVideo} objectFit="cover" mirror={false} />
         ) : (
           <View style={styles.placeholder}>
             <Text style={styles.placeholderText}>
-              {status === "RINGING"
-                ? "Ringing…"
-                : "Remote video will appear here"}
+              {status === "RINGING" ? "Ringing…" : "Remote video will appear here"}
             </Text>
           </View>
         )}
 
         {hasLocal && (
-          <RTCView
-            streamURL={local?.toURL?.()}
-            style={styles.localPreview}
-            objectFit="cover"
-            mirror
-          />
+          <RTCView streamURL={local?.toURL?.()} style={styles.localPreview} objectFit="cover" mirror />
         )}
       </View>
 
       <View style={styles.controls}>
         {status === "IDLE" && (
-          <TouchableOpacity
-            style={[styles.btn, styles.primary]}
-            onPress={startCall}
-            disabled={status !== "IDLE"}
-          >
+          <TouchableOpacity style={[styles.btn, styles.primary]} onPress={startCall} disabled={status !== "IDLE"}>
             <Text style={styles.btnText}>Start Call</Text>
           </TouchableOpacity>
         )}
@@ -558,9 +439,7 @@ export default function CallScreen({ route }) {
               onPress={() => {
                 const stream = localStreamRef.current;
                 if (!stream) return;
-                stream
-                  .getAudioTracks()
-                  .forEach((t) => (t.enabled = !t.enabled));
+                stream.getAudioTracks().forEach((t) => (t.enabled = !t.enabled));
                 setMuted((m) => !m);
               }}
             >
@@ -572,21 +451,14 @@ export default function CallScreen({ route }) {
               onPress={() => {
                 const stream = localStreamRef.current;
                 if (!stream) return;
-                stream
-                  .getVideoTracks()
-                  .forEach((t) => (t.enabled = !t.enabled));
+                stream.getVideoTracks().forEach((t) => (t.enabled = !t.enabled));
                 setVideoEnabled((v) => !v);
               }}
             >
-              <Text style={styles.btnText}>
-                {videoEnabled ? "Video Off" : "Video On"}
-              </Text>
+              <Text style={styles.btnText}>{videoEnabled ? "Video Off" : "Video On"}</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.btn, styles.danger]}
-              onPress={hangUp}
-            >
+            <TouchableOpacity style={[styles.btn, styles.danger]} onPress={hangUp}>
               <Text style={styles.btnText}>Hang Up</Text>
             </TouchableOpacity>
           </>
@@ -607,43 +479,18 @@ const styles = StyleSheet.create({
   videoArea: { flex: 1, justifyContent: "center", alignItems: "center" },
   remoteVideo: { width: "100%", height: "100%" },
   localPreview: {
-    position: "absolute",
-    right: 12,
-    bottom: 120,
-    width: 120,
-    height: 180,
-    borderRadius: 12,
-    overflow: "hidden",
+    position: "absolute", right: 12, bottom: 120, width: 120, height: 180,
+    borderRadius: 12, overflow: "hidden",
   },
   placeholder: {
-    width: "92%",
-    height: "68%",
-    borderRadius: 16,
-    backgroundColor: "#111",
-    alignItems: "center",
-    justifyContent: "center",
+    width: "92%", height: "68%", borderRadius: 16, backgroundColor: "#111",
+    alignItems: "center", justifyContent: "center",
   },
   placeholderText: { color: "#888" },
-  controls: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 16,
-    justifyContent: "center",
-    backgroundColor: "#111",
-  },
-  btn: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    backgroundColor: "#333",
-  },
+  controls: { flexDirection: "row", gap: 10, padding: 16, justifyContent: "center", backgroundColor: "#111" },
+  btn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 999, backgroundColor: "#333" },
   primary: { backgroundColor: "#2e7d32" },
   danger: { backgroundColor: "#c62828" },
   btnText: { color: "#fff", fontWeight: "700" },
-  meta: {
-    textAlign: "center",
-    color: "#bbb",
-    paddingBottom: 10,
-    paddingHorizontal: 12,
-  },
+  meta: { textAlign: "center", color: "#bbb", paddingBottom: 10, paddingHorizontal: 12 },
 });

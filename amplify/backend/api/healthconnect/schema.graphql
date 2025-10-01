@@ -169,6 +169,7 @@ enum SignalType {
   OFFER
   ANSWER
   ICE
+  BYE
 }
 
 type CallSession
