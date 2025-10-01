@@ -96,24 +96,6 @@ const OnSignal = /* GraphQL */ `
   }
 `;
 
-const CallSignalsByConversation = /* GraphQL */ `
-  query CallSignalsByConversation($conversationId: ID!, $limit: Int) {
-    callSignalsByConversation(
-      conversationId: $conversationId
-      sortDirection: ASC
-      limit: $limit
-    ) {
-      items {
-        id
-        type
-        senderId
-        callSessionId
-        createdAt
-      }
-    }
-  }
-`;
-
 const GetUser = /* GraphQL */ `
   query GetUser($id: ID!) {
     getUser(id: $id) {
@@ -303,28 +285,6 @@ export default function ChatScreen({ route, navigation }) {
 
     return () => sub?.unsubscribe?.();
   }, [conversationId, navigation, conversation, me?.sub]);
-
-  const debugFetchSignals = async () => {
-    try {
-      const res = await client.graphql({
-        query: CallSignalsByConversation,
-        variables: { conversationId, limit: 25 },
-        authMode: "userPool",
-      });
-      const items = res?.data?.callSignalsByConversation?.items || [];
-      log("signals", items);
-      Alert.alert(
-        "Signals",
-        items.length ? `${items.length} found (see console)` : "none",
-      );
-    } catch (e) {
-      console.log("[CHAT] signals fetch error", e);
-      Alert.alert(
-        "Signals error",
-        String(e?.errors?.[0]?.message || e?.message || e),
-      );
-    }
-  };
 
   const handleSend = async () => {
     const body = text.trim();
@@ -571,19 +531,6 @@ export default function ChatScreen({ route, navigation }) {
           },
         ]}
       >
-        {/* Debug: fetch recent signals */}
-        <TouchableOpacity
-          accessibilityLabel="Debug: list recent signals"
-          style={[
-            styles.call,
-            { backgroundColor: "#fff3cd", borderColor: "#e0c200" },
-          ]}
-          onPress={debugFetchSignals}
-        >
-          <Text style={[styles.callIcon, { fontSize: 14 }]}>🔎</Text>
-        </TouchableOpacity>
-
-        {/* Call button → navigates to CallScreen; callee auto-answers if navigated with incomingOffer */}
         <TouchableOpacity
           accessibilityLabel="Start a video call"
           style={styles.call}

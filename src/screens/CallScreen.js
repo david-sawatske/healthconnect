@@ -1,4 +1,3 @@
-// src/screens/CallScreen.js
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -66,7 +65,7 @@ export default function CallScreen({ route, navigation }) {
 
   const conversation = route?.params?.conversation;
   const conversationId = conversation?.id;
-  
+
   const incomingOffer = route?.params?.incomingOffer || null;
   const incomingSessionId = route?.params?.incomingSessionId || null;
 
@@ -80,8 +79,8 @@ export default function CallScreen({ route, navigation }) {
   const callSessionIdRef = useRef(null);
   const setCallSessionId = (id) => { callSessionIdRef.current = id; _setCallSessionId(id); };
 
-  const answeredOnceRef = useRef(false);     
-  const endingRef = useRef(false);           
+  const answeredOnceRef = useRef(false);
+  const endingRef = useRef(false);
 
   const [status, setStatus] = useState("IDLE")
   const [isCaller, setIsCaller] = useState(false);
