@@ -32,7 +32,7 @@ export default function App() {
         <Stack.Screen
           name="Call"
           component={CallScreen}
-          options={{ headerShown: false }} // full-screen video
+          options={{ headerShown: false }}
         />
       </Stack.Navigator>
       <StatusBar style="auto" />

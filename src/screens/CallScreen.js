@@ -1,17 +1,39 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
-  SafeAreaView,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  FlatList,
-} from "react-native";
-import { RTCView, mediaDevices } from "react-native-webrtc";
-import { getCurrentUser, fetchAuthSession } from "aws-amplify/auth";
+  mediaDevices,
+  RTCPeerConnection,
+  RTCView,
+  RTCIceCandidate,
+} from "react-native-webrtc";
 import { generateClient } from "aws-amplify/api";
+import { getCurrentUser } from "aws-amplify/auth";
 
-const createCallSessionGql = /* GraphQL */ `
+const client = generateClient();
+
+const log = (...args) => console.log("[CALL]", ...args);
+
+async function safeGql(op, vars, label = "GQL") {
+  try {
+    const res = await client.graphql({
+      query: op,
+      variables: vars,
+      authMode: "userPool",
+    });
+    log(label, "OK", JSON.stringify(res?.data)?.slice(0, 300));
+    return res;
+  } catch (e) {
+    const msg = e?.errors?.[0]?.message || e?.message || String(e);
+    log(label, "ERROR", msg);
+    try {
+      Alert.alert("GraphQL error", msg);
+    } catch {}
+    throw e;
+  }
+}
+
+const CreateCallSession = /* GraphQL */ `
   mutation CreateCallSession($input: CreateCallSessionInput!) {
     createCallSession(input: $input) {
       id
@@ -19,12 +41,23 @@ const createCallSessionGql = /* GraphQL */ `
       participantIds
       createdBy
       status
-      startedAt
+      createdAt
     }
   }
 `;
 
-const createCallSignalGql = /* GraphQL */ `
+const UpdateCallSession = /* GraphQL */ `
+  mutation UpdateCallSession($input: UpdateCallSessionInput!) {
+    updateCallSession(input: $input) {
+      id
+      status
+      endedAt
+      updatedAt
+    }
+  }
+`;
+
+const CreateCallSignal = /* GraphQL */ `
   mutation CreateCallSignal($input: CreateCallSignalInput!) {
     createCallSignal(input: $input) {
       id
@@ -32,12 +65,13 @@ const createCallSignalGql = /* GraphQL */ `
       callSessionId
       senderId
       type
+      payload
       createdAt
     }
   }
 `;
 
-const onSignalGql = /* GraphQL */ `
+const OnSignal = /* GraphQL */ `
   subscription OnSignal($conversationId: ID!) {
     onSignal(conversationId: $conversationId) {
       id
@@ -45,313 +79,585 @@ const onSignalGql = /* GraphQL */ `
       callSessionId
       senderId
       type
+      payload
       createdAt
     }
   }
 `;
 
-const client = generateClient();
+const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
-async function getMyId() {
-  try {
-    const { userId, username } = await getCurrentUser();
-    return userId || username;
-  } catch {}
-  try {
-    const { tokens } = await fetchAuthSession();
-    const sub = tokens?.idToken?.payload?.sub;
-    if (sub) return sub;
-  } catch {}
-  throw new Error("Not signed in (no current user)");
-}
+export default function CallScreen({ route }) {
+  const insets = useSafeAreaInsets();
 
-export default function CallScreen({ navigation, route }) {
-  const conversationId = route?.params?.conversationId;
-  const peerId = route?.params?.peerId;
+  const conversation = route?.params?.conversation;
+  const conversationId = conversation?.id;
 
-  const [localStream, setLocalStream] = useState(null);
+  const incomingOffer = route?.params?.incomingOffer || null;
+  const incomingSessionId = route?.params?.incomingSessionId || null;
+
+  const pcRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const subRef = useRef(null);
+
+  const [me, setMe] = useState(null);
+  const [callSessionId, _setCallSessionId] = useState(null);
+  const callSessionIdRef = useRef(null);
+  const setCallSessionId = (id) => {
+    callSessionIdRef.current = id;
+    _setCallSessionId(id);
+  };
+
+  const [status, setStatus] = useState("IDLE");
+  const [isCaller, setIsCaller] = useState(false);
+  const [hasLocal, setHasLocal] = useState(false);
+  const [hasRemote, setHasRemote] = useState(false);
   const [muted, setMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
 
-  const [events, setEvents] = useState([]);
-
   useEffect(() => {
-    let active = true;
     (async () => {
       try {
-        const stream = await mediaDevices.getUserMedia({
-          audio: true,
-          video: { facingMode: "user" },
-        });
-        if (active) setLocalStream(stream);
+        const u = await getCurrentUser();
+        setMe({ sub: u.userId });
+        log("currentUser", { sub: u.userId, username: u.username });
       } catch (e) {
-        console.warn("getUserMedia error:", e);
+        log("getCurrentUser failed", e);
       }
     })();
-    return () => {
-      active = false;
-      if (localStream) {
-        localStream.getTracks().forEach((t) => t.stop());
-      }
-    };
   }, []);
 
-  useEffect(() => {
-    if (!conversationId) {
-      setEvents((prev) => [
-        {
-          id: `no-cid-${Date.now()}`,
-          text: "Missing conversationId; subscription not started.",
-        },
-        ...prev,
-      ]);
-      return;
-    }
+  const isClosed = (pc) => {
+    if (!pc) return true;
+    return (
+      pc.connectionState === "closed" ||
+      pc.signalingState === "closed" ||
+      pc.iceConnectionState === "closed"
+    );
+  };
 
-    setEvents((prev) => [
-      {
-        id: `cid-${Date.now()}`,
-        text: `Subscribing on conversationId=${conversationId}`,
-      },
-      ...prev,
-    ]);
+  const createPC = useCallback(() => {
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    log("PC ctor", pc?._peerConnectionId);
 
-    let sub;
-    (async () => {
-      try {
-        const myId = await getMyId();
-        setEvents((prev) => [
-          { id: `me-${Date.now()}`, text: `Authed as ${myId}` },
-          ...prev,
-        ]);
-
-        sub = client
-          .graphql({
-            query: onSignalGql,
-            variables: { conversationId },
-            authMode: "userPool",
-          })
-          .subscribe({
-            next: (payload) => {
-              const data = payload?.data ?? payload?.value?.data;
-
-              const sig = data?.onSignal ?? data?.onCreateCallSignal ?? null;
-
-              if (!sig) {
-                let raw = "";
-                try {
-                  raw = JSON.stringify(payload).slice(0, 300);
-                } catch {
-                  raw = String(payload).slice(0, 300);
-                }
-                setEvents((prev) => [
-                  {
-                    id: `undef-${Date.now()}`,
-                    text:
-                      "Subscription event received but no 'onSignal' payload found. raw=" +
-                      raw,
-                  },
-                  ...prev,
-                ]);
-                return;
-              }
-
-              setEvents((prev) => [
-                {
-                  id: sig.id || String(Date.now()),
-                  text: `onSignal from ${sig.senderId} type=${sig.type}`,
-                },
-                ...prev,
-              ]);
-              console.log("onSignal:", sig);
-            },
-            error: (e) => {
-              setEvents((prev) => [
-                { id: `err-${Date.now()}`, text: `onSignal error: ${e}` },
-                ...prev,
-              ]);
-              console.warn("onSignal error", e);
-            },
-          });
-      } catch (e) {
-        setEvents((prev) => [
-          { id: `auth-${Date.now()}`, text: `Auth error: ${e.message || e}` },
-          ...prev,
-        ]);
+    pc.onicecandidate = (event) => {
+      if (event.candidate && callSessionIdRef.current && me?.sub) {
+        log("onicecandidate → send ICE");
+        sendSignal("ICE", { candidate: event.candidate }).catch((e) =>
+          log("send ICE error", e),
+        );
       }
-    })();
-
-    return () => {
-      try {
-        sub && sub.unsubscribe();
-      } catch {}
     };
-  }, [conversationId]);
 
-  const toggleMute = useCallback(() => {
-    setMuted((m) => {
-      localStream?.getAudioTracks().forEach((t) => (t.enabled = m));
-      return !m;
-    });
-  }, [localStream]);
+    pc.ontrack = (event) => {
+      const [stream] = event.streams || [];
+      if (stream) {
+        remoteStreamRef.current = stream;
+        setHasRemote(true);
+        log("ontrack remote stream", stream?.id);
+      }
+    };
 
-  const toggleVideo = useCallback(() => {
-    setVideoEnabled((v) => {
-      localStream?.getVideoTracks().forEach((t) => (t.enabled = !v));
-      return !v;
-    });
-  }, [localStream]);
+    pc.onconnectionstatechange = () => {
+      const s = pc.connectionState;
+      log("connectionState", s);
+      if (s === "connected") setStatus("CONNECTED");
+    };
 
-  const endCall = useCallback(() => {
-    localStream?.getTracks().forEach((t) => t.stop());
-    navigation.goBack();
-  }, [localStream, navigation]);
+    return pc;
+  }, [me?.sub]);
 
-  const sendPing = useCallback(async () => {
+  const ensurePC = useCallback(() => {
+    const pc = pcRef.current;
+    if (pc && !isClosed(pc)) return pc;
     try {
-      if (!conversationId) {
-        setEvents((prev) => [
-          {
-            id: `no-cid-p-${Date.now()}`,
-            text: "Cannot send ping: missing conversationId.",
-          },
-          ...prev,
-        ]);
+      pc?.close?.();
+    } catch {}
+    pcRef.current = createPC();
+    return pcRef.current;
+  }, [createPC]);
+
+  const getLocalStream = useCallback(async () => {
+    if (localStreamRef.current) return localStreamRef.current;
+    const constraints = {
+      audio: true,
+      video: {
+        facingMode: "user",
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        frameRate: { ideal: 30 },
+      },
+    };
+    log("getUserMedia start");
+    const stream = await mediaDevices.getUserMedia(constraints);
+    log("getUserMedia OK tracks", stream.getTracks().length);
+    localStreamRef.current = stream;
+    setHasLocal(true);
+
+    const pc = ensurePC();
+    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    log("local tracks added to PC", pc?._peerConnectionId);
+
+    return stream;
+  }, [ensurePC]);
+
+  const sendSignal = useCallback(
+    async (type, payload, sessionOverride) => {
+      const sid = sessionOverride || callSessionIdRef.current;
+      if (!me?.sub || !conversationId || !sid) {
+        log("sendSignal skipped (missing fields)", {
+          type,
+          me: !!me?.sub,
+          conversationId,
+          callSessionId: sid,
+        });
         return;
       }
-      const myId = await getMyId();
-
-      const sessionRes = await client.graphql({
-        query: createCallSessionGql,
-        variables: {
+      await safeGql(
+        CreateCallSignal,
+        {
           input: {
             conversationId,
-            participantIds: [myId, peerId].filter(Boolean),
-            createdBy: myId,
+            callSessionId: sid,
+            senderId: me.sub,
+            type,
+            payload: JSON.stringify(payload),
+          },
+        },
+        `CreateCallSignal:${type}`,
+      );
+    },
+    [me?.sub, conversationId],
+  );
+
+  useEffect(() => {
+    if (!conversationId) return;
+    log("subscribing OnSignal", conversationId);
+
+    try {
+      subRef.current?.unsubscribe?.();
+    } catch {}
+    subRef.current = client
+      .graphql({
+        query: OnSignal,
+        variables: { conversationId },
+        authMode: "userPool",
+      })
+      .subscribe({
+        next: async ({ data }) => {
+          try {
+            const sig = data?.onSignal;
+            log(
+              "onSignal event",
+              sig?.type,
+              "from",
+              sig?.senderId,
+              "sess",
+              sig?.callSessionId,
+            );
+            if (!sig) return;
+            if (sig.senderId === me?.sub) return;
+
+            let pc = ensurePC();
+
+            if (sig.type === "OFFER") {
+              if (!callSessionIdRef.current)
+                setCallSessionId(sig.callSessionId);
+
+              const offer =
+                typeof sig.payload === "string"
+                  ? JSON.parse(sig.payload)
+                  : sig.payload;
+
+              if (!pc.currentRemoteDescription) {
+                await pc.setRemoteDescription(offer);
+                log("setRemoteDescription(offer) OK");
+              }
+
+              await getLocalStream();
+
+              if (isClosed(pcRef.current)) {
+                log("PC closed before answer; recreating + re-binding tracks");
+                pc = ensurePC();
+                localStreamRef.current?.getTracks?.forEach((t) =>
+                  pc.addTrack(t, localStreamRef.current),
+                );
+              }
+
+              pc = ensurePC();
+              log("createAnswer on pc", pc?._peerConnectionId);
+              const answer = await pc.createAnswer();
+              log("setLocalDescription(answer)");
+              await pc.setLocalDescription(answer);
+              log("sending ANSWER");
+              await sendSignal("ANSWER", answer, sig.callSessionId);
+              setStatus("RINGING");
+              setIsCaller(false);
+            }
+
+            if (sig.type === "ANSWER" && isCaller) {
+              const answer =
+                typeof sig.payload === "string"
+                  ? JSON.parse(sig.payload)
+                  : sig.payload;
+              if (!pc.currentRemoteDescription) {
+                await pc.setRemoteDescription(answer);
+                log("setRemoteDescription(answer) OK");
+              }
+            }
+
+            if (sig.type === "ICE") {
+              const { candidate } =
+                typeof sig.payload === "string"
+                  ? JSON.parse(sig.payload)
+                  : sig.payload;
+              if (candidate) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                  log("addIceCandidate OK");
+                } catch (e) {
+                  log("addIceCandidate failed", e);
+                }
+              }
+            }
+          } catch (e) {
+            log("onSignal handler error", e);
+          }
+        },
+        error: (err) => log("OnSignal subscription error", err),
+      });
+
+    return () => subRef.current?.unsubscribe?.();
+  }, [conversationId, me?.sub, ensurePC, getLocalStream, isCaller, sendSignal]);
+
+  useEffect(() => {
+    (async () => {
+      if (!incomingOffer || !incomingSessionId || !me?.sub) return;
+      log("auto-accept path", { incomingSessionId });
+
+      try {
+        if (!callSessionIdRef.current) setCallSessionId(incomingSessionId);
+
+        let pc = ensurePC();
+
+        const offer =
+          typeof incomingOffer === "string"
+            ? JSON.parse(incomingOffer)
+            : incomingOffer;
+
+        if (!pc.currentRemoteDescription) {
+          await pc.setRemoteDescription(offer);
+          log("auto-accept setRemoteDescription(offer) OK");
+        }
+
+        await getLocalStream();
+
+        if (isClosed(pcRef.current)) {
+          log("PC closed after auto-accept getUserMedia; recreating");
+          pc = ensurePC();
+          localStreamRef.current?.getTracks?.forEach((t) =>
+            pc.addTrack(t, localStreamRef.current),
+          );
+        }
+
+        pc = ensurePC();
+        log("auto-accept createAnswer on pc", pc?._peerConnectionId);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        log("auto-accept sending ANSWER");
+        await sendSignal("ANSWER", answer, incomingSessionId);
+
+        setStatus("RINGING");
+        setIsCaller(false);
+      } catch (e) {
+        log("auto-accept error", e);
+        Alert.alert("Call error", "Failed to accept the incoming call.");
+      }
+    })();
+  }, [
+    incomingOffer,
+    incomingSessionId,
+    me?.sub,
+    ensurePC,
+    getLocalStream,
+    sendSignal,
+  ]);
+
+  const startCall = useCallback(async () => {
+    if (!me?.sub || !conversationId) return;
+    if (status !== "IDLE") return;
+
+    try {
+      log("startCall preflight: conversationId", conversationId);
+
+      let pc = ensurePC();
+      await getLocalStream();
+
+      if (isClosed(pcRef.current)) {
+        log("PC closed after getUserMedia; recreating + re-binding tracks");
+        pc = ensurePC();
+        localStreamRef.current?.getTracks?.forEach((t) =>
+          pc.addTrack(t, localStreamRef.current),
+        );
+      }
+
+      setIsCaller(true);
+      setStatus("RINGING");
+
+      const { data } = await safeGql(
+        CreateCallSession,
+        {
+          input: {
+            conversationId,
+            participantIds: Array.from(new Set(conversation?.memberIds || [])),
+            createdBy: me.sub,
             status: "RINGING",
             startedAt: new Date().toISOString(),
           },
         },
-        authMode: "userPool",
+        "CreateCallSession",
+      );
+
+      const sessionId = data?.createCallSession?.id;
+      setCallSessionId(sessionId);
+      log("CallSession created", sessionId);
+
+      pc = ensurePC();
+      log("createOffer on pc", pc?._peerConnectionId, {
+        connectionState: pc?.connectionState,
+        signalingState: pc?.signalingState,
+        iceConnectionState: pc?.iceConnectionState,
       });
+      const offer = await pc.createOffer();
+      log("setLocalDescription(offer)");
+      await pc.setLocalDescription(offer);
 
-      const callSessionId = sessionRes?.data?.createCallSession?.id;
-
-      await client.graphql({
-        query: createCallSignalGql,
-        variables: {
-          input: {
-            conversationId,
-            callSessionId,
-            senderId: myId,
-            type: "OFFER",
-            payload: JSON.stringify({ hello: "world" }),
-          },
-        },
-        authMode: "userPool",
-      });
-
-      setEvents((prev) => [
-        { id: `ping-${Date.now()}`, text: `Ping sent by ${myId}` },
-        ...prev,
-      ]);
+      log("sending OFFER", { callSessionId: sessionId });
+      await sendSignal("OFFER", offer, sessionId);
     } catch (e) {
-      setEvents((prev) => [
-        { id: `pingerr-${Date.now()}`, text: `Ping error: ${e.message || e}` },
-        ...prev,
-      ]);
-      console.warn("Ping error", e);
+      log("startCall error", e);
+      Alert.alert("Call failed", "Unable to start the call.");
+      setStatus("IDLE");
+      setIsCaller(false);
     }
-  }, [conversationId, peerId]);
+  }, [
+    me?.sub,
+    conversationId,
+    conversation?.memberIds,
+    ensurePC,
+    getLocalStream,
+    sendSignal,
+    status,
+  ]);
+
+  const hangUp = useCallback(async () => {
+    try {
+      setStatus("ENDED");
+
+      const sid = callSessionIdRef.current;
+      if (sid) {
+        await safeGql(
+          UpdateCallSession,
+          {
+            input: {
+              id: sid,
+              status: "ENDED",
+              endedAt: new Date().toISOString(),
+            },
+          },
+          "UpdateCallSession",
+        );
+      }
+    } catch (e) {
+      log("update session on hangup failed", e);
+    }
+
+    try {
+      subRef.current?.unsubscribe?.();
+    } catch {}
+    subRef.current = null;
+
+    try {
+      pcRef.current?.getSenders?.().forEach((s) => {
+        try {
+          s.track?.stop?.();
+        } catch {}
+      });
+      pcRef.current?.close?.();
+    } catch {}
+    pcRef.current = null;
+
+    try {
+      localStreamRef.current?.getTracks?.forEach((t) => t.stop());
+    } catch {}
+    localStreamRef.current = null;
+    remoteStreamRef.current = null;
+
+    setHasLocal(false);
+    setHasRemote(false);
+    setIsCaller(false);
+    setCallSessionId(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      log("unmount cleanup");
+      try {
+        subRef.current?.unsubscribe?.();
+      } catch {}
+      try {
+        pcRef.current?.getSenders?.().forEach((s) => s.track?.stop?.());
+      } catch {}
+      try {
+        pcRef.current?.close?.();
+      } catch {}
+      pcRef.current = null;
+      try {
+        localStreamRef.current?.getTracks?.forEach((t) => t.stop());
+      } catch {}
+      localStreamRef.current = null;
+      remoteStreamRef.current = null;
+    };
+  }, []);
+
+  const local = localStreamRef.current;
+  const remote = remoteStreamRef.current;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.videoContainer}>
-        {localStream ? (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.videoArea}>
+        {hasRemote ? (
           <RTCView
-            streamURL={localStream.toURL()}
-            style={styles.localVideo}
+            streamURL={remote?.toURL?.()}
+            style={styles.remoteVideo}
+            objectFit="cover"
+            mirror={false}
+          />
+        ) : (
+          <View style={styles.placeholder}>
+            <Text style={styles.placeholderText}>
+              {status === "RINGING"
+                ? "Ringing…"
+                : "Remote video will appear here"}
+            </Text>
+          </View>
+        )}
+
+        {hasLocal && (
+          <RTCView
+            streamURL={local?.toURL?.()}
+            style={styles.localPreview}
             objectFit="cover"
             mirror
           />
-        ) : (
-          <Text style={{ color: "#fff" }}>Starting camera…</Text>
         )}
       </View>
 
       <View style={styles.controls}>
-        <TouchableOpacity style={styles.controlBtn} onPress={toggleMute}>
-          <Text style={styles.controlText}>{muted ? "Unmute" : "Mute"}</Text>
-        </TouchableOpacity>
+        {status === "IDLE" && (
+          <TouchableOpacity
+            style={[styles.btn, styles.primary]}
+            onPress={startCall}
+            disabled={status !== "IDLE"}
+          >
+            <Text style={styles.btnText}>Start Call</Text>
+          </TouchableOpacity>
+        )}
 
-        <TouchableOpacity style={styles.hangupBtn} onPress={endCall}>
-          <Text style={styles.hangupText}>End</Text>
-        </TouchableOpacity>
+        {(status === "RINGING" || status === "CONNECTED") && (
+          <>
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => {
+                const stream = localStreamRef.current;
+                if (!stream) return;
+                stream
+                  .getAudioTracks()
+                  .forEach((t) => (t.enabled = !t.enabled));
+                setMuted((m) => !m);
+              }}
+            >
+              <Text style={styles.btnText}>{muted ? "Unmute" : "Mute"}</Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity style={styles.controlBtn} onPress={toggleVideo}>
-          <Text style={styles.controlText}>
-            {videoEnabled ? "Video Off" : "Video On"}
-          </Text>
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.btn}
+              onPress={() => {
+                const stream = localStreamRef.current;
+                if (!stream) return;
+                stream
+                  .getVideoTracks()
+                  .forEach((t) => (t.enabled = !t.enabled));
+                setVideoEnabled((v) => !v);
+              }}
+            >
+              <Text style={styles.btnText}>
+                {videoEnabled ? "Video Off" : "Video On"}
+              </Text>
+            </TouchableOpacity>
 
-        {/* Temporary button to prove subscription delivery */}
-        <TouchableOpacity style={styles.controlBtn} onPress={sendPing}>
-          <Text style={styles.controlText}>Ping</Text>
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.btn, styles.danger]}
+              onPress={hangUp}
+            >
+              <Text style={styles.btnText}>Hang Up</Text>
+            </TouchableOpacity>
+          </>
+        )}
       </View>
 
-      {/* Small on-screen log so you can see events on both devices */}
-      <View style={styles.logBox}>
-        <Text style={styles.logTitle}>Event Log</Text>
-        <FlatList
-          data={events}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <Text style={styles.logLine}>• {item.text}</Text>
-          )}
-        />
-      </View>
-    </SafeAreaView>
+      <Text style={styles.meta}>
+        {`Status: ${status}`}
+        {callSessionId ? `   •   Session: ${callSessionId.slice(0, 8)}…` : ""}
+        {isCaller ? "   •   Caller" : ""}
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
-  videoContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  localVideo: { width: "100%", height: "100%" },
-
+  root: { flex: 1, backgroundColor: "#000" },
+  videoArea: { flex: 1, justifyContent: "center", alignItems: "center" },
+  remoteVideo: { width: "100%", height: "100%" },
+  localPreview: {
+    position: "absolute",
+    right: 12,
+    bottom: 120,
+    width: 120,
+    height: 180,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  placeholder: {
+    width: "92%",
+    height: "68%",
+    borderRadius: 16,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  placeholderText: { color: "#888" },
   controls: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-around",
-    paddingVertical: 20,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    gap: 10,
+    padding: 16,
+    justifyContent: "center",
+    backgroundColor: "#111",
   },
-  controlBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: "#222",
-    borderRadius: 24,
-    marginVertical: 6,
-  },
-  hangupBtn: {
-    paddingHorizontal: 24,
+  btn: {
     paddingVertical: 12,
-    backgroundColor: "#b00020",
-    borderRadius: 24,
-    marginVertical: 6,
-  },
-  controlText: { color: "#fff" },
-  hangupText: { color: "#fff", fontWeight: "700" },
-
-  logBox: {
-    maxHeight: 160,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#333",
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: "#0d0d0d",
+    borderRadius: 999,
+    backgroundColor: "#333",
   },
-  logTitle: { color: "#bbb", marginBottom: 6, fontWeight: "600" },
-  logLine: { color: "#eee", marginBottom: 4 },
+  primary: { backgroundColor: "#2e7d32" },
+  danger: { backgroundColor: "#c62828" },
+  btnText: { color: "#fff", fontWeight: "700" },
+  meta: {
+    textAlign: "center",
+    color: "#bbb",
+    paddingBottom: 10,
+    paddingHorizontal: 12,
+  },
 });

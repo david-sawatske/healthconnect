@@ -20,6 +20,7 @@ import { getCurrentUser } from "aws-amplify/auth";
 import { getUrl, uploadData } from "aws-amplify/storage";
 
 const client = generateClient();
+const log = (...args) => console.log("[CHAT]", ...args);
 
 const MessagesByConversation = /* GraphQL */ `
   query MessagesByConversation(
@@ -81,6 +82,38 @@ const OnCreateMessage = /* GraphQL */ `
   }
 `;
 
+const OnSignal = /* GraphQL */ `
+  subscription OnSignal($conversationId: ID!) {
+    onSignal(conversationId: $conversationId) {
+      id
+      conversationId
+      callSessionId
+      senderId
+      type
+      payload
+      createdAt
+    }
+  }
+`;
+
+const CallSignalsByConversation = /* GraphQL */ `
+  query CallSignalsByConversation($conversationId: ID!, $limit: Int) {
+    callSignalsByConversation(
+      conversationId: $conversationId
+      sortDirection: ASC
+      limit: $limit
+    ) {
+      items {
+        id
+        type
+        senderId
+        callSessionId
+        createdAt
+      }
+    }
+  }
+`;
+
 const GetUser = /* GraphQL */ `
   query GetUser($id: ID!) {
     getUser(id: $id) {
@@ -111,7 +144,7 @@ function guessType({ mimeType, name }) {
   return "FILE";
 }
 
-export default function ChatScreen({ route }) {
+export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
 
   const conversation = route?.params?.conversation;
@@ -119,7 +152,8 @@ export default function ChatScreen({ route }) {
   const memberIds = Array.isArray(conversation?.memberIds)
     ? conversation.memberIds
     : [];
-  const [me, setMe] = useState(null);
+
+  const [me, setMe] = useState(null); // { sub }
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [usersById, setUsersById] = useState({});
@@ -127,14 +161,21 @@ export default function ChatScreen({ route }) {
   const listRef = useRef(null);
 
   useEffect(() => {
+    let mounted = true;
     (async () => {
       try {
         const u = await getCurrentUser();
-        setMe({ sub: u.userId });
+        if (mounted) {
+          setMe({ sub: u.userId });
+          log("currentUser", { sub: u.userId, username: u.username });
+        }
       } catch (err) {
         console.log("Failed to load current user", err);
       }
     })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -167,7 +208,7 @@ export default function ChatScreen({ route }) {
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, memberIds.join(",")]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -202,11 +243,88 @@ export default function ChatScreen({ route }) {
             listRef.current?.scrollToEnd?.({ animated: true }),
           );
         },
-        error: (err) => console.log("subscription error", err),
+        error: (err) => console.log("message subscription error", err),
       });
 
     return () => sub?.unsubscribe?.();
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId) return;
+
+    log("subscribing OnSignal", conversationId);
+    const sub = client
+      .graphql({
+        query: OnSignal,
+        variables: { conversationId },
+        authMode: "userPool",
+      })
+      .subscribe({
+        next: ({ data }) => {
+          try {
+            const sig = data?.onSignal;
+            log(
+              "onSignal",
+              sig?.type,
+              "from",
+              sig?.senderId,
+              "sess",
+              sig?.callSessionId,
+            );
+            if (!sig) return;
+            // ignore my own signals (requires distinct users on caller/receiver)
+            if (me?.sub && sig.senderId === me.sub) return;
+
+            if (sig.type === "OFFER") {
+              Alert.alert(
+                "Incoming Call",
+                "Accept the call?",
+                [
+                  { text: "Decline", style: "cancel" },
+                  {
+                    text: "Accept",
+                    onPress: () =>
+                      navigation?.navigate?.("Call", {
+                        conversation,
+                        incomingOffer: sig.payload, // JSON string
+                        incomingSessionId: sig.callSessionId, // to send ANSWER/ICE
+                      }),
+                  },
+                ],
+                { cancelable: true },
+              );
+            }
+          } catch (e) {
+            console.log("ChatScreen onSignal handling error", e);
+          }
+        },
+        error: (err) => console.log("ChatScreen onSignal error", err),
+      });
+
+    return () => sub?.unsubscribe?.();
+  }, [conversationId, navigation, conversation, me?.sub]);
+
+  const debugFetchSignals = async () => {
+    try {
+      const res = await client.graphql({
+        query: CallSignalsByConversation,
+        variables: { conversationId, limit: 25 },
+        authMode: "userPool",
+      });
+      const items = res?.data?.callSignalsByConversation?.items || [];
+      log("signals", items);
+      Alert.alert(
+        "Signals",
+        items.length ? `${items.length} found (see console)` : "none",
+      );
+    } catch (e) {
+      console.log("[CHAT] signals fetch error", e);
+      Alert.alert(
+        "Signals error",
+        String(e?.errors?.[0]?.message || e?.message || e),
+      );
+    }
+  };
 
   const handleSend = async () => {
     const body = text.trim();
@@ -270,8 +388,8 @@ export default function ChatScreen({ route }) {
         variables: {
           input: {
             conversationId,
-            senderId: me.sub,
-            memberIds: conversation.memberIds ?? [me.sub],
+            senderId: me?.sub,
+            memberIds: conversation.memberIds ?? [me?.sub],
             type: fileType, // "IMAGE" | "VIDEO" | "FILE"
             mediaKey: key,
           },
@@ -453,6 +571,27 @@ export default function ChatScreen({ route }) {
           },
         ]}
       >
+        {/* Debug: fetch recent signals */}
+        <TouchableOpacity
+          accessibilityLabel="Debug: list recent signals"
+          style={[
+            styles.call,
+            { backgroundColor: "#fff3cd", borderColor: "#e0c200" },
+          ]}
+          onPress={debugFetchSignals}
+        >
+          <Text style={[styles.callIcon, { fontSize: 14 }]}>🔎</Text>
+        </TouchableOpacity>
+
+        {/* Call button → navigates to CallScreen; callee auto-answers if navigated with incomingOffer */}
+        <TouchableOpacity
+          accessibilityLabel="Start a video call"
+          style={styles.call}
+          onPress={() => navigation?.navigate?.("Call", { conversation })}
+        >
+          <Text style={styles.callIcon}>📞</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.attach} onPress={handleAttach}>
           <Text style={styles.attachIcon}>+</Text>
         </TouchableOpacity>
@@ -558,4 +697,17 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   attachBtnText: { fontSize: 13, fontWeight: "600" },
+
+  call: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#ccc",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#e8fff0",
+    marginRight: 6,
+  },
+  callIcon: { fontSize: 18, fontWeight: "700" },
 });

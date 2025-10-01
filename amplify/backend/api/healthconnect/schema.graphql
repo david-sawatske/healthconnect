@@ -178,6 +178,7 @@ type CallSession
       {
         allow: owner
         ownerField: "createdBy"
+        identityClaim: "sub"
         operations: [create, read, update, delete]
       }
       { allow: private, operations: [read, update] }
@@ -205,7 +206,12 @@ type CallSignal
   @model
   @auth(
     rules: [
-      { allow: owner, ownerField: "senderId", operations: [create, read] }
+      {
+        allow: owner
+        ownerField: "senderId"
+        identityClaim: "sub"
+        operations: [create, read]
+      }
       { allow: private, operations: [read] }
     ]
   ) {
