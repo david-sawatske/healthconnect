@@ -30,7 +30,8 @@
     "react-native-url-polyfill": "^2.0.0",
     "react-native-webrtc": "^124.0.6",
     "react-native-worklets-core": "^1.6.2",
-    "expo-document-picker": "~13.1.6"
+    "expo-document-picker": "~13.1.6",
+    "expo-haptics": "~14.1.4"
   },
   "devDependencies": {
     "@aws-amplify/backend": "^1.16.1",
