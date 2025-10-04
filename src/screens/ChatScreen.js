@@ -135,7 +135,7 @@ export default function ChatScreen({ route, navigation }) {
     ? conversation.memberIds
     : [];
 
-  const [me, setMe] = useState(null); // { sub }
+  const [me, setMe] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [usersById, setUsersById] = useState({});
@@ -254,7 +254,6 @@ export default function ChatScreen({ route, navigation }) {
               sig?.callSessionId,
             );
             if (!sig) return;
-            // ignore my own signals (requires distinct users on caller/receiver)
             if (me?.sub && sig.senderId === me.sub) return;
 
             if (sig.type === "OFFER") {
@@ -262,18 +261,56 @@ export default function ChatScreen({ route, navigation }) {
                 "Incoming Call",
                 "Accept the call?",
                 [
-                  { text: "Decline", style: "cancel" },
+                  {
+                    text: "Decline",
+                    style: "destructive",
+                    onPress: async () => {
+                      try {
+                        await client.graphql({
+                          query: /* GraphQL */ `
+                            mutation CreateCallSignal(
+                              $input: CreateCallSignalInput!
+                            ) {
+                              createCallSignal(input: $input) {
+                                id
+                              }
+                            }
+                          `,
+                          variables: {
+                            input: {
+                              conversationId,
+                              callSessionId: sig.callSessionId,
+                              senderId: me?.sub,
+                              type: "DECLINED",
+                              payload: JSON.stringify({ reason: "declined" }),
+                            },
+                          },
+                          authMode: "userPool",
+                        });
+                      } catch (e) {
+                        console.log("Decline (DECLINED) send error", e);
+                      }
+                    },
+                  },
                   {
                     text: "Accept",
                     onPress: () =>
                       navigation?.navigate?.("Call", {
                         conversation,
-                        incomingOffer: sig.payload, // JSON string
-                        incomingSessionId: sig.callSessionId, // to send ANSWER/ICE
+                        incomingOffer: sig.payload,
+                        incomingSessionId: sig.callSessionId,
                       }),
                   },
                 ],
                 { cancelable: true },
+              );
+            }
+
+            if (sig.type === "DECLINED") {
+              if (me?.sub && sig.senderId === me.sub) return;
+              Alert.alert(
+                "Call declined",
+                "The other participant declined your call.",
               );
             }
           } catch (e) {
@@ -350,7 +387,7 @@ export default function ChatScreen({ route, navigation }) {
             conversationId,
             senderId: me?.sub,
             memberIds: conversation.memberIds ?? [me?.sub],
-            type: fileType, // "IMAGE" | "VIDEO" | "FILE"
+            type: fileType,
             mediaKey: key,
           },
         },
