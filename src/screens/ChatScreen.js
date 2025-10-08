@@ -18,93 +18,80 @@ import * as DocumentPicker from "expo-document-picker";
 import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
 import { getUrl, uploadData } from "aws-amplify/storage";
+import { useCallSignals } from "../hooks/useCallSignals";
 
 const client = generateClient();
 const log = (...args) => console.log("[CHAT]", ...args);
 
 const MessagesByConversation = /* GraphQL */ `
-  query MessagesByConversation(
-    $conversationId: ID!
-    $limit: Int
-    $nextToken: String
-  ) {
-    messagesByConversation(
-      conversationId: $conversationId
-      sortDirection: ASC
-      limit: $limit
-      nextToken: $nextToken
+    query MessagesByConversation(
+        $conversationId: ID!
+        $limit: Int
+        $nextToken: String
     ) {
-      items {
-        id
-        conversationId
-        senderId
-        memberIds
-        type
-        body
-        mediaKey
-        thumbnailKey
-        createdAt
-      }
-      nextToken
+        messagesByConversation(
+            conversationId: $conversationId
+            sortDirection: ASC
+            limit: $limit
+            nextToken: $nextToken
+        ) {
+            items {
+                id
+                conversationId
+                senderId
+                memberIds
+                type
+                body
+                mediaKey
+                thumbnailKey
+                createdAt
+            }
+            nextToken
+        }
     }
-  }
 `;
 
 const CreateMessage = /* GraphQL */ `
-  mutation CreateMessage($input: CreateMessageInput!) {
-    createMessage(input: $input) {
-      id
-      conversationId
-      senderId
-      memberIds
-      type
-      body
-      mediaKey
-      thumbnailKey
-      createdAt
+    mutation CreateMessage($input: CreateMessageInput!) {
+        createMessage(input: $input) {
+            id
+            conversationId
+            senderId
+            memberIds
+            type
+            body
+            mediaKey
+            thumbnailKey
+            createdAt
+        }
     }
-  }
 `;
 
 const OnCreateMessage = /* GraphQL */ `
-  subscription OnCreateMessage {
-    onCreateMessage {
-      id
-      conversationId
-      senderId
-      memberIds
-      body
-      mediaKey
-      thumbnailKey
-      type
-      createdAt
+    subscription OnCreateMessage {
+        onCreateMessage {
+            id
+            conversationId
+            senderId
+            memberIds
+            body
+            mediaKey
+            thumbnailKey
+            type
+            createdAt
+        }
     }
-  }
-`;
-
-const OnSignal = /* GraphQL */ `
-  subscription OnSignal($conversationId: ID!) {
-    onSignal(conversationId: $conversationId) {
-      id
-      conversationId
-      callSessionId
-      senderId
-      type
-      payload
-      createdAt
-    }
-  }
 `;
 
 const GetUser = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
+    query GetUser($id: ID!) {
+        getUser(id: $id) {
+            id
+            displayName
+            role
+            email
+        }
     }
-  }
 `;
 
 function extFromName(name = "") {
@@ -142,6 +129,8 @@ export default function ChatScreen({ route, navigation }) {
   const [sending, setSending] = useState(false);
   const listRef = useRef(null);
 
+  useCallSignals({ conversationId, currentUserId: me?.sub });
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -171,8 +160,8 @@ export default function ChatScreen({ route, navigation }) {
               query: GetUser,
               variables: { id },
               authMode: "userPool",
-            }),
-          ),
+            })
+          )
         );
         if (cancelled) return;
         const map = {};
@@ -205,7 +194,7 @@ export default function ChatScreen({ route, navigation }) {
         });
         setMessages(res?.data?.messagesByConversation?.items ?? []);
         requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: false }),
+          listRef.current?.scrollToEnd?.({ animated: false })
         );
       } catch (err) {
         console.log("Failed to load messages", err);
@@ -219,10 +208,10 @@ export default function ChatScreen({ route, navigation }) {
           const msg = data?.onCreateMessage;
           if (msg?.conversationId !== conversationId) return;
           setMessages((prev) =>
-            prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
+            prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
           );
           requestAnimationFrame(() =>
-            listRef.current?.scrollToEnd?.({ animated: true }),
+            listRef.current?.scrollToEnd?.({ animated: true })
           );
         },
         error: (err) => console.log("message subscription error", err),
@@ -230,98 +219,6 @@ export default function ChatScreen({ route, navigation }) {
 
     return () => sub?.unsubscribe?.();
   }, [conversationId]);
-
-  useEffect(() => {
-    if (!conversationId) return;
-
-    log("subscribing OnSignal", conversationId);
-    const sub = client
-      .graphql({
-        query: OnSignal,
-        variables: { conversationId },
-        authMode: "userPool",
-      })
-      .subscribe({
-        next: ({ data }) => {
-          try {
-            const sig = data?.onSignal;
-            log(
-              "onSignal",
-              sig?.type,
-              "from",
-              sig?.senderId,
-              "sess",
-              sig?.callSessionId,
-            );
-            if (!sig) return;
-            if (me?.sub && sig.senderId === me.sub) return;
-
-            if (sig.type === "OFFER") {
-              Alert.alert(
-                "Incoming Call",
-                "Accept the call?",
-                [
-                  {
-                    text: "Decline",
-                    style: "destructive",
-                    onPress: async () => {
-                      try {
-                        await client.graphql({
-                          query: /* GraphQL */ `
-                            mutation CreateCallSignal(
-                              $input: CreateCallSignalInput!
-                            ) {
-                              createCallSignal(input: $input) {
-                                id
-                              }
-                            }
-                          `,
-                          variables: {
-                            input: {
-                              conversationId,
-                              callSessionId: sig.callSessionId,
-                              senderId: me?.sub,
-                              type: "DECLINED",
-                              payload: JSON.stringify({ reason: "declined" }),
-                            },
-                          },
-                          authMode: "userPool",
-                        });
-                      } catch (e) {
-                        console.log("Decline (DECLINED) send error", e);
-                      }
-                    },
-                  },
-                  {
-                    text: "Accept",
-                    onPress: () =>
-                      navigation?.navigate?.("Call", {
-                        conversation,
-                        incomingOffer: sig.payload,
-                        incomingSessionId: sig.callSessionId,
-                      }),
-                  },
-                ],
-                { cancelable: true },
-              );
-            }
-
-            if (sig.type === "DECLINED") {
-              if (me?.sub && sig.senderId === me.sub) return;
-              Alert.alert(
-                "Call declined",
-                "The other participant declined your call.",
-              );
-            }
-          } catch (e) {
-            console.log("ChatScreen onSignal handling error", e);
-          }
-        },
-        error: (err) => console.log("ChatScreen onSignal error", err),
-      });
-
-    return () => sub?.unsubscribe?.();
-  }, [conversationId, navigation, conversation, me?.sub]);
 
   const handleSend = async () => {
     const body = text.trim();
@@ -344,10 +241,10 @@ export default function ChatScreen({ route, navigation }) {
       const created = data?.createMessage;
       if (created) {
         setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
+          prev.some((m) => m.id === created.id) ? prev : [...prev, created]
         );
         requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true }),
+          listRef.current?.scrollToEnd?.({ animated: true })
         );
       }
       setText("");
@@ -397,10 +294,10 @@ export default function ChatScreen({ route, navigation }) {
       const created = data?.createMessage;
       if (created) {
         setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
+          prev.some((m) => m.id === created.id) ? prev : [...prev, created]
         );
         requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true }),
+          listRef.current?.scrollToEnd?.({ animated: true })
         );
       }
     } catch (e) {
@@ -530,8 +427,8 @@ export default function ChatScreen({ route, navigation }) {
         )}
 
         {(item.type === "IMAGE" ||
-          item.type === "VIDEO" ||
-          item.type === "FILE") &&
+            item.type === "VIDEO" ||
+            item.type === "FILE") &&
           !!item.mediaKey && (
             <MediaBubble mediaKey={item.mediaKey} type={item.type} />
           )}

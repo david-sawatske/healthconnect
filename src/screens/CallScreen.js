@@ -81,7 +81,6 @@ const OnSignal = /* GraphQL */ `
     }
   }
 `;
-/** For the in-chat “Call ended” system message */
 const CreateMessage = /* GraphQL */ `
   mutation CreateMessage($input: CreateMessageInput!) {
     createMessage(input: $input) {
@@ -91,20 +90,32 @@ const CreateMessage = /* GraphQL */ `
 `;
 
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const SDP_OFFER_OPTS = { offerToReceiveAudio: true, offerToReceiveVideo: true };
+const SDP_ANSWER_OPTS = {
+  offerToReceiveAudio: true,
+  offerToReceiveVideo: true,
+};
 
 export default function CallScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
 
-  const conversation = route?.params?.conversation;
-  const conversationId = conversation?.id;
+  const conversation = route?.params?.conversation || null;
+  const conversationId =
+    route?.params?.conversationId || conversation?.id || null;
 
   const incomingOffer = route?.params?.incomingOffer || null;
-  const incomingSessionId = route?.params?.incomingSessionId || null;
+  const incomingSessionId =
+    route?.params?.incomingSessionId || route?.params?.callSessionId || null;
+
+  const memberIdsFromRoute = Array.isArray(conversation?.memberIds)
+    ? conversation.memberIds
+    : [];
 
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const remoteStreamRef = useRef(null);
   const subRef = useRef(null);
+  const earlyIceRef = useRef([]);
 
   const [me, setMe] = useState(null);
   const [callSessionId, _setCallSessionId] = useState(null);
@@ -135,6 +146,12 @@ export default function CallScreen({ route, navigation }) {
       }
     })();
   }, []);
+
+  const hasRemoteDesc = (pc) => {
+    const a = pc?.currentRemoteDescription;
+    const b = pc?.remoteDescription;
+    return !!(a?.type || b?.type || a || b);
+  };
 
   const isClosed = (pc) =>
     !pc ||
@@ -168,6 +185,12 @@ export default function CallScreen({ route, navigation }) {
       const s = pc.connectionState;
       log("connectionState", s);
       if (s === "connected") setStatus("CONNECTED");
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      const s = pc.iceConnectionState;
+      log("iceConnectionState", s);
+      if (s === "connected" || s === "completed") setStatus("CONNECTED");
     };
 
     return pc;
@@ -264,7 +287,7 @@ export default function CallScreen({ route, navigation }) {
           input: {
             conversationId,
             senderId: endedBySub || "system",
-            memberIds: conversation?.memberIds || [],
+            memberIds: memberIdsFromRoute,
             type: "SYSTEM",
             body: opts.declined ? "Call declined" : "Call ended",
           },
@@ -278,10 +301,10 @@ export default function CallScreen({ route, navigation }) {
 
   useEffect(() => {
     if (!conversationId) return;
-    log("subscribing OnSignal", conversationId);
     try {
       subRef.current?.unsubscribe?.();
     } catch {}
+    log("subscribing OnSignal", conversationId);
 
     subRef.current = client
       .graphql({
@@ -309,7 +332,7 @@ export default function CallScreen({ route, navigation }) {
             if (sig.type === "OFFER") {
               if (!callSessionIdRef.current)
                 setCallSessionId(sig.callSessionId);
-              log("OFFER received; waiting for user action in ChatScreen");
+              log("OFFER received (CallScreen). Waiting/handled elsewhere.");
               return;
             }
 
@@ -318,9 +341,24 @@ export default function CallScreen({ route, navigation }) {
                 typeof sig.payload === "string"
                   ? JSON.parse(sig.payload)
                   : sig.payload;
-              if (!pc.currentRemoteDescription) {
+
+              try {
                 await pc.setRemoteDescription(answer);
                 log("setRemoteDescription(answer) OK");
+              } catch (e) {
+                log(
+                  "setRemoteDescription(answer) error (non-fatal)",
+                  e?.message || e,
+                );
+              }
+
+              const queued = earlyIceRef.current.splice(0);
+              for (const c of queued) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(c));
+                } catch (e) {
+                  log("flush ICE failed", e);
+                }
               }
               return;
             }
@@ -331,11 +369,16 @@ export default function CallScreen({ route, navigation }) {
                   ? JSON.parse(sig.payload)
                   : sig.payload;
               if (candidate) {
-                try {
-                  await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                  log("addIceCandidate OK");
-                } catch (e) {
-                  log("addIceCandidate failed", e);
+                if (!hasRemoteDesc(pc)) {
+                  earlyIceRef.current.push(candidate);
+                  log("queued ICE (no remote desc yet)");
+                } else {
+                  try {
+                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                    log("addIceCandidate OK");
+                  } catch (e) {
+                    log("addIceCandidate failed", e);
+                  }
                 }
               }
               return;
@@ -360,16 +403,13 @@ export default function CallScreen({ route, navigation }) {
               } catch {}
               stopTracksAndPC();
               await postEndedSystemMessage(sig.senderId, { declined: true });
-              try {
-                navigation?.goBack?.();
-              } catch {}
+              leaveToChat();
               return;
             }
 
-            if (sig.type === "BYE") {
+            if (sig.type === "BYE" || sig.type === "ENDED") {
               if (endingRef.current) return;
               endingRef.current = true;
-
               setStatus("ENDED");
               try {
                 await safeGql(
@@ -384,7 +424,6 @@ export default function CallScreen({ route, navigation }) {
                   "UpdateCallSession(BYE)",
                 );
               } catch {}
-
               stopTracksAndPC();
               await postEndedSystemMessage(sig.senderId);
               leaveToChat();
@@ -409,7 +448,9 @@ export default function CallScreen({ route, navigation }) {
       }
       answeredOnceRef.current = true;
 
+      setStatus("RINGING");
       log("answering incoming call (user accepted)", { incomingSessionId });
+
       try {
         if (!callSessionIdRef.current) setCallSessionId(incomingSessionId);
 
@@ -420,7 +461,11 @@ export default function CallScreen({ route, navigation }) {
             ? JSON.parse(incomingOffer)
             : incomingOffer;
 
-        if (!pc.currentRemoteDescription) {
+        if (!offer?.type || !offer?.sdp) {
+          throw new Error("Bad incoming offer payload");
+        }
+
+        if (!hasRemoteDesc(pc)) {
           await pc.setRemoteDescription(offer);
           log("setRemoteDescription(offer) OK");
         }
@@ -436,17 +481,25 @@ export default function CallScreen({ route, navigation }) {
         }
 
         pc = ensurePC();
-        log("createAnswer on pc", pc?._peerConnectionId);
-        const answer = await pc.createAnswer();
+        const answer = await pc.createAnswer(SDP_ANSWER_OPTS);
         await pc.setLocalDescription(answer);
-        log("sending ANSWER");
         await sendSignal("ANSWER", answer, incomingSessionId);
+        log("ANSWER sent");
 
-        setStatus("RINGING");
+        const queued = earlyIceRef.current.splice(0);
+        for (const c of queued) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(c));
+          } catch (e) {
+            log("flush ICE failed", e);
+          }
+        }
+
         setIsCaller(false);
       } catch (e) {
         log("accept/answer error", e);
         Alert.alert("Call error", "Failed to accept the incoming call.");
+        setStatus("IDLE");
         answeredOnceRef.current = false;
       }
     })();
@@ -485,7 +538,7 @@ export default function CallScreen({ route, navigation }) {
         {
           input: {
             conversationId,
-            participantIds: Array.from(new Set(conversation?.memberIds || [])),
+            participantIds: Array.from(new Set(memberIdsFromRoute || [])),
             createdBy: me.sub,
             status: "RINGING",
             startedAt: new Date().toISOString(),
@@ -499,15 +552,15 @@ export default function CallScreen({ route, navigation }) {
       log("CallSession created", sessionId);
 
       pc = ensurePC();
-      log("createOffer on pc", pc?._peerConnectionId, {
-        connectionState: pc?.connectionState,
-        signalingState: pc?.signalingState,
-        iceConnectionState: pc?.iceConnectionState,
-      });
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer(SDP_OFFER_OPTS);
       await pc.setLocalDescription(offer);
-      log("sending OFFER", { callSessionId: sessionId });
-      await sendSignal("OFFER", offer, sessionId);
+
+      await sendSignal(
+        "OFFER",
+        { ...offer, callerId: me.sub, callerName: "Unknown caller" },
+        sessionId,
+      );
+      log("OFFER sent", { callSessionId: sessionId });
     } catch (e) {
       log("startCall error", e);
       Alert.alert("Call failed", "Unable to start the call.");
@@ -517,7 +570,7 @@ export default function CallScreen({ route, navigation }) {
   }, [
     me?.sub,
     conversationId,
-    conversation?.memberIds,
+    memberIdsFromRoute,
     ensurePC,
     getLocalStream,
     sendSignal,

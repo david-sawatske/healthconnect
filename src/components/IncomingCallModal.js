@@ -1,136 +1,107 @@
-import React, { useEffect } from "react";
-import { Modal, View, Text, Pressable, StyleSheet, Image, Platform } from "react-native";
+import React, { useCallback, useState } from "react";
+import {
+  Modal,
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+  Platform,
+} from "react-native";
 import { useCall } from "../context/CallContext";
 
-// Optional haptics (safe if not installed)
-let Haptics = null;
-try {
-  // If you haven't installed it yet, run: npx expo install expo-haptics
-  Haptics = require("expo-haptics");
-} catch (_) {}
-
 export default function IncomingCallModal({ onAccept, onDecline }) {
-  const { incoming, hideIncoming } = useCall();
-  const visible = !!incoming;
+  const { visible, status, incoming } = useCall();
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (visible && Haptics?.impactAsync) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+  const handleAccept = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onAccept?.(incoming);
+    } finally {
+      setBusy(false);
     }
-  }, [visible]);
+  }, [busy, onAccept, incoming]);
+
+  const handleDecline = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onDecline?.(incoming);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, onDecline, incoming]);
 
   if (!visible) return null;
 
-  const callerName = incoming?.callerName ?? "Unknown caller";
-  const avatarUrl = incoming?.avatarUrl;
-
-  const handleDecline = () => {
-    onDecline?.(incoming);
-    hideIncoming();
-  };
-
-  const handleAccept = () => {
-    onAccept?.(incoming);
-    // We keep the modal up to let the call screen take over, but you can hide if desired:
-    hideIncoming();
-  };
-
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      statusBarTranslucent={Platform.OS === "android"}
-    >
+    <Modal animationType="slide" transparent visible={visible}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
-          {avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-          ) : (
-            <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={styles.avatarInitial}>{callerName.charAt(0).toUpperCase()}</Text>
-            </View>
-          )}
           <Text style={styles.title}>Incoming call</Text>
-          <Text style={styles.name}>{callerName}</Text>
+          <Text style={styles.subtitle}>
+            {incoming?.callerName ?? "Unknown caller"}
+          </Text>
 
-          <View style={styles.actions}>
-            <Pressable onPress={handleDecline} style={[styles.btn, styles.btnDecline]}>
+          <View style={styles.row}>
+            <TouchableOpacity
+              testID="decline"
+              onPress={handleDecline}
+              disabled={busy}
+              style={[styles.btn, styles.btnDecline]}
+            >
               <Text style={styles.btnText}>Decline</Text>
-            </Pressable>
-            <Pressable onPress={handleAccept} style={[styles.btn, styles.btnAccept]}>
-              <Text style={styles.btnText}>Answer</Text>
-            </Pressable>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              testID="accept"
+              onPress={handleAccept}
+              disabled={busy}
+              style={[styles.btn, styles.btnAccept]}
+            >
+              {busy || status === "connecting" ? (
+                <ActivityIndicator />
+              ) : (
+                <Text style={styles.btnText}>Accept</Text>
+              )}
+            </TouchableOpacity>
           </View>
+
+          {Platform.OS === "ios" && <Text style={styles.note}>Ringing…</Text>}
         </View>
       </View>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = {
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
     alignItems: "center",
-    justifyContent: "flex-end",
-    padding: 16,
+    justifyContent: "center",
   },
   card: {
-    width: "100%",
-    backgroundColor: "white",
-    borderRadius: 24,
+    width: "88%",
     padding: 20,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 6,
+    borderRadius: 16,
+    backgroundColor: "#111827",
+    borderColor: "#374151",
+    borderWidth: 1,
   },
-  avatar: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    marginBottom: 12,
-  },
-  avatarFallback: {
-    backgroundColor: "#e8e8e8",
+  title: { fontSize: 20, fontWeight: "700", color: "white" },
+  subtitle: { marginTop: 6, fontSize: 16, color: "#D1D5DB" },
+  row: { flexDirection: "row", gap: 12, marginTop: 18 },
+  btn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarInitial: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: "#333",
-  },
-  title: {
-    fontSize: 16,
-    opacity: 0.7,
-    marginBottom: 4,
-  },
-  name: {
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 16,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  btn: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 999,
-  },
-  btnDecline: {
-    backgroundColor: "#e74c3c",
-  },
-  btnAccept: {
-    backgroundColor: "#2ecc71",
-  },
-  btnText: {
-    color: "white",
-    fontWeight: "700",
-    fontSize: 16,
-  },
-});
+  btnDecline: { backgroundColor: "#991B1B" },
+  btnAccept: { backgroundColor: "#065F46" },
+  btnText: { color: "white", fontWeight: "700" },
+  note: { marginTop: 12, color: "#9CA3AF", textAlign: "center" },
+};

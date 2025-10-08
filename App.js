@@ -3,12 +3,17 @@ import "react-native-reanimated";
 import "react-native-get-random-values";
 import "react-native-url-polyfill/auto";
 
-import React, { useEffect } from "react";
+import React from "react";
 import { View } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { NavigationContainer } from "@react-navigation/native";
+import {
+  NavigationContainer,
+  createNavigationContainerRef,
+} from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Amplify } from "aws-amplify";
+import { generateClient } from "aws-amplify/api";
+import { getCurrentUser } from "aws-amplify/auth";
 import amplifyConfig from "./src/amplifyconfiguration.json";
 
 import AuthScreen from "./src/screens/AuthScreen";
@@ -24,35 +29,125 @@ import IncomingCallModal from "./src/components/IncomingCallModal";
 Amplify.configure(amplifyConfig);
 
 const Stack = createNativeStackNavigator();
+const navRef = createNavigationContainerRef();
+const client = generateClient();
+
+const CreateCallSignal = /* GraphQL */ `
+  mutation CreateCallSignal($input: CreateCallSignalInput!) {
+    createCallSignal(input: $input) {
+      id
+    }
+  }
+`;
 
 function Root() {
-  const { showIncoming } = useCall();
+  const call = useCall();
 
-  // Temp Demo to test modal
-  useEffect(() => {
-    if (__DEV__) {
-      const t = setTimeout(() => {
-        showIncoming({
-          callerName: "Dr. Smith",
-          avatarUrl: null,
-          conversationId: "test-conv",
-          callSessionId: "test-session",
-          senderId: "provider-123",
+  async function onAccept(incoming) {
+    try {
+      const u = await getCurrentUser().catch(() => null);
+      const senderId = u?.userId;
+
+      const conversationId = incoming?.conversationId ?? null;
+      const callSessionId = incoming?.callSessionId ?? null;
+
+      if (!conversationId || !callSessionId || !senderId) {
+        console.log("[ACCEPT] missing fields", {
+          conversationId,
+          callSessionId,
+          senderId,
+          incoming,
         });
-      }, 2000);
-      return () => clearTimeout(t);
+        return;
+      }
+
+      const { data, errors } = await client.graphql({
+        query: CreateCallSignal,
+        variables: {
+          input: {
+            conversationId,
+            callSessionId,
+            senderId,
+            type: "ANSWER",
+            payload: JSON.stringify({ answeredAt: Date.now() }),
+          },
+        },
+        authMode: "userPool",
+      });
+      if (errors?.length) {
+        console.log("[signal ANSWER error]", { data, errors });
+        return;
+      }
+    } catch (e) {
+      console.log("[signal ANSWER error]", e);
+      return;
     }
-  }, [showIncoming]);
+
+    call?.setConnecting?.();
+    call?.hide?.();
+    if (navRef.isReady()) {
+      navRef.navigate("Call", {
+        callSessionId: incoming.callSessionId,
+        conversationId: incoming.conversationId,
+        role: "callee",
+        incomingOffer: incoming.offer,
+      });
+    }
+  }
+
+  async function onDecline(incoming) {
+    try {
+      const u = await getCurrentUser().catch(() => null);
+      const senderId = u?.userId;
+
+      const conversationId = incoming?.conversationId ?? null;
+      const callSessionId = incoming?.callSessionId ?? null;
+
+      if (!conversationId || !callSessionId || !senderId) {
+        console.log("[DECLINE] missing fields", {
+          conversationId,
+          callSessionId,
+          senderId,
+          incoming,
+        });
+        call?.hide?.();
+        return;
+      }
+
+      const { data, errors } = await client.graphql({
+        query: CreateCallSignal,
+        variables: {
+          input: {
+            conversationId,
+            callSessionId,
+            senderId,
+            type: "DECLINED",
+            payload: JSON.stringify({ declinedAt: Date.now() }),
+          },
+        },
+        authMode: "userPool",
+      });
+      if (errors?.length)
+        console.log("[signal DECLINED error]", { data, errors });
+    } catch (e) {
+      console.log("[signal DECLINED error]", e);
+    } finally {
+      call?.hide?.();
+    }
+  }
 
   return (
     <View style={{ flex: 1 }}>
-      <NavigationContainer>
+      <NavigationContainer ref={navRef}>
         <Stack.Navigator initialRouteName="Auth">
           <Stack.Screen name="Auth" component={AuthScreen} />
           <Stack.Screen name="Home" component={HomeScreen} />
           <Stack.Screen name="Chat" component={ChatScreen} />
           <Stack.Screen name="Invite" component={InviteScreen} />
-          <Stack.Screen name="InviteApproval" component={InviteApprovalScreen} />
+          <Stack.Screen
+            name="InviteApproval"
+            component={InviteApprovalScreen}
+          />
           <Stack.Screen
             name="Call"
             component={CallScreen}
@@ -62,15 +157,7 @@ function Root() {
         <StatusBar style="auto" />
       </NavigationContainer>
 
-      {/* Global incoming-call modal */}
-      <IncomingCallModal
-        onAccept={(data) => {
-          console.log("[CALL] Accept tapped", data);
-        }}
-        onDecline={(data) => {
-          console.log("[CALL] Decline tapped", data);
-        }}
-      />
+      <IncomingCallModal onAccept={onAccept} onDecline={onDecline} />
     </View>
   );
 }
