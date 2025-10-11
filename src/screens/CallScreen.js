@@ -89,12 +89,25 @@ const CreateMessage = /* GraphQL */ `
   }
 `;
 
+const GetCallSession = /* GraphQL */ `
+  query GetCallSession($id: ID!) {
+    getCallSession(id: $id) {
+      id
+      status
+      endedAt
+      updatedAt
+    }
+  }
+`;
+
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const SDP_OFFER_OPTS = { offerToReceiveAudio: true, offerToReceiveVideo: true };
 const SDP_ANSWER_OPTS = {
   offerToReceiveAudio: true,
   offerToReceiveVideo: true,
 };
+
+const RING_TIMEOUT_MS = 30000;
 
 export default function CallScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
@@ -116,6 +129,9 @@ export default function CallScreen({ route, navigation }) {
   const remoteStreamRef = useRef(null);
   const subRef = useRef(null);
   const earlyIceRef = useRef([]);
+
+  const ringTimerRef = useRef(null);
+  const ringPollRef = useRef(null);
 
   const [me, setMe] = useState(null);
   const [callSessionId, _setCallSessionId] = useState(null);
@@ -139,7 +155,7 @@ export default function CallScreen({ route, navigation }) {
     (async () => {
       try {
         const u = await getCurrentUser();
-        setMe({ sub: u.userId });
+        setMe({ sub: u.userId, username: u.username });
         log("currentUser", { sub: u.userId, username: u.username });
       } catch (e) {
         log("getCurrentUser failed", e);
@@ -158,6 +174,100 @@ export default function CallScreen({ route, navigation }) {
     pc.connectionState === "closed" ||
     pc.signalingState === "closed" ||
     pc.iceConnectionState === "closed";
+
+  const clearRingTimer = useCallback(() => {
+    if (ringTimerRef.current) {
+      clearTimeout(ringTimerRef.current);
+      ringTimerRef.current = null;
+      log("ring timer cleared");
+    }
+  }, []);
+
+  const clearRingingPoll = useCallback(() => {
+    if (ringPollRef.current) {
+      clearInterval(ringPollRef.current);
+      ringPollRef.current = null;
+      log("ring poll cleared");
+    }
+  }, []);
+
+  const startRingingPoll = useCallback(
+    (sid) => {
+      clearRingingPoll();
+      ringPollRef.current = setInterval(async () => {
+        try {
+          const { data } = await client.graphql({
+            query: GetCallSession,
+            variables: { id: sid },
+            authMode: "userPool",
+          });
+          const st = data?.getCallSession?.status;
+          if (st === "ENDED") {
+            log("ring poll: session ended remotely — stopping");
+            clearRingTimer();
+            clearRingingPoll();
+            stopTracksAndPC();
+            setStatus("ENDED");
+            leaveToChat();
+          }
+        } catch (e) {
+          log("ring poll error", e?.message || e);
+        }
+      }, 1000);
+      log("ring poll started");
+    },
+    [clearRingTimer, clearRingingPoll],
+  );
+
+  const startRingTimer = useCallback(
+    (sid) => {
+      clearRingTimer();
+      ringTimerRef.current = setTimeout(async () => {
+        log("ring timeout fired");
+        try {
+          await safeGql(
+            CreateCallSignal,
+            {
+              input: {
+                conversationId,
+                callSessionId: sid || callSessionIdRef.current,
+                senderId: me?.sub,
+                type: "BYE",
+                payload: JSON.stringify({
+                  reason: "no-answer",
+                  at: Date.now(),
+                }),
+              },
+            },
+            "CreateCallSignal:TIMEOUT",
+          );
+        } catch (e) {
+          log("send TIMEOUT failed", e);
+        }
+
+        try {
+          await safeGql(
+            UpdateCallSession,
+            {
+              input: {
+                id: sid || callSessionIdRef.current,
+                status: "ENDED",
+                endedAt: new Date().toISOString(),
+              },
+            },
+            "UpdateCallSession(TIMEOUT)",
+          );
+        } catch {}
+
+        stopTracksAndPC();
+        setStatus("ENDED");
+        await postEndedSystemMessage(me?.sub, { timeout: true });
+        leaveToChat();
+      }, RING_TIMEOUT_MS);
+      log("ring timer started", RING_TIMEOUT_MS, "ms");
+    },
+    [clearRingTimer, conversationId, me?.sub],
+  );
 
   const createPC = useCallback(() => {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -184,17 +294,25 @@ export default function CallScreen({ route, navigation }) {
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       log("connectionState", s);
-      if (s === "connected") setStatus("CONNECTED");
+      if (s === "connected") {
+        setStatus("CONNECTED");
+        clearRingTimer();
+        clearRingingPoll();
+      }
     };
 
     pc.oniceconnectionstatechange = () => {
       const s = pc.iceConnectionState;
       log("iceConnectionState", s);
-      if (s === "connected" || s === "completed") setStatus("CONNECTED");
+      if (s === "connected" || s === "completed") {
+        setStatus("CONNECTED");
+        clearRingTimer();
+        clearRingingPoll();
+      }
     };
 
     return pc;
-  }, [me?.sub]);
+  }, [me?.sub, clearRingTimer, clearRingingPoll]);
 
   const ensurePC = useCallback(() => {
     const pc = pcRef.current;
@@ -257,6 +375,8 @@ export default function CallScreen({ route, navigation }) {
   );
 
   const stopTracksAndPC = () => {
+    clearRingTimer();
+    clearRingingPoll();
     try {
       pcRef.current?.getSenders?.().forEach((s) => s.track?.stop?.());
     } catch {}
@@ -281,6 +401,11 @@ export default function CallScreen({ route, navigation }) {
 
   const postEndedSystemMessage = async (endedBySub, opts = {}) => {
     try {
+      const body = opts.declined
+        ? "Call declined"
+        : opts.timeout
+          ? "Missed call (no answer)"
+          : "Call ended";
       await client.graphql({
         query: CreateMessage,
         variables: {
@@ -289,13 +414,13 @@ export default function CallScreen({ route, navigation }) {
             senderId: endedBySub || "system",
             memberIds: memberIdsFromRoute,
             type: "SYSTEM",
-            body: opts.declined ? "Call declined" : "Call ended",
+            body,
           },
         },
         authMode: "userPool",
       });
     } catch (e) {
-      log("CreateMessage(system: Call ended) failed", e?.message || e);
+      log("CreateMessage(system) failed", e?.message || e);
     }
   };
 
@@ -325,7 +450,6 @@ export default function CallScreen({ route, navigation }) {
               sig?.callSessionId,
             );
             if (!sig) return;
-            if (sig.senderId === me?.sub) return;
 
             let pc = ensurePC();
 
@@ -345,6 +469,8 @@ export default function CallScreen({ route, navigation }) {
               try {
                 await pc.setRemoteDescription(answer);
                 log("setRemoteDescription(answer) OK");
+                clearRingTimer();
+                clearRingingPoll();
               } catch (e) {
                 log(
                   "setRemoteDescription(answer) error (non-fatal)",
@@ -384,7 +510,9 @@ export default function CallScreen({ route, navigation }) {
               return;
             }
 
-            if (sig.type === "DECLINED") {
+            if (sig.type === "DECLINE" || sig.type === "DECLINED") {
+              clearRingTimer();
+              clearRingingPoll();
               if (endingRef.current) return;
               endingRef.current = true;
               setStatus("ENDED");
@@ -398,7 +526,7 @@ export default function CallScreen({ route, navigation }) {
                       endedAt: new Date().toISOString(),
                     },
                   },
-                  "UpdateCallSession(DECLINED)",
+                  "UpdateCallSession(DECLINE)",
                 );
               } catch {}
               stopTracksAndPC();
@@ -407,7 +535,50 @@ export default function CallScreen({ route, navigation }) {
               return;
             }
 
+            if (sig.type === "CANCEL" || sig.type === "TIMEOUT") {
+              clearRingTimer();
+              clearRingingPoll();
+              if (endingRef.current) return;
+              endingRef.current = true;
+              setStatus("ENDED");
+
+              let payload = sig.payload;
+              if (typeof payload === "string") {
+                try {
+                  payload = JSON.parse(payload);
+                } catch {}
+              }
+              const reason = payload?.reason;
+
+              try {
+                await safeGql(
+                  UpdateCallSession,
+                  {
+                    input: {
+                      id: sig.callSessionId || callSessionIdRef.current,
+                      status: "ENDED",
+                      endedAt: new Date().toISOString(),
+                    },
+                  },
+                  "UpdateCallSession(CANCEL/TIMEOUT)",
+                );
+              } catch {}
+
+              stopTracksAndPC();
+              const declined = reason === "declined";
+              await postEndedSystemMessage(sig.senderId, {
+                timeout:
+                  sig.type === "TIMEOUT" ||
+                  (!declined && reason === "no-answer"),
+                declined,
+              });
+              leaveToChat();
+              return;
+            }
+
             if (sig.type === "BYE" || sig.type === "ENDED") {
+              clearRingTimer();
+              clearRingingPoll();
               if (endingRef.current) return;
               endingRef.current = true;
               setStatus("ENDED");
@@ -437,7 +608,14 @@ export default function CallScreen({ route, navigation }) {
       });
 
     return () => subRef.current?.unsubscribe?.();
-  }, [conversationId, me?.sub, ensurePC, isCaller]);
+  }, [
+    conversationId,
+    me?.sub,
+    ensurePC,
+    isCaller,
+    clearRingTimer,
+    clearRingingPoll,
+  ]);
 
   useEffect(() => {
     (async () => {
@@ -561,11 +739,16 @@ export default function CallScreen({ route, navigation }) {
         sessionId,
       );
       log("OFFER sent", { callSessionId: sessionId });
+
+      startRingTimer(sessionId);
+      startRingingPoll(sessionId);
     } catch (e) {
       log("startCall error", e);
       Alert.alert("Call failed", "Unable to start the call.");
       setStatus("IDLE");
       setIsCaller(false);
+      clearRingTimer();
+      clearRingingPoll();
     }
   }, [
     me?.sub,
@@ -575,6 +758,10 @@ export default function CallScreen({ route, navigation }) {
     getLocalStream,
     sendSignal,
     status,
+    startRingTimer,
+    startRingingPoll,
+    clearRingTimer,
+    clearRingingPoll,
   ]);
 
   const hangUp = useCallback(async () => {
@@ -582,6 +769,8 @@ export default function CallScreen({ route, navigation }) {
     endingRef.current = true;
 
     setStatus("ENDED");
+    clearRingTimer();
+    clearRingingPoll();
 
     const sid = callSessionIdRef.current;
     try {
@@ -607,7 +796,7 @@ export default function CallScreen({ route, navigation }) {
     stopTracksAndPC();
     await postEndedSystemMessage(me?.sub);
     leaveToChat();
-  }, [me?.sub, sendSignal]);
+  }, [me?.sub, sendSignal, clearRingTimer, clearRingingPoll]);
 
   useEffect(() => {
     return () => {

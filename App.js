@@ -40,80 +40,53 @@ const CreateCallSignal = /* GraphQL */ `
   }
 `;
 
+const UpdateCallSession = /* GraphQL */ `
+  mutation UpdateCallSession($input: UpdateCallSessionInput!) {
+    updateCallSession(input: $input) {
+      id
+      status
+      endedAt
+      updatedAt
+    }
+  }
+`;
+
 function Root() {
   const call = useCall();
 
   async function onAccept(incoming) {
-    try {
-      const u = await getCurrentUser().catch(() => null);
-      const senderId = u?.userId;
-
-      const conversationId = incoming?.conversationId ?? null;
-      const callSessionId = incoming?.callSessionId ?? null;
-
-      if (!conversationId || !callSessionId || !senderId) {
-        console.log("[ACCEPT] missing fields", {
-          conversationId,
-          callSessionId,
-          senderId,
-          incoming,
-        });
-        return;
-      }
-
-      const { data, errors } = await client.graphql({
-        query: CreateCallSignal,
-        variables: {
-          input: {
-            conversationId,
-            callSessionId,
-            senderId,
-            type: "ANSWER",
-            payload: JSON.stringify({ answeredAt: Date.now() }),
-          },
-        },
-        authMode: "userPool",
-      });
-      if (errors?.length) {
-        console.log("[signal ANSWER error]", { data, errors });
-        return;
-      }
-    } catch (e) {
-      console.log("[signal ANSWER error]", e);
-      return;
-    }
-
     call?.setConnecting?.();
     call?.hide?.();
-    if (navRef.isReady()) {
+
+    if (
+      navRef.isReady() &&
+      incoming?.callSessionId &&
+      incoming?.conversationId
+    ) {
       navRef.navigate("Call", {
         callSessionId: incoming.callSessionId,
         conversationId: incoming.conversationId,
         role: "callee",
         incomingOffer: incoming.offer,
       });
+    } else {
+      console.log("[ACCEPT] missing params", incoming);
     }
   }
 
   async function onDecline(incoming) {
+    const u = await getCurrentUser().catch(() => null);
+    const senderId = u?.userId;
+    const { conversationId, callSessionId } = incoming || {};
+
+    if (!conversationId || !callSessionId || !senderId) {
+      console.log("[DECLINE] missing fields", { conversationId, callSessionId, senderId, incoming });
+      call?.hide?.();
+      return;
+    }
+
     try {
-      const u = await getCurrentUser().catch(() => null);
-      const senderId = u?.userId;
-
-      const conversationId = incoming?.conversationId ?? null;
-      const callSessionId = incoming?.callSessionId ?? null;
-
-      if (!conversationId || !callSessionId || !senderId) {
-        console.log("[DECLINE] missing fields", {
-          conversationId,
-          callSessionId,
-          senderId,
-          incoming,
-        });
-        call?.hide?.();
-        return;
-      }
-
+      console.log("[DECLINE] emit BYE", { conversationId, callSessionId, senderId });
       const { data, errors } = await client.graphql({
         query: CreateCallSignal,
         variables: {
@@ -121,21 +94,37 @@ function Root() {
             conversationId,
             callSessionId,
             senderId,
-            type: "DECLINED",
-            payload: JSON.stringify({ declinedAt: Date.now() }),
+            type: "BYE",
+            payload: JSON.stringify({ reason: "declined", at: Date.now() }),
           },
         },
         authMode: "userPool",
       });
-      if (errors?.length)
-        console.log("[signal DECLINED error]", { data, errors });
+
+      if (errors?.length) {
+        console.log("[DECLINE] createCallSignal(BYE) errors", errors);
+      } else {
+        console.log("[DECLINE] createCallSignal(BYE) id", data?.createCallSignal?.id);
+      }
+
+      await client.graphql({
+        query: /* GraphQL */ `
+            mutation UpdateCallSession($input: UpdateCallSessionInput!) {
+                updateCallSession(input: $input) { id status endedAt }
+            }
+        `,
+        variables: {
+          input: { id: callSessionId, status: "ENDED", endedAt: new Date().toISOString() },
+        },
+        authMode: "userPool",
+      }).catch((e) => console.log("[DECLINE] UpdateCallSession ENDED error", e?.message || e));
     } catch (e) {
-      console.log("[signal DECLINED error]", e);
+      console.log("[DECLINE] createCallSignal(BYE) threw", e?.message || e);
     } finally {
       call?.hide?.();
     }
   }
-
+  
   return (
     <View style={{ flex: 1 }}>
       <NavigationContainer ref={navRef}>

@@ -10,7 +10,7 @@ import {
 import { useCall } from "../context/CallContext";
 
 export default function IncomingCallModal({ onAccept, onDecline }) {
-  const { visible, status, incoming } = useCall();
+  const { visible, status, incoming, dismissIncoming } = useCall();
   const [busy, setBusy] = useState(false);
 
   const handleAccept = useCallback(async () => {
@@ -18,10 +18,11 @@ export default function IncomingCallModal({ onAccept, onDecline }) {
     setBusy(true);
     try {
       await onAccept?.(incoming);
+      dismissIncoming?.();
     } finally {
       setBusy(false);
     }
-  }, [busy, onAccept, incoming]);
+  }, [busy, onAccept, incoming, dismissIncoming]);
 
   const handleDecline = useCallback(async () => {
     if (busy) return;
@@ -30,26 +31,32 @@ export default function IncomingCallModal({ onAccept, onDecline }) {
       await onDecline?.(incoming);
     } finally {
       setBusy(false);
+      dismissIncoming?.();
     }
-  }, [busy, onDecline, incoming]);
+  }, [busy, onDecline, incoming, dismissIncoming]);
 
   if (!visible) return null;
+
+  const callerName = incoming?.callerName ?? "Unknown caller";
+  const isConnecting = busy || status === "connecting";
 
   return (
     <Modal animationType="slide" transparent visible={visible}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <Text style={styles.title}>Incoming call</Text>
-          <Text style={styles.subtitle}>
-            {incoming?.callerName ?? "Unknown caller"}
-          </Text>
+          <Text style={styles.subtitle}>{callerName}</Text>
 
           <View style={styles.row}>
             <TouchableOpacity
               testID="decline"
               onPress={handleDecline}
               disabled={busy}
-              style={[styles.btn, styles.btnDecline]}
+              style={[
+                styles.btn,
+                styles.btnDecline,
+                busy && styles.btnDisabled,
+              ]}
             >
               <Text style={styles.btnText}>Decline</Text>
             </TouchableOpacity>
@@ -58,9 +65,9 @@ export default function IncomingCallModal({ onAccept, onDecline }) {
               testID="accept"
               onPress={handleAccept}
               disabled={busy}
-              style={[styles.btn, styles.btnAccept]}
+              style={[styles.btn, styles.btnAccept, busy && styles.btnDisabled]}
             >
-              {busy || status === "connecting" ? (
+              {isConnecting ? (
                 <ActivityIndicator />
               ) : (
                 <Text style={styles.btnText}>Accept</Text>
@@ -68,7 +75,13 @@ export default function IncomingCallModal({ onAccept, onDecline }) {
             </TouchableOpacity>
           </View>
 
-          {Platform.OS === "ios" && <Text style={styles.note}>Ringing…</Text>}
+          <Text style={styles.note}>
+            {Platform.OS === "ios"
+              ? "Ringing…"
+              : status === "connecting"
+                ? "Connecting…"
+                : "Incoming…"}
+          </Text>
         </View>
       </View>
     </Modal>
@@ -102,6 +115,7 @@ const styles = {
   },
   btnDecline: { backgroundColor: "#991B1B" },
   btnAccept: { backgroundColor: "#065F46" },
+  btnDisabled: { opacity: 0.7 },
   btnText: { color: "white", fontWeight: "700" },
   note: { marginTop: 12, color: "#9CA3AF", textAlign: "center" },
 };
