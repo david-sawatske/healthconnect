@@ -24,74 +24,74 @@ const client = generateClient();
 const log = (...args) => console.log("[CHAT]", ...args);
 
 const MessagesByConversation = /* GraphQL */ `
-    query MessagesByConversation(
-        $conversationId: ID!
-        $limit: Int
-        $nextToken: String
+  query MessagesByConversation(
+    $conversationId: ID!
+    $limit: Int
+    $nextToken: String
+  ) {
+    messagesByConversation(
+      conversationId: $conversationId
+      sortDirection: ASC
+      limit: $limit
+      nextToken: $nextToken
     ) {
-        messagesByConversation(
-            conversationId: $conversationId
-            sortDirection: ASC
-            limit: $limit
-            nextToken: $nextToken
-        ) {
-            items {
-                id
-                conversationId
-                senderId
-                memberIds
-                type
-                body
-                mediaKey
-                thumbnailKey
-                createdAt
-            }
-            nextToken
-        }
+      items {
+        id
+        conversationId
+        senderId
+        memberIds
+        type
+        body
+        mediaKey
+        thumbnailKey
+        createdAt
+      }
+      nextToken
     }
+  }
 `;
 
 const CreateMessage = /* GraphQL */ `
-    mutation CreateMessage($input: CreateMessageInput!) {
-        createMessage(input: $input) {
-            id
-            conversationId
-            senderId
-            memberIds
-            type
-            body
-            mediaKey
-            thumbnailKey
-            createdAt
-        }
+  mutation CreateMessage($input: CreateMessageInput!) {
+    createMessage(input: $input) {
+      id
+      conversationId
+      senderId
+      memberIds
+      type
+      body
+      mediaKey
+      thumbnailKey
+      createdAt
     }
+  }
 `;
 
 const OnCreateMessage = /* GraphQL */ `
-    subscription OnCreateMessage {
-        onCreateMessage {
-            id
-            conversationId
-            senderId
-            memberIds
-            body
-            mediaKey
-            thumbnailKey
-            type
-            createdAt
-        }
+  subscription OnCreateMessage {
+    onCreateMessage {
+      id
+      conversationId
+      senderId
+      memberIds
+      body
+      mediaKey
+      thumbnailKey
+      type
+      createdAt
     }
+  }
 `;
 
 const GetUser = /* GraphQL */ `
-    query GetUser($id: ID!) {
-        getUser(id: $id) {
-            id
-            displayName
-            role
-            email
-        }
+  query GetUser($id: ID!) {
+    getUser(id: $id) {
+      id
+      displayName
+      role
+      email
     }
+  }
 `;
 
 function extFromName(name = "") {
@@ -160,8 +160,8 @@ export default function ChatScreen({ route, navigation }) {
               query: GetUser,
               variables: { id },
               authMode: "userPool",
-            })
-          )
+            }),
+          ),
         );
         if (cancelled) return;
         const map = {};
@@ -194,7 +194,7 @@ export default function ChatScreen({ route, navigation }) {
         });
         setMessages(res?.data?.messagesByConversation?.items ?? []);
         requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: false })
+          listRef.current?.scrollToEnd?.({ animated: false }),
         );
       } catch (err) {
         console.log("Failed to load messages", err);
@@ -208,10 +208,10 @@ export default function ChatScreen({ route, navigation }) {
           const msg = data?.onCreateMessage;
           if (msg?.conversationId !== conversationId) return;
           setMessages((prev) =>
-            prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+            prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
           );
           requestAnimationFrame(() =>
-            listRef.current?.scrollToEnd?.({ animated: true })
+            listRef.current?.scrollToEnd?.({ animated: true }),
           );
         },
         error: (err) => console.log("message subscription error", err),
@@ -241,10 +241,10 @@ export default function ChatScreen({ route, navigation }) {
       const created = data?.createMessage;
       if (created) {
         setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created]
+          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
         );
         requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true })
+          listRef.current?.scrollToEnd?.({ animated: true }),
         );
       }
       setText("");
@@ -294,10 +294,10 @@ export default function ChatScreen({ route, navigation }) {
       const created = data?.createMessage;
       if (created) {
         setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created]
+          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
         );
         requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true })
+          listRef.current?.scrollToEnd?.({ animated: true }),
         );
       }
     } catch (e) {
@@ -427,8 +427,8 @@ export default function ChatScreen({ route, navigation }) {
         )}
 
         {(item.type === "IMAGE" ||
-            item.type === "VIDEO" ||
-            item.type === "FILE") &&
+          item.type === "VIDEO" ||
+          item.type === "FILE") &&
           !!item.mediaKey && (
             <MediaBubble mediaKey={item.mediaKey} type={item.type} />
           )}

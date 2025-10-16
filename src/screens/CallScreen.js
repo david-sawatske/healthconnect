@@ -111,7 +111,8 @@ const SDP_ANSWER_OPTS = {
 };
 
 const RING_TIMEOUT_MS = 30000;
-``
+
+/** Helpers **/
 const formatDuration = (ms) => {
   if (!ms || ms < 0) return null;
   const s = Math.floor(ms / 1000);
@@ -171,8 +172,12 @@ export default function CallScreen({ route, navigation }) {
   const [muted, setMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
 
+
   const startedAtRef = useRef(null);
   const startPostedRef = useRef(false);
+
+
+  const peerIdRef = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -424,6 +429,20 @@ export default function CallScreen({ route, navigation }) {
     } catch {}
   };
 
+  /** Ensure SYSTEM messages always include both participants */
+  const resolvedMemberIds = useCallback(
+    (fallbackOtherId) => {
+      const set = new Set();
+      (memberIdsFromRoute || []).filter(Boolean).forEach((id) => set.add(id));
+      if (me?.sub) set.add(me.sub);
+      if (peerIdRef.current) set.add(peerIdRef.current);
+      if (fallbackOtherId) set.add(fallbackOtherId);
+      return Array.from(set);
+    },
+    [memberIdsFromRoute, me?.sub],
+  );
+
+
   const maybePostStartedMessageOnce = async () => {
     try {
       if (startPostedRef.current) return;
@@ -445,19 +464,19 @@ export default function CallScreen({ route, navigation }) {
         } catch {}
       }
 
-      await client.graphql({
-        query: CreateMessage,
-        variables: {
+      await safeGql(
+        CreateMessage,
+        {
           input: {
             conversationId,
             senderId: me?.sub,
-            memberIds: memberIdsFromRoute,
+            memberIds: resolvedMemberIds(),
             type: "SYSTEM",
-            body: `Call started • ${timeLabel(startedAtRef.current)}`,
+            body: `📞 Call started • ${timeLabel(startedAtRef.current)}`,
           },
         },
-        authMode: "userPool",
-      });
+        "CreateMessage(SYSTEM:started)",
+      );
     } catch (e) {
       log("post start message failed", e?.message || e);
     }
@@ -495,19 +514,19 @@ export default function CallScreen({ route, navigation }) {
         if (pretty) durationText = ` • Duration: ${pretty}`;
       }
 
-      await client.graphql({
-        query: CreateMessage,
-        variables: {
+      await safeGql(
+        CreateMessage,
+        {
           input: {
             conversationId,
             senderId: me?.sub,
-            memberIds: memberIdsFromRoute,
+            memberIds: resolvedMemberIds(endedBySub),
             type: "SYSTEM",
-            body: `${reason}${durationText}`,
+            body: `📞 ${reason}${durationText}`,
           },
         },
-        authMode: "userPool",
-      });
+        "CreateMessage(SYSTEM:ended)",
+      );
     } catch (e) {
       log("CreateMessage(system) failed", e?.message || e);
     }
@@ -539,6 +558,9 @@ export default function CallScreen({ route, navigation }) {
               sig?.callSessionId,
             );
             if (!sig) return;
+
+
+            if (sig?.senderId) peerIdRef.current = sig.senderId;
 
             let pc = ensurePC();
 
@@ -727,6 +749,9 @@ export default function CallScreen({ route, navigation }) {
           typeof incomingOffer === "string"
             ? JSON.parse(incomingOffer)
             : incomingOffer;
+
+
+        if (offer?.callerId) peerIdRef.current = offer.callerId;
 
         if (!offer?.type || !offer?.sdp) {
           throw new Error("Bad incoming offer payload");
