@@ -41,6 +41,7 @@ const CreateCallSession = /* GraphQL */ `
       participantIds
       createdBy
       status
+      startedAt
       createdAt
     }
   }
@@ -50,6 +51,7 @@ const UpdateCallSession = /* GraphQL */ `
     updateCallSession(input: $input) {
       id
       status
+      startedAt
       endedAt
       updatedAt
     }
@@ -94,6 +96,7 @@ const GetCallSession = /* GraphQL */ `
     getCallSession(id: $id) {
       id
       status
+      startedAt
       endedAt
       updatedAt
     }
@@ -108,6 +111,23 @@ const SDP_ANSWER_OPTS = {
 };
 
 const RING_TIMEOUT_MS = 30000;
+``
+const formatDuration = (ms) => {
+  if (!ms || ms < 0) return null;
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h) return `${h}h ${m}m ${sec}s`;
+  if (m) return `${m}m ${sec}s`;
+  return `${sec}s`;
+};
+
+const timeLabel = (iso) =>
+  new Date(iso || Date.now()).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 
 export default function CallScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
@@ -150,6 +170,9 @@ export default function CallScreen({ route, navigation }) {
   const [hasRemote, setHasRemote] = useState(false);
   const [muted, setMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
+
+  const startedAtRef = useRef(null);
+  const startPostedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -298,6 +321,7 @@ export default function CallScreen({ route, navigation }) {
         setStatus("CONNECTED");
         clearRingTimer();
         clearRingingPoll();
+        maybePostStartedMessageOnce();
       }
     };
 
@@ -308,6 +332,7 @@ export default function CallScreen({ route, navigation }) {
         setStatus("CONNECTED");
         clearRingTimer();
         clearRingingPoll();
+        maybePostStartedMessageOnce();
       }
     };
 
@@ -399,22 +424,86 @@ export default function CallScreen({ route, navigation }) {
     } catch {}
   };
 
-  const postEndedSystemMessage = async (endedBySub, opts = {}) => {
+  const maybePostStartedMessageOnce = async () => {
     try {
-      const body = opts.declined
-        ? "Call declined"
-        : opts.timeout
-          ? "Missed call (no answer)"
-          : "Call ended";
+      if (startPostedRef.current) return;
+      startPostedRef.current = true;
+
+      if (!startedAtRef.current) {
+        startedAtRef.current = new Date().toISOString();
+        try {
+          await safeGql(
+            UpdateCallSession,
+            {
+              input: {
+                id: callSessionIdRef.current,
+                startedAt: startedAtRef.current,
+              },
+            },
+            "UpdateCallSession(set startedAt)",
+          );
+        } catch {}
+      }
+
       await client.graphql({
         query: CreateMessage,
         variables: {
           input: {
             conversationId,
-            senderId: endedBySub || "system",
+            senderId: me?.sub,
             memberIds: memberIdsFromRoute,
             type: "SYSTEM",
-            body,
+            body: `Call started • ${timeLabel(startedAtRef.current)}`,
+          },
+        },
+        authMode: "userPool",
+      });
+    } catch (e) {
+      log("post start message failed", e?.message || e);
+    }
+  };
+
+  const postEndedSystemMessage = async (endedBySub, opts = {}) => {
+    try {
+      const endedAtIso = new Date().toISOString();
+      const reason = opts.declined
+        ? "Call declined"
+        : opts.timeout
+          ? "Missed call (no answer)"
+          : "Call ended";
+
+      try {
+        await safeGql(
+          UpdateCallSession,
+          {
+            input: {
+              id: callSessionIdRef.current,
+              status: "ENDED",
+              endedAt: endedAtIso,
+            },
+          },
+          "UpdateCallSession(set endedAt)",
+        );
+      } catch {}
+
+      let durationText = "";
+      if (startedAtRef.current && !opts.timeout && !opts.declined) {
+        const ms =
+          new Date(endedAtIso).getTime() -
+          new Date(startedAtRef.current).getTime();
+        const pretty = formatDuration(ms);
+        if (pretty) durationText = ` • Duration: ${pretty}`;
+      }
+
+      await client.graphql({
+        query: CreateMessage,
+        variables: {
+          input: {
+            conversationId,
+            senderId: me?.sub,
+            memberIds: memberIdsFromRoute,
+            type: "SYSTEM",
+            body: `${reason}${durationText}`,
           },
         },
         authMode: "userPool",
@@ -711,6 +800,9 @@ export default function CallScreen({ route, navigation }) {
       setIsCaller(true);
       setStatus("RINGING");
 
+      const startedAtIso = new Date().toISOString();
+      startedAtRef.current = startedAtIso;
+
       const { data } = await safeGql(
         CreateCallSession,
         {
@@ -719,7 +811,7 @@ export default function CallScreen({ route, navigation }) {
             participantIds: Array.from(new Set(memberIdsFromRoute || [])),
             createdBy: me.sub,
             status: "RINGING",
-            startedAt: new Date().toISOString(),
+            startedAt: startedAtIso,
           },
         },
         "CreateCallSession",
