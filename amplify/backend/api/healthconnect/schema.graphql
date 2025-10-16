@@ -183,7 +183,13 @@ type CallSession
         identityClaim: "sub"
         operations: [create, read, update, delete]
       }
-      { allow: private, operations: [read, update] }
+      {
+        allow: owner
+        ownerField: "participantIds"
+        identityClaim: "sub"
+        operations: [read, update]
+      }
+      { allow: private, operations: [read] }
     ]
   ) {
   id: ID!
