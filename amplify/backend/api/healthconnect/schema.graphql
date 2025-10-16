@@ -90,7 +90,7 @@ type Message
         allow: owner
         ownerField: "senderId"
         identityClaim: "sub"
-        operations: [create, update, delete]
+        operations: [create, read,  update, delete]
       }
       {
         allow: groups
