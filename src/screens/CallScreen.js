@@ -110,9 +110,8 @@ const SDP_ANSWER_OPTS = {
   offerToReceiveVideo: true,
 };
 
-const RING_TIMEOUT_MS = 30000;
+const RING_TIMEOUT_MS = 10000;
 
-/** Helpers **/
 const formatDuration = (ms) => {
   if (!ms || ms < 0) return null;
   const s = Math.floor(ms / 1000);
@@ -137,6 +136,12 @@ export default function CallScreen({ route, navigation }) {
   const conversationId =
     route?.params?.conversationId || conversation?.id || null;
 
+  const conversationMemberIds = Array.isArray(conversation?.memberIds)
+    ? conversation.memberIds.filter(Boolean)
+    : [];
+  const conversationMemberIdsRef = useRef(conversationMemberIds);
+  conversationMemberIdsRef.current = conversationMemberIds;
+
   const incomingOffer = route?.params?.incomingOffer || null;
   const incomingSessionId =
     route?.params?.incomingSessionId || route?.params?.callSessionId || null;
@@ -148,13 +153,12 @@ export default function CallScreen({ route, navigation }) {
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
   const remoteStreamRef = useRef(null);
-  const subRef = useRef(null);
   const earlyIceRef = useRef([]);
 
+  const subRef = useRef(null);
   const ringTimerRef = useRef(null);
   const ringPollRef = useRef(null);
 
-  const [me, setMe] = useState(null);
   const [callSessionId, _setCallSessionId] = useState(null);
   const callSessionIdRef = useRef(null);
   const setCallSessionId = (id) => {
@@ -162,7 +166,10 @@ export default function CallScreen({ route, navigation }) {
     _setCallSessionId(id);
   };
 
+  const [me, setMe] = useState(null);
+
   const answeredOnceRef = useRef(false);
+
   const endingRef = useRef(false);
 
   const [status, setStatus] = useState("IDLE");
@@ -172,10 +179,7 @@ export default function CallScreen({ route, navigation }) {
   const [muted, setMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
 
-
   const startedAtRef = useRef(null);
-  const startPostedRef = useRef(false);
-
 
   const peerIdRef = useRef(null);
 
@@ -252,6 +256,10 @@ export default function CallScreen({ route, navigation }) {
       clearRingTimer();
       ringTimerRef.current = setTimeout(async () => {
         log("ring timeout fired");
+
+        if (endingRef.current) return;
+        endingRef.current = true;
+
         try {
           await safeGql(
             CreateCallSignal,
@@ -289,7 +297,9 @@ export default function CallScreen({ route, navigation }) {
 
         stopTracksAndPC();
         setStatus("ENDED");
-        await postEndedSystemMessage(me?.sub, { timeout: true });
+
+        await postEndedSystemMessage({ timeout: true });
+
         leaveToChat();
       }, RING_TIMEOUT_MS);
       log("ring timer started", RING_TIMEOUT_MS, "ms");
@@ -326,7 +336,6 @@ export default function CallScreen({ route, navigation }) {
         setStatus("CONNECTED");
         clearRingTimer();
         clearRingingPoll();
-        maybePostStartedMessageOnce();
       }
     };
 
@@ -337,7 +346,6 @@ export default function CallScreen({ route, navigation }) {
         setStatus("CONNECTED");
         clearRingTimer();
         clearRingingPoll();
-        maybePostStartedMessageOnce();
       }
     };
 
@@ -429,67 +437,29 @@ export default function CallScreen({ route, navigation }) {
     } catch {}
   };
 
-  /** Ensure SYSTEM messages always include both participants */
-  const resolvedMemberIds = useCallback(
-    (fallbackOtherId) => {
-      const set = new Set();
-      (memberIdsFromRoute || []).filter(Boolean).forEach((id) => set.add(id));
-      if (me?.sub) set.add(me.sub);
-      if (peerIdRef.current) set.add(peerIdRef.current);
-      if (fallbackOtherId) set.add(fallbackOtherId);
-      return Array.from(set);
-    },
-    [memberIdsFromRoute, me?.sub],
-  );
-
-
-  const maybePostStartedMessageOnce = async () => {
+  const postEndedSystemMessage = async (opts = {}) => {
     try {
-      if (startPostedRef.current) return;
-      startPostedRef.current = true;
+      let callStartIso = startedAtRef.current;
 
-      if (!startedAtRef.current) {
-        startedAtRef.current = new Date().toISOString();
+      if (!callStartIso && callSessionIdRef.current) {
         try {
-          await safeGql(
-            UpdateCallSession,
-            {
-              input: {
-                id: callSessionIdRef.current,
-                startedAt: startedAtRef.current,
-              },
-            },
-            "UpdateCallSession(set startedAt)",
+          const { data } = await client.graphql({
+            query: GetCallSession,
+            variables: { id: callSessionIdRef.current },
+            authMode: "userPool",
+          });
+          callStartIso =
+            data?.getCallSession?.startedAt || callStartIso || null;
+        } catch (e) {
+          log(
+            "GetCallSession in postEndedSystemMessage failed",
+            e?.message || e,
           );
-        } catch {}
+        }
       }
 
-      await safeGql(
-        CreateMessage,
-        {
-          input: {
-            conversationId,
-            senderId: me?.sub,
-            memberIds: resolvedMemberIds(),
-            type: "SYSTEM",
-            body: `📞 Call started • ${timeLabel(startedAtRef.current)}`,
-          },
-        },
-        "CreateMessage(SYSTEM:started)",
-      );
-    } catch (e) {
-      log("post start message failed", e?.message || e);
-    }
-  };
-
-  const postEndedSystemMessage = async (endedBySub, opts = {}) => {
-    try {
+      const callStartText = timeLabel(callStartIso || new Date().toISOString());
       const endedAtIso = new Date().toISOString();
-      const reason = opts.declined
-        ? "Call declined"
-        : opts.timeout
-          ? "Missed call (no answer)"
-          : "Call ended";
 
       try {
         await safeGql(
@@ -505,14 +475,27 @@ export default function CallScreen({ route, navigation }) {
         );
       } catch {}
 
-      let durationText = "";
-      if (startedAtRef.current && !opts.timeout && !opts.declined) {
-        const ms =
-          new Date(endedAtIso).getTime() -
-          new Date(startedAtRef.current).getTime();
-        const pretty = formatDuration(ms);
-        if (pretty) durationText = ` • Duration: ${pretty}`;
+      let bodyText;
+      if (opts.declined) {
+        bodyText = `📞 Call declined • ${callStartText}`;
+      } else if (opts.timeout) {
+        bodyText = `📞 Missed call • ${callStartText}`;
+      } else {
+        let durationText = "";
+        if (callStartIso) {
+          const ms =
+            new Date(endedAtIso).getTime() - new Date(callStartIso).getTime();
+          const pretty = formatDuration(ms);
+          if (pretty) {
+            durationText = ` • Duration: ${pretty}`;
+          }
+        }
+        bodyText = `📞 Call • ${callStartText}${durationText}`;
       }
+
+      const visibleToAll = Array.from(
+        new Set(conversationMemberIdsRef.current || []),
+      );
 
       await safeGql(
         CreateMessage,
@@ -520,12 +503,12 @@ export default function CallScreen({ route, navigation }) {
           input: {
             conversationId,
             senderId: me?.sub,
-            memberIds: resolvedMemberIds(endedBySub),
+            memberIds: visibleToAll,
             type: "SYSTEM",
-            body: `📞 ${reason}${durationText}`,
+            body: bodyText,
           },
         },
-        "CreateMessage(SYSTEM:ended)",
+        "CreateMessage(SYSTEM:final)",
       );
     } catch (e) {
       log("CreateMessage(system) failed", e?.message || e);
@@ -558,7 +541,6 @@ export default function CallScreen({ route, navigation }) {
               sig?.callSessionId,
             );
             if (!sig) return;
-
 
             if (sig?.senderId) peerIdRef.current = sig.senderId;
 
@@ -627,6 +609,7 @@ export default function CallScreen({ route, navigation }) {
               if (endingRef.current) return;
               endingRef.current = true;
               setStatus("ENDED");
+
               try {
                 await safeGql(
                   UpdateCallSession,
@@ -640,8 +623,11 @@ export default function CallScreen({ route, navigation }) {
                   "UpdateCallSession(DECLINE)",
                 );
               } catch {}
+
               stopTracksAndPC();
-              await postEndedSystemMessage(sig.senderId, { declined: true });
+
+              await postEndedSystemMessage({ declined: true });
+
               leaveToChat();
               return;
             }
@@ -676,13 +662,16 @@ export default function CallScreen({ route, navigation }) {
               } catch {}
 
               stopTracksAndPC();
+
               const declined = reason === "declined";
-              await postEndedSystemMessage(sig.senderId, {
-                timeout:
-                  sig.type === "TIMEOUT" ||
-                  (!declined && reason === "no-answer"),
+              const timedOut =
+                sig.type === "TIMEOUT" || (!declined && reason === "no-answer");
+
+              await postEndedSystemMessage({
+                timeout: timedOut,
                 declined,
               });
+
               leaveToChat();
               return;
             }
@@ -693,6 +682,7 @@ export default function CallScreen({ route, navigation }) {
               if (endingRef.current) return;
               endingRef.current = true;
               setStatus("ENDED");
+
               try {
                 await safeGql(
                   UpdateCallSession,
@@ -706,8 +696,11 @@ export default function CallScreen({ route, navigation }) {
                   "UpdateCallSession(BYE)",
                 );
               } catch {}
+
               stopTracksAndPC();
-              await postEndedSystemMessage(sig.senderId);
+
+              await postEndedSystemMessage();
+
               leaveToChat();
               return;
             }
@@ -719,14 +712,7 @@ export default function CallScreen({ route, navigation }) {
       });
 
     return () => subRef.current?.unsubscribe?.();
-  }, [
-    conversationId,
-    me?.sub,
-    ensurePC,
-    isCaller,
-    clearRingTimer,
-    clearRingingPoll,
-  ]);
+  }, [conversationId, ensurePC, isCaller, clearRingTimer, clearRingingPoll]);
 
   useEffect(() => {
     (async () => {
@@ -740,6 +726,8 @@ export default function CallScreen({ route, navigation }) {
       setStatus("RINGING");
       log("answering incoming call (user accepted)", { incomingSessionId });
 
+      startedAtRef.current = new Date().toISOString();
+
       try {
         if (!callSessionIdRef.current) setCallSessionId(incomingSessionId);
 
@@ -749,7 +737,6 @@ export default function CallScreen({ route, navigation }) {
           typeof incomingOffer === "string"
             ? JSON.parse(incomingOffer)
             : incomingOffer;
-
 
         if (offer?.callerId) peerIdRef.current = offer.callerId;
 
@@ -911,7 +898,9 @@ export default function CallScreen({ route, navigation }) {
     } catch {}
 
     stopTracksAndPC();
-    await postEndedSystemMessage(me?.sub);
+
+    await postEndedSystemMessage();
+
     leaveToChat();
   }, [me?.sub, sendSignal, clearRingTimer, clearRingingPoll]);
 
