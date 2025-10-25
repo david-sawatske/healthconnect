@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import * as DocumentPicker from "expo-document-picker";
 import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
@@ -98,6 +99,7 @@ function extFromName(name = "") {
   const m = name.toLowerCase().match(/\.(\w+)$/);
   return m ? m[1] : "";
 }
+
 function guessType({ mimeType, name }) {
   const ext = extFromName(name);
   if (
@@ -130,6 +132,25 @@ export default function ChatScreen({ route, navigation }) {
   const listRef = useRef(null);
 
   useCallSignals({ conversationId, currentUserId: me?.sub });
+
+  const fetchMessages = useCallback(async () => {
+    if (!conversationId) return;
+    try {
+      const res = await client.graphql({
+        query: MessagesByConversation,
+        variables: { conversationId, limit: 50 },
+        authMode: "userPool",
+      });
+      const items = res?.data?.messagesByConversation?.items ?? [];
+      setMessages(items);
+
+      requestAnimationFrame(() =>
+        listRef.current?.scrollToEnd?.({ animated: false }),
+      );
+    } catch (err) {
+      console.log("[CHAT] fetchMessages error", err);
+    }
+  }, [conversationId]);
 
   useEffect(() => {
     let mounted = true;
@@ -181,44 +202,58 @@ export default function ChatScreen({ route, navigation }) {
     };
   }, [conversationId, memberIds.join(",")]);
 
-  useEffect(() => {
-    if (!conversationId) return;
+  /**
+   * 🔁 Focus handling
+   *
+   * When we return from CallScreen:
+   *  - Person who hung up writes the SYSTEM "📞 Call • …" message.
+   *  - The other person navigates back almost immediately, sometimes BEFORE that DB write finishes.
+   *
+   * So:
+   * 1. On focus, we immediately fetch.
+   * 2. We also schedule a second fetch ~500ms later to catch late-arriving call log.
+   *
+   * Also: we (re)attach the onCreateMessage subscription for live updates.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (!conversationId) return;
 
-    let sub;
-    (async () => {
-      try {
-        const res = await client.graphql({
-          query: MessagesByConversation,
-          variables: { conversationId, limit: 50 },
-          authMode: "userPool",
+      let sub;
+      let retryTimer;
+
+      fetchMessages();
+
+      retryTimer = setTimeout(() => {
+        fetchMessages();
+      }, 500);
+
+      sub = client
+        .graphql({ query: OnCreateMessage, authMode: "userPool" })
+        .subscribe({
+          next: ({ data }) => {
+            const msg = data?.onCreateMessage;
+            if (msg?.conversationId !== conversationId) return;
+
+            setMessages((prev) =>
+              prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
+            );
+
+            requestAnimationFrame(() =>
+              listRef.current?.scrollToEnd?.({ animated: true }),
+            );
+          },
+          error: (err) => console.log("message subscription error", err),
         });
-        setMessages(res?.data?.messagesByConversation?.items ?? []);
-        requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: false }),
-        );
-      } catch (err) {
-        console.log("Failed to load messages", err);
-      }
-    })();
 
-    sub = client
-      .graphql({ query: OnCreateMessage, authMode: "userPool" })
-      .subscribe({
-        next: ({ data }) => {
-          const msg = data?.onCreateMessage;
-          if (msg?.conversationId !== conversationId) return;
-          setMessages((prev) =>
-            prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
-          );
-          requestAnimationFrame(() =>
-            listRef.current?.scrollToEnd?.({ animated: true }),
-          );
-        },
-        error: (err) => console.log("message subscription error", err),
-      });
-
-    return () => sub?.unsubscribe?.();
-  }, [conversationId]);
+      return () => {
+        try {
+          sub?.unsubscribe?.();
+        } catch (e) {}
+        if (retryTimer) clearTimeout(retryTimer);
+      };
+    }, [conversationId, fetchMessages]),
+  );
 
   const handleSend = async () => {
     const body = text.trim();
@@ -238,6 +273,7 @@ export default function ChatScreen({ route, navigation }) {
         },
         authMode: "userPool",
       });
+
       const created = data?.createMessage;
       if (created) {
         setMessages((prev) =>
