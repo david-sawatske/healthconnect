@@ -25,6 +25,7 @@ import CallScreen from "./src/screens/CallScreen";
 
 import { CallProvider, useCall } from "./src/context/CallContext";
 import IncomingCallModal from "./src/components/IncomingCallModal";
+import ProviderHomeScreen from "./src/screens/ProviderHomeScreen"
 
 Amplify.configure(amplifyConfig);
 
@@ -124,7 +125,7 @@ function Root() {
       call?.hide?.();
     }
   }
-  
+
   return (
     <View style={{ flex: 1 }}>
       <NavigationContainer ref={navRef}>
@@ -140,6 +141,11 @@ function Root() {
           <Stack.Screen
             name="Call"
             component={CallScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="ProviderHome"
+            component={ProviderHomeScreen}
             options={{ headerShown: false }}
           />
         </Stack.Navigator>
