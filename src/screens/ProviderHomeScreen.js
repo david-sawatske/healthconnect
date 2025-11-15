@@ -46,11 +46,75 @@ const LIST_PATIENT_USERS = /* GraphQL */ `
   }
 `;
 
+const LIST_MY_CONVERSATIONS = /* GraphQL */ `
+  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
+    listConversations(
+      filter: { memberIds: { contains: $sub } }
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        title
+        memberIds
+        createdAt
+      }
+      nextToken
+    }
+  }
+`;
+
+const CREATE_CONVERSATION = /* GraphQL */ `
+  mutation CreateConversation($input: CreateConversationInput!) {
+    createConversation(input: $input) {
+      id
+      title
+      memberIds
+      createdAt
+    }
+  }
+`;
+
+async function getOrCreateProviderPatientConversation({
+  providerSub,
+  patientId,
+}) {
+  const listRes = await client.graphql({
+    query: LIST_MY_CONVERSATIONS,
+    variables: { sub: providerSub, limit: 50 },
+    authMode: "userPool",
+  });
+
+  const items = listRes?.data?.listConversations?.items || [];
+
+  const existing = items.find(
+    (conv) =>
+      Array.isArray(conv.memberIds) && conv.memberIds.includes(patientId),
+  );
+
+  if (existing) {
+    return existing;
+  }
+
+  const createRes = await client.graphql({
+    query: CREATE_CONVERSATION,
+    variables: {
+      input: {
+        title: "Patient ↔ Provider Chat",
+        memberIds: [providerSub, patientId],
+      },
+    },
+    authMode: "userPool",
+  });
+
+  return createRes?.data?.createConversation;
+}
+
 const ProviderHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
-  const [provider, setProvider] = useState(null);
+  const [providerSub, setProviderSub] = useState(null);
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,7 +126,8 @@ const ProviderHomeScreen = () => {
         const user = await getCurrentUser();
         if (!mounted) return;
 
-        setProvider({ id: user?.userId || user?.username });
+        const sub = user?.userId || user?.username;
+        setProviderSub(sub);
       } catch (err) {
         log("getCurrentUser ERR", err);
         Alert.alert("Error", "Unable to load current provider user.");
@@ -103,11 +168,28 @@ const ProviderHomeScreen = () => {
     }
   }, [loadPatients]);
 
-  const handlePressPatient = (patient) => {
-    navigation.navigate("PatientDetail", {
-      patientId: patient.id,
-      patientName: patient.displayName || "Patient",
-    });
+  const handlePressPatient = async (patient) => {
+    if (!providerSub) {
+      Alert.alert("Error", "Provider info not loaded yet.");
+      return;
+    }
+
+    try {
+      const conversation = await getOrCreateProviderPatientConversation({
+        providerSub,
+        patientId: patient.id,
+      });
+
+      if (!conversation) {
+        Alert.alert("Error", "Unable to open conversation.");
+        return;
+      }
+
+      navigation.navigate("Chat", { conversation });
+    } catch (err) {
+      log("handlePressPatient ERR", err);
+      Alert.alert("Error", "Unable to open conversation.");
+    }
   };
 
   const renderPatientItem = ({ item }) => (
@@ -131,7 +213,7 @@ const ProviderHomeScreen = () => {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Patients</Text>
-        {provider ? (
+        {providerSub ? (
           <Text style={styles.headerSub}>Provider dashboard</Text>
         ) : null}
       </View>
