@@ -46,70 +46,6 @@ const LIST_PATIENT_USERS = /* GraphQL */ `
   }
 `;
 
-const LIST_MY_CONVERSATIONS = /* GraphQL */ `
-  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
-    listConversations(
-      filter: { memberIds: { contains: $sub } }
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        title
-        memberIds
-        createdAt
-      }
-      nextToken
-    }
-  }
-`;
-
-const CREATE_CONVERSATION = /* GraphQL */ `
-  mutation CreateConversation($input: CreateConversationInput!) {
-    createConversation(input: $input) {
-      id
-      title
-      memberIds
-      createdAt
-    }
-  }
-`;
-
-async function getOrCreateProviderPatientConversation({
-  providerSub,
-  patientId,
-}) {
-  const listRes = await client.graphql({
-    query: LIST_MY_CONVERSATIONS,
-    variables: { sub: providerSub, limit: 50 },
-    authMode: "userPool",
-  });
-
-  const items = listRes?.data?.listConversations?.items || [];
-
-  const existing = items.find(
-    (conv) =>
-      Array.isArray(conv.memberIds) && conv.memberIds.includes(patientId),
-  );
-
-  if (existing) {
-    return existing;
-  }
-
-  const createRes = await client.graphql({
-    query: CREATE_CONVERSATION,
-    variables: {
-      input: {
-        title: "Patient ↔ Provider Chat",
-        memberIds: [providerSub, patientId],
-      },
-    },
-    authMode: "userPool",
-  });
-
-  return createRes?.data?.createConversation;
-}
-
 const ProviderHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -168,28 +104,11 @@ const ProviderHomeScreen = () => {
     }
   }, [loadPatients]);
 
-  const handlePressPatient = async (patient) => {
-    if (!providerSub) {
-      Alert.alert("Error", "Provider info not loaded yet.");
-      return;
-    }
-
-    try {
-      const conversation = await getOrCreateProviderPatientConversation({
-        providerSub,
-        patientId: patient.id,
-      });
-
-      if (!conversation) {
-        Alert.alert("Error", "Unable to open conversation.");
-        return;
-      }
-
-      navigation.navigate("Chat", { conversation });
-    } catch (err) {
-      log("handlePressPatient ERR", err);
-      Alert.alert("Error", "Unable to open conversation.");
-    }
+  const handlePressPatient = (patient) => {
+    navigation.navigate("PatientDetail", {
+      patientId: patient.id,
+      patientName: patient.displayName || "Patient",
+    });
   };
 
   const renderPatientItem = ({ item }) => (
@@ -219,7 +138,7 @@ const ProviderHomeScreen = () => {
       </View>
 
       {loading ? (
-        <View style={styles.loadingContainer}>
+        <View className="loadingContainer" style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
           <Text style={styles.loadingText}>Loading patients…</Text>
         </View>
