@@ -90,7 +90,7 @@ type Message
         allow: owner
         ownerField: "senderId"
         identityClaim: "sub"
-        operations: [create, read,  update, delete]
+        operations: [create, read, update, delete]
       }
       {
         allow: groups
@@ -243,4 +243,38 @@ type CallSignal
 type Subscription {
   onSignal(conversationId: ID!): CallSignal
     @aws_subscribe(mutations: ["createCallSignal"])
+}
+
+type AdvocateAssignment
+  @model
+  @auth(
+    rules: [
+      {
+        allow: owner
+        ownerField: "providerId"
+        operations: [create, read, update]
+      }
+      { allow: owner, ownerField: "patientId", operations: [read] }
+      { allow: owner, ownerField: "advocateId", operations: [read] }
+      {
+        allow: groups
+        groups: ["Admin"]
+        operations: [create, read, update, delete]
+      }
+    ]
+  ) {
+  id: ID!
+
+  patientId: ID!
+    @index(
+      name: "byPatient"
+      queryField: "advocateAssignmentsByPatient"
+      sortKeyFields: ["createdAt"]
+    )
+
+  providerId: ID!
+  advocateId: ID!
+  active: Boolean!
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime!
 }
