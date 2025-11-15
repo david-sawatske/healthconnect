@@ -202,19 +202,6 @@ export default function ChatScreen({ route, navigation }) {
     };
   }, [conversationId, memberIds.join(",")]);
 
-  /**
-   * 🔁 Focus handling
-   *
-   * When we return from CallScreen:
-   *  - Person who hung up writes the SYSTEM "📞 Call • …" message.
-   *  - The other person navigates back almost immediately, sometimes BEFORE that DB write finishes.
-   *
-   * So:
-   * 1. On focus, we immediately fetch.
-   * 2. We also schedule a second fetch ~500ms later to catch late-arriving call log.
-   *
-   * Also: we (re)attach the onCreateMessage subscription for live updates.
-   */
   useFocusEffect(
     useCallback(() => {
       if (!conversationId) return;
