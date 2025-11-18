@@ -33,14 +33,17 @@ async function safeGql({ query, variables = {}, label }) {
   }
 }
 
-const LIST_PATIENT_USERS = /* GraphQL */ `
-  query ListPatientUsers {
-    listUsers(filter: { role: { eq: PATIENT } }) {
+const LIST_PROVIDER_PATIENTS = /* GraphQL */ `
+  query ListProviderPatients($providerId: ID!) {
+    providerPatientsByProvider(providerId: $providerId) {
       items {
         id
-        displayName
-        email
-        role
+        patient {
+          id
+          displayName
+          email
+          role
+        }
       }
     }
   }
@@ -75,25 +78,31 @@ const ProviderHomeScreen = () => {
   }, []);
 
   const loadPatients = useCallback(async () => {
+    if (!providerSub) return;
     setLoading(true);
     try {
       const res = await safeGql({
-        query: LIST_PATIENT_USERS,
-        variables: {},
-        label: "ListPatientUsers",
+        query: LIST_PROVIDER_PATIENTS,
+        variables: { providerId: providerSub },
+        label: "ListProviderPatients",
       });
-      const items = res?.data?.listUsers?.items || [];
+
+      const links = res?.data?.providerPatientsByProvider?.items || [];
+      const items = links.map((link) => link.patient).filter(Boolean);
+
       setPatients(items);
     } catch (err) {
       Alert.alert("Error", "Failed to load patients.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [providerSub]);
 
   useEffect(() => {
-    loadPatients();
-  }, [loadPatients]);
+    if (providerSub) {
+      loadPatients();
+    }
+  }, [providerSub, loadPatients]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
