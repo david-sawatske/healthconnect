@@ -41,6 +41,12 @@ type User
   displayName: String!
   role: Role!
   avatarKey: String
+
+  providerPatientsAsProvider: [ProviderPatient]
+    @hasMany(indexName: "byProvider", fields: ["id"])
+
+  providerPatientsAsPatient: [ProviderPatient]
+    @hasMany(indexName: "byPatient", fields: ["id"])
 }
 
 type Conversation
@@ -277,4 +283,25 @@ type AdvocateAssignment
   active: Boolean!
   createdAt: AWSDateTime!
   updatedAt: AWSDateTime!
+}
+
+type ProviderPatient
+  @model
+  @auth(
+    rules: [
+      { allow: owner, ownerField: "providerId", identityClaim: "sub" }
+      { allow: owner, ownerField: "patientId", identityClaim: "sub" }
+      { allow: groups, groups: ["Admin"] }
+    ]
+  ) {
+  id: ID!
+
+  providerId: ID!
+    @index(name: "byProvider", queryField: "providerPatientsByProvider")
+
+  patientId: ID!
+    @index(name: "byPatient", queryField: "providerPatientsByPatient")
+
+  provider: User @belongsTo(fields: ["providerId"])
+  patient: User @belongsTo(fields: ["patientId"])
 }

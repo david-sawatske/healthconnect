@@ -86,24 +86,6 @@
       "service": "Lambda"
     }
   },
-  "parameters": {
-    "AMPLIFY_function_approveInvite_deploymentBucketName": {
-      "usedBy": [
-        {
-          "category": "function",
-          "resourceName": "approveInvite"
-        }
-      ]
-    },
-    "AMPLIFY_function_approveInvite_s3Key": {
-      "usedBy": [
-        {
-          "category": "function",
-          "resourceName": "approveInvite"
-        }
-      ]
-    }
-  },
   "storage": {
     "chatMedia": {
       "dependsOn": []
