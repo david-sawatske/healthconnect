@@ -101,6 +101,7 @@ const GET_USER = /* GraphQL */ `
   }
 `;
 
+
 async function safeGql({ query, variables = {}, label }) {
   try {
     const res = await client.graphql({
@@ -277,7 +278,20 @@ const PatientDetailScreen = () => {
         return;
       }
 
+      const alreadyExists = advocateAssignments.some(
+        (a) =>
+          a.patientId === patientId &&
+          a.providerId === providerSub &&
+          a.advocateId === selectedAdvocate.id
+      );
+
+      if (alreadyExists) {
+        Alert.alert("Already Assigned", "This advocate is already assigned.");
+        return;
+      }
+
       setAssigning(true);
+
       try {
         const res = await safeGql({
           query: CREATE_ADVOCATE_ASSIGNMENT,
@@ -289,7 +303,6 @@ const PatientDetailScreen = () => {
               active: true,
             },
           },
-          label: "CreateAdvocateAssignment",
         });
 
         const newAssignment = res?.data?.createAdvocateAssignment;
@@ -308,13 +321,13 @@ const PatientDetailScreen = () => {
 
         setAdvocatePickerVisible(false);
       } catch (e) {
-        log("Assign advocate ERR", e);
+        console.log("Assign advocate error", e);
         Alert.alert("Error", "Failed to assign advocate.");
       } finally {
         setAssigning(false);
       }
     },
-    [patientId, providerSub],
+    [patientId, providerSub, advocateAssignments],
   );
 
   const goToChat = async () => {
