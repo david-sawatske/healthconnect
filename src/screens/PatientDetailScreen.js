@@ -94,7 +94,12 @@ const UPDATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
   mutation UpdateAdvocateAssignment($input: UpdateAdvocateAssignmentInput!) {
     updateAdvocateAssignment(input: $input) {
       id
+      patientId
+      providerId
+      advocateId
       active
+      createdAt
+      updatedAt
     }
   }
 `;
@@ -286,42 +291,75 @@ const PatientDetailScreen = () => {
         return;
       }
 
-      const alreadyExists = advocateAssignments.some(
+      const matchingAssignments = advocateAssignments.filter(
         (a) =>
-          a.active &&
           a.patientId === patientId &&
           a.providerId === providerSub &&
           a.advocateId === selectedAdvocate.id,
       );
 
-      if (alreadyExists) {
+      const existingActive = matchingAssignments.find((a) => a.active);
+      const existingInactive = matchingAssignments.find((a) => !a.active);
+
+      if (existingActive) {
         Alert.alert("Already Assigned", "This advocate is already assigned.");
         return;
       }
 
       setAssigning(true);
       try {
-        const res = await safeGql({
-          query: CREATE_ADVOCATE_ASSIGNMENT,
-          variables: {
-            input: {
-              patientId,
-              providerId: providerSub,
-              advocateId: selectedAdvocate.id,
-              active: true,
+        let updatedOrNew;
+
+        if (existingInactive) {
+          const res = await safeGql({
+            query: UPDATE_ADVOCATE_ASSIGNMENT,
+            variables: {
+              input: {
+                id: existingInactive.id,
+                active: true,
+              },
             },
-          },
-          label: "CreateAdvocateAssignment",
-        });
+            label: "UpdateAdvocateAssignment-reactivate",
+          });
 
-        const newAssignment = res?.data?.createAdvocateAssignment;
+          updatedOrNew = res?.data?.updateAdvocateAssignment;
+        } else {
+          const res = await safeGql({
+            query: CREATE_ADVOCATE_ASSIGNMENT,
+            variables: {
+              input: {
+                patientId,
+                providerId: providerSub,
+                advocateId: selectedAdvocate.id,
+                active: true,
+              },
+            },
+            label: "CreateAdvocateAssignment",
+          });
 
-        setAdvocateAssignments((prev) =>
-          [newAssignment, ...prev].sort(
+          updatedOrNew = res?.data?.createAdvocateAssignment;
+        }
+
+        if (!updatedOrNew) {
+          throw new Error("No assignment returned from mutation");
+        }
+
+        setAdvocateAssignments((prev) => {
+          const existsIndex = prev.findIndex((a) => a.id === updatedOrNew.id);
+          let next;
+
+          if (existsIndex >= 0) {
+            next = [...prev];
+            next[existsIndex] = { ...prev[existsIndex], ...updatedOrNew };
+          } else {
+            next = [updatedOrNew, ...prev];
+          }
+
+          return next.sort(
             (a, b) =>
               new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-          ),
-        );
+          );
+        });
 
         setAdvocateUsersById((prev) => ({
           ...prev,
@@ -367,7 +405,7 @@ const PatientDetailScreen = () => {
 
                 const updated = res?.data?.updateAdvocateAssignment;
                 if (!updated) return;
-                
+
                 setAdvocateAssignments((prev) =>
                   prev.map((a) =>
                     a.id === assignment.id ? { ...a, active: false } : a,
