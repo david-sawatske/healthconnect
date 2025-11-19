@@ -90,6 +90,15 @@ const CREATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
   }
 `;
 
+const UPDATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
+  mutation UpdateAdvocateAssignment($input: UpdateAdvocateAssignmentInput!) {
+    updateAdvocateAssignment(input: $input) {
+      id
+      active
+    }
+  }
+`;
+
 const GET_USER = /* GraphQL */ `
   query GetUser($id: ID!) {
     getUser(id: $id) {
@@ -100,7 +109,6 @@ const GET_USER = /* GraphQL */ `
     }
   }
 `;
-
 
 async function safeGql({ query, variables = {}, label }) {
   try {
@@ -280,9 +288,10 @@ const PatientDetailScreen = () => {
 
       const alreadyExists = advocateAssignments.some(
         (a) =>
+          a.active &&
           a.patientId === patientId &&
           a.providerId === providerSub &&
-          a.advocateId === selectedAdvocate.id
+          a.advocateId === selectedAdvocate.id,
       );
 
       if (alreadyExists) {
@@ -291,7 +300,6 @@ const PatientDetailScreen = () => {
       }
 
       setAssigning(true);
-
       try {
         const res = await safeGql({
           query: CREATE_ADVOCATE_ASSIGNMENT,
@@ -303,6 +311,7 @@ const PatientDetailScreen = () => {
               active: true,
             },
           },
+          label: "CreateAdvocateAssignment",
         });
 
         const newAssignment = res?.data?.createAdvocateAssignment;
@@ -321,13 +330,59 @@ const PatientDetailScreen = () => {
 
         setAdvocatePickerVisible(false);
       } catch (e) {
-        console.log("Assign advocate error", e);
+        log("Assign advocate ERR", e);
         Alert.alert("Error", "Failed to assign advocate.");
       } finally {
         setAssigning(false);
       }
     },
     [patientId, providerSub, advocateAssignments],
+  );
+
+  const handleRemoveAssignment = useCallback(
+    (assignment) => {
+      const user = advocateUsersById[assignment.advocateId];
+      const name = user?.displayName || user?.email || "this advocate";
+
+      Alert.alert(
+        "Remove advocate?",
+        `Are you sure you want to remove ${name} from this patient?`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                const res = await safeGql({
+                  query: UPDATE_ADVOCATE_ASSIGNMENT,
+                  variables: {
+                    input: {
+                      id: assignment.id,
+                      active: false,
+                    },
+                  },
+                  label: "UpdateAdvocateAssignment-remove",
+                });
+
+                const updated = res?.data?.updateAdvocateAssignment;
+                if (!updated) return;
+                
+                setAdvocateAssignments((prev) =>
+                  prev.map((a) =>
+                    a.id === assignment.id ? { ...a, active: false } : a,
+                  ),
+                );
+              } catch (e) {
+                log("Update advocate assignment (remove) ERR", e);
+                Alert.alert("Error", "Failed to remove advocate.");
+              }
+            },
+          },
+        ],
+      );
+    },
+    [advocateUsersById],
   );
 
   const goToChat = async () => {
@@ -364,17 +419,15 @@ const PatientDetailScreen = () => {
           <Text style={styles.advocateListName}>
             {user.displayName || user.email || "Assigned advocate"}
           </Text>
+          <Text style={styles.advocateStatusText}>{statusLabel}</Text>
         </View>
-        <View
-          style={[
-            styles.statusPill,
-            assignment.active
-              ? styles.statusPillActive
-              : styles.statusPillPending,
-          ]}
+
+        <TouchableOpacity
+          style={styles.removeChip}
+          onPress={() => handleRemoveAssignment(assignment)}
         >
-          <Text style={styles.statusPillText}>{statusLabel}</Text>
-        </View>
+          <Text style={styles.removeChipText}>Remove</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -390,8 +443,7 @@ const PatientDetailScreen = () => {
     }
 
     const activeAssignments = advocateAssignments.filter((a) => a.active);
-    const pendingAssignments = advocateAssignments.filter((a) => !a.active);
-    const hasAnyAssignments = advocateAssignments.length > 0;
+    const hasAnyAssignments = activeAssignments.length > 0;
 
     return (
       <View style={styles.card}>
@@ -399,26 +451,8 @@ const PatientDetailScreen = () => {
 
         {hasAnyAssignments ? (
           <>
-            {activeAssignments.length > 0 && (
-              <>
-                <Text style={styles.sectionLabel}>Active advocates</Text>
-                {activeAssignments.map(renderAdvocateRow)}
-              </>
-            )}
-
-            {pendingAssignments.length > 0 && (
-              <>
-                <Text style={styles.sectionLabel}>Pending advocates</Text>
-                {pendingAssignments.map(renderAdvocateRow)}
-              </>
-            )}
-
-            {activeAssignments.length === 0 &&
-              pendingAssignments.length === 0 && (
-                <Text style={styles.cardText}>
-                  No advocates assigned yet for this patient.
-                </Text>
-              )}
+            <Text style={styles.sectionLabel}>Active advocates</Text>
+            {activeAssignments.map(renderAdvocateRow)}
 
             <TouchableOpacity
               style={styles.secondaryButton}
@@ -480,6 +514,7 @@ const PatientDetailScreen = () => {
         advocates={advocates}
         loading={advocatesLoading}
         onSelect={handleAssignAdvocate}
+        existingAssignments={advocateAssignments}
       />
     </View>
   );
@@ -491,6 +526,7 @@ const AdvocatePickerModal = ({
   advocates,
   loading,
   onSelect,
+  existingAssignments = [],
 }) => {
   const [selectedAdvocateId, setSelectedAdvocateId] = useState(null);
 
@@ -498,26 +534,57 @@ const AdvocatePickerModal = ({
     if (!visible) setSelectedAdvocateId(null);
   }, [visible]);
 
+  const assignedMap = {};
+  existingAssignments.forEach((a) => {
+    if (a.active) {
+      assignedMap[a.advocateId] = "Active";
+    }
+  });
+
   const handleConfirm = () => {
-    const advocate = advocates.find((a) => a.id === selectedAdvocateId);
-    if (!advocate) {
+    if (!selectedAdvocateId) {
       Alert.alert("Select an advocate", "Please choose an advocate first.");
       return;
     }
+
+    if (assignedMap[selectedAdvocateId]) {
+      Alert.alert("Already Assigned", "This advocate is already assigned.");
+      return;
+    }
+
+    const advocate = advocates.find((a) => a.id === selectedAdvocateId);
     onSelect(advocate);
   };
 
   const renderItem = ({ item }) => {
-    const selected = item.id === selectedAdvocateId;
+    const isAssigned = assignedMap[item.id] != null;
+    const status = assignedMap[item.id];
+    const isSelected = item.id === selectedAdvocateId;
+
     return (
       <TouchableOpacity
-        style={[styles.advocateRow, selected && styles.advocateRowSelected]}
-        onPress={() => setSelectedAdvocateId(item.id)}
+        disabled={isAssigned}
+        style={[
+          styles.advocateRow,
+          isSelected && !isAssigned && styles.advocateRowSelected,
+          isAssigned && styles.advocateRowDisabled,
+        ]}
+        onPress={() => {
+          if (!isAssigned) setSelectedAdvocateId(item.id);
+        }}
       >
-        <Text style={styles.advocateName}>
-          {item.displayName || item.email || "Unnamed Advocate"}
-        </Text>
-        {selected && <Text style={styles.advocateSelectedMark}>✓</Text>}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.advocateName}>
+            {item.displayName || item.email || "Unnamed Advocate"}
+          </Text>
+          {isAssigned && (
+            <Text style={styles.advocateStatusText}>{status}</Text>
+          )}
+        </View>
+
+        {!isAssigned && isSelected && (
+          <Text style={styles.advocateSelectedMark}>✓</Text>
+        )}
       </TouchableOpacity>
     );
   };
@@ -666,6 +733,9 @@ const styles = StyleSheet.create({
   advocateRowSelected: {
     backgroundColor: "#DBEAFE",
   },
+  advocateRowDisabled: {
+    opacity: 0.4,
+  },
   advocateName: {
     flex: 1,
     fontSize: 14,
@@ -690,21 +760,23 @@ const styles = StyleSheet.create({
   advocateListName: {
     fontSize: 14,
   },
-  statusPill: {
+  advocateStatusText: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  removeChip: {
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#F97373",
+    backgroundColor: "#FEF2F2",
   },
-  statusPillActive: {
-    backgroundColor: "#DCFCE7",
-  },
-  statusPillPending: {
-    backgroundColor: "#FEF9C3",
-  },
-  statusPillText: {
+  removeChipText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#111827",
+    color: "#B91C1C",
   },
 });
 
