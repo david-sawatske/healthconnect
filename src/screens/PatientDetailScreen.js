@@ -159,7 +159,7 @@ const PatientDetailScreen = () => {
     advocateId: routeAdvocateId,
     fromRole,
   } = route.params || {};
-
+  
   const [providerSub, setProviderSub] = useState(null);
 
   const [loadingAssignments, setLoadingAssignments] = useState(true);
@@ -171,8 +171,10 @@ const PatientDetailScreen = () => {
   const [advocatePickerVisible, setAdvocatePickerVisible] = useState(false);
   const [assigning, setAssigning] = useState(false);
 
-  const isProviderView = !fromRole || fromRole === "PROVIDER";
+  const [providerUser, setProviderUser] = useState(null);
 
+  const isProviderView = !fromRole || fromRole === "PROVIDER";
+  
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -190,7 +192,7 @@ const PatientDetailScreen = () => {
       mounted = false;
     };
   }, []);
-
+  
   useEffect(() => {
     if (!patientId) return;
 
@@ -256,6 +258,35 @@ const PatientDetailScreen = () => {
       mounted = false;
     };
   }, [patientId]);
+  
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProviderUser = async () => {
+      try {
+        const effectiveProviderId =
+          routeProviderId || (isProviderView ? providerSub : null);
+        if (!effectiveProviderId) return;
+
+        const res = await safeGql({
+          query: GET_USER,
+          variables: { id: effectiveProviderId },
+          label: "GetProviderUserForPatient",
+        });
+
+        if (!mounted) return;
+        setProviderUser(res?.data?.getUser || null);
+      } catch (e) {
+        log("GetProviderUserForPatient ERR", e);
+      }
+    };
+
+    loadProviderUser();
+
+    return () => {
+      mounted = false;
+    };
+  }, [routeProviderId, providerSub, isProviderView]);
 
   const openAdvocatePicker = useCallback(async () => {
     if (!isProviderView) return;
@@ -424,7 +455,7 @@ const PatientDetailScreen = () => {
     },
     [advocateUsersById, isProviderView],
   );
-
+  
   const goToChat = async () => {
     if (!patientId) {
       Alert.alert("Error", "Missing patient info.");
@@ -442,9 +473,8 @@ const PatientDetailScreen = () => {
         routeAdvocateId || (fromRole === "ADVOCATE" ? providerSub : null);
 
       const hasAdvocate = !!effectiveAdvocateId;
-
       const anchorSub = effectiveProviderId || patientId;
-
+      
       const res = await safeGql({
         query: LIST_MY_CONVERSATIONS,
         variables: { sub: anchorSub, limit: 50 },
@@ -452,7 +482,7 @@ const PatientDetailScreen = () => {
       });
 
       const items = res?.data?.listConversations?.items || [];
-
+      
       let existing = items.find((conv) => {
         if (!Array.isArray(conv.memberIds)) return false;
         const hasPatient = conv.memberIds.includes(patientId);
@@ -510,7 +540,7 @@ const PatientDetailScreen = () => {
         });
         return;
       }
-
+      
       const memberIds = [patientId];
       if (effectiveProviderId) memberIds.push(effectiveProviderId);
       if (hasAdvocate) memberIds.push(effectiveAdvocateId);
@@ -541,6 +571,7 @@ const PatientDetailScreen = () => {
 
       navigation.navigate("Chat", {
         conversationId: conversation.id,
+        conversation,
         title: conversation.title,
       });
     } catch (err) {
@@ -626,6 +657,11 @@ const PatientDetailScreen = () => {
     );
   };
 
+  const activeAdvocatesForSummary = advocateAssignments
+    .filter((a) => a.active)
+    .map((a) => advocateUsersById[a.advocateId])
+    .filter(Boolean);
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -638,14 +674,44 @@ const PatientDetailScreen = () => {
       </View>
 
       <View style={styles.content}>
+        {/* Care Team Summary */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Patient overview</Text>
+          <Text style={styles.cardTitle}>Care Team Summary</Text>
+
           <Text style={styles.cardText}>
-            ID: <Text style={styles.mono}>{patientId}</Text>
+            <Text style={styles.summaryLabel}>Patient: </Text>
+            {patientName || "Unknown Patient"}
           </Text>
 
-          <TouchableOpacity style={styles.secondaryButton} onPress={goToChat}>
-            <Text style={styles.secondaryButtonText}>Open Chat</Text>
+          <Text style={styles.cardText}>
+            <Text style={styles.summaryLabel}>Provider: </Text>
+            {providerUser?.displayName ||
+              providerUser?.email ||
+              "Unknown Provider"}
+          </Text>
+
+          {activeAdvocatesForSummary.length > 0 ? (
+            <>
+              <Text style={[styles.summaryLabel, { marginTop: 8 }]}>
+                Advocates:
+              </Text>
+              {activeAdvocatesForSummary.map((adv) => (
+                <Text key={adv.id} style={styles.cardText}>
+                  • {adv.displayName || adv.email}
+                </Text>
+              ))}
+            </>
+          ) : (
+            <Text style={[styles.cardText, { marginTop: 8 }]}>
+              No active advocates
+            </Text>
+          )}
+
+          <TouchableOpacity
+            style={[styles.primaryButton, { marginTop: 12 }]}
+            onPress={goToChat}
+          >
+            <Text style={styles.primaryButtonText}>Open Care Team Chat</Text>
           </TouchableOpacity>
         </View>
 
@@ -923,6 +989,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: "#B91C1C",
+  },
+  summaryLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#334155",
   },
 });
 
