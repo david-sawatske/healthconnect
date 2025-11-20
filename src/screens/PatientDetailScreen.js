@@ -29,7 +29,9 @@ const LIST_MY_CONVERSATIONS = /* GraphQL */ `
         id
         title
         memberIds
+        isGroup
         createdAt
+        createdBy
       }
       nextToken
     }
@@ -42,7 +44,22 @@ const CREATE_CONVERSATION = /* GraphQL */ `
       id
       title
       memberIds
+      isGroup
+      createdBy
       createdAt
+    }
+  }
+`;
+
+const UPDATE_CONVERSATION = /* GraphQL */ `
+  mutation UpdateConversation($input: UpdateConversationInput!) {
+    updateConversation(input: $input) {
+      id
+      title
+      memberIds
+      isGroup
+      createdBy
+      updatedAt
     }
   }
 `;
@@ -130,43 +147,18 @@ async function safeGql({ query, variables = {}, label }) {
   }
 }
 
-async function getOrCreateProviderPatientConversation({
-  providerSub,
-  patientId,
-}) {
-  const listRes = await client.graphql({
-    query: LIST_MY_CONVERSATIONS,
-    variables: { sub: providerSub, limit: 50 },
-    authMode: "userPool",
-  });
-
-  const items = listRes?.data?.listConversations?.items || [];
-
-  const existing = items.find(
-    (conv) =>
-      Array.isArray(conv.memberIds) && conv.memberIds.includes(patientId),
-  );
-  if (existing) return existing;
-
-  const createRes = await client.graphql({
-    query: CREATE_CONVERSATION,
-    variables: {
-      input: {
-        title: "Patient ↔ Provider Chat",
-        memberIds: [providerSub, patientId],
-      },
-    },
-    authMode: "userPool",
-  });
-
-  return createRes?.data?.createConversation;
-}
-
 const PatientDetailScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const route = useRoute();
-  const { patientId, patientName } = route.params || {};
+
+  const {
+    patientId,
+    patientName,
+    providerId: routeProviderId,
+    advocateId: routeAdvocateId,
+    fromRole,
+  } = route.params || {};
 
   const [providerSub, setProviderSub] = useState(null);
 
@@ -178,6 +170,8 @@ const PatientDetailScreen = () => {
   const [advocatesLoading, setAdvocatesLoading] = useState(false);
   const [advocatePickerVisible, setAdvocatePickerVisible] = useState(false);
   const [assigning, setAssigning] = useState(false);
+
+  const isProviderView = !fromRole || fromRole === "PROVIDER";
 
   useEffect(() => {
     let mounted = true;
@@ -264,6 +258,7 @@ const PatientDetailScreen = () => {
   }, [patientId]);
 
   const openAdvocatePicker = useCallback(async () => {
+    if (!isProviderView) return;
     setAdvocatePickerVisible(true);
     if (advocates.length > 0) return;
 
@@ -282,10 +277,15 @@ const PatientDetailScreen = () => {
     } finally {
       setAdvocatesLoading(false);
     }
-  }, [advocates.length]);
+  }, [advocates.length, isProviderView]);
 
   const handleAssignAdvocate = useCallback(
     async (selectedAdvocate) => {
+      if (!isProviderView) {
+        Alert.alert("Error", "Only providers can assign advocates.");
+        return;
+      }
+
       if (!providerSub) {
         Alert.alert("Error", "Provider not loaded yet.");
         return;
@@ -374,11 +374,13 @@ const PatientDetailScreen = () => {
         setAssigning(false);
       }
     },
-    [patientId, providerSub, advocateAssignments],
+    [patientId, providerSub, advocateAssignments, isProviderView],
   );
 
   const handleRemoveAssignment = useCallback(
     (assignment) => {
+      if (!isProviderView) return;
+
       const user = advocateUsersById[assignment.advocateId];
       const name = user?.displayName || user?.email || "this advocate";
 
@@ -420,27 +422,127 @@ const PatientDetailScreen = () => {
         ],
       );
     },
-    [advocateUsersById],
+    [advocateUsersById, isProviderView],
   );
 
   const goToChat = async () => {
-    if (!providerSub || !patientId) {
-      Alert.alert("Error", "Missing provider or patient info.");
+    if (!patientId) {
+      Alert.alert("Error", "Missing patient info.");
+      return;
+    }
+    if (!providerSub) {
+      Alert.alert("Error", "Current user not loaded yet.");
       return;
     }
 
     try {
-      const conversation = await getOrCreateProviderPatientConversation({
-        providerSub,
-        patientId,
+      const effectiveProviderId =
+        routeProviderId || (isProviderView ? providerSub : null);
+      const effectiveAdvocateId =
+        routeAdvocateId || (fromRole === "ADVOCATE" ? providerSub : null);
+
+      const hasAdvocate = !!effectiveAdvocateId;
+
+      const anchorSub = effectiveProviderId || patientId;
+
+      const res = await safeGql({
+        query: LIST_MY_CONVERSATIONS,
+        variables: { sub: anchorSub, limit: 50 },
+        label: "ListConversationsForPatientDetail",
       });
 
+      const items = res?.data?.listConversations?.items || [];
+
+      let existing = items.find((conv) => {
+        if (!Array.isArray(conv.memberIds)) return false;
+        const hasPatient = conv.memberIds.includes(patientId);
+        if (!hasPatient) return false;
+
+        if (effectiveProviderId) {
+          return conv.memberIds.includes(effectiveProviderId);
+        }
+        return true;
+      });
+
+      if (existing) {
+        let memberIds = Array.from(new Set(existing.memberIds || []));
+        let isGroup = !!existing.isGroup;
+
+        if (effectiveProviderId && !memberIds.includes(effectiveProviderId)) {
+          memberIds.push(effectiveProviderId);
+        }
+        if (hasAdvocate && !memberIds.includes(effectiveAdvocateId)) {
+          memberIds.push(effectiveAdvocateId);
+        }
+
+        if (memberIds.length > 2) {
+          isGroup = true;
+        }
+
+        let updatedConversation = existing;
+
+        const membershipChanged =
+          memberIds.length !== (existing.memberIds || []).length ||
+          !memberIds.every((id) => existing.memberIds.includes(id)) ||
+          isGroup !== !!existing.isGroup;
+
+        if (membershipChanged) {
+          const updateRes = await safeGql({
+            query: UPDATE_CONVERSATION,
+            variables: {
+              input: {
+                id: existing.id,
+                memberIds,
+                isGroup,
+              },
+            },
+            label: "UpdateConversationCareTeam",
+          });
+
+          updatedConversation =
+            updateRes?.data?.updateConversation || updatedConversation;
+        }
+
+        navigation.navigate("Chat", {
+          conversationId: updatedConversation.id,
+          conversation: updatedConversation,
+          title: updatedConversation.title,
+        });
+        return;
+      }
+
+      const memberIds = [patientId];
+      if (effectiveProviderId) memberIds.push(effectiveProviderId);
+      if (hasAdvocate) memberIds.push(effectiveAdvocateId);
+
+      const uniqueMemberIds = Array.from(new Set(memberIds));
+      const isGroup = uniqueMemberIds.length > 2;
+
+      const input = {
+        title: isGroup
+          ? `${patientName || "Patient"} • Care Team`
+          : "Patient ↔ Provider Chat",
+        memberIds: uniqueMemberIds,
+        createdBy: effectiveProviderId || effectiveAdvocateId || providerSub,
+        isGroup,
+      };
+
+      const createRes = await safeGql({
+        query: CREATE_CONVERSATION,
+        variables: { input },
+        label: "CreateConversationCareTeam",
+      });
+
+      const conversation = createRes?.data?.createConversation;
       if (!conversation) {
         Alert.alert("Error", "Could not open conversation.");
         return;
       }
 
-      navigation.navigate("Chat", { conversation });
+      navigation.navigate("Chat", {
+        conversationId: conversation.id,
+        title: conversation.title,
+      });
     } catch (err) {
       log("goToChat ERR", err);
       Alert.alert("Error", "Unable to open conversation.");
@@ -460,17 +562,21 @@ const PatientDetailScreen = () => {
           <Text style={styles.advocateStatusText}>{statusLabel}</Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.removeChip}
-          onPress={() => handleRemoveAssignment(assignment)}
-        >
-          <Text style={styles.removeChipText}>Remove</Text>
-        </TouchableOpacity>
+        {isProviderView && (
+          <TouchableOpacity
+            style={styles.removeChip}
+            onPress={() => handleRemoveAssignment(assignment)}
+          >
+            <Text style={styles.removeChipText}>Remove</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
 
   const renderAdvocateSection = () => {
+    if (!isProviderView) return null;
+
     if (loadingAssignments) {
       return (
         <View style={styles.card}>
@@ -546,14 +652,16 @@ const PatientDetailScreen = () => {
         {renderAdvocateSection()}
       </View>
 
-      <AdvocatePickerModal
-        visible={advocatePickerVisible}
-        onClose={() => setAdvocatePickerVisible(false)}
-        advocates={advocates}
-        loading={advocatesLoading}
-        onSelect={handleAssignAdvocate}
-        existingAssignments={advocateAssignments}
-      />
+      {isProviderView && (
+        <AdvocatePickerModal
+          visible={advocatePickerVisible}
+          onClose={() => setAdvocatePickerVisible(false)}
+          advocates={advocates}
+          loading={advocatesLoading}
+          onSelect={handleAssignAdvocate}
+          existingAssignments={advocateAssignments}
+        />
+      )}
     </View>
   );
 };
