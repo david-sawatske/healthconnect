@@ -15,6 +15,8 @@ export default function AuthScreen({ navigation }) {
   const routeByUserType = (userType) => {
     if (userType === 'Provider') {
       navigation.replace('ProviderHome');
+    } else if (userType === 'Advocate') {
+      navigation.replace('AdvocateHome');
     } else {
       navigation.replace('Home');
     }
