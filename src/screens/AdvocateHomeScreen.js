@@ -24,7 +24,10 @@ const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
     $nextToken: String
   ) {
     listAdvocateAssignments(
-      filter: { advocateId: { eq: $advocateId } }
+      filter: {
+        advocateId: { eq: $advocateId }
+        active: { eq: true }
+      }
       limit: $limit
       nextToken: $nextToken
     ) {
@@ -33,6 +36,7 @@ const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
         patientId
         providerId
         advocateId
+        active
         createdAt
       }
       nextToken
@@ -123,13 +127,14 @@ const AdvocateHomeScreen = () => {
 
   const processAssignments = async (assignmentsList) => {
     try {
-      const patientIds = assignmentsList.map((a) => a.patientId);
-      const providerIds = assignmentsList.map((a) => a.providerId);
+      const activeAssignments = assignmentsList.filter((a) => a.active !== false);
+      const patientIds = activeAssignments.map((a) => a.patientId);
+      const providerIds = activeAssignments.map((a) => a.providerId);
       const allIds = [...patientIds, ...providerIds];
 
       const userMap = await batchFetchUsers(allIds);
 
-      const map = {};
+      const map = {}
       assignmentsList.forEach((a) => {
         const pId = a.patientId;
         if (!pId) return;
