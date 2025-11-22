@@ -28,6 +28,7 @@ import IncomingCallModal from "./src/components/IncomingCallModal";
 import ProviderHomeScreen from "./src/screens/ProviderHomeScreen"
 import PatientDetailScreen from "./src/screens/PatientDetailScreen"
 import AdvocateHomeScreen from "./src/screens/AdvocateHomeScreen"
+import PatientHomeScreen from "./src/screens/PatientHomeScreen"
 
 Amplify.configure(amplifyConfig);
 
@@ -158,6 +159,11 @@ function Root() {
           <Stack.Screen
             name="AdvocateHome"
             component={AdvocateHomeScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen
+            name="PatientHome"
+            component={PatientHomeScreen}
             options={{ headerShown: false }}
           />
         </Stack.Navigator>

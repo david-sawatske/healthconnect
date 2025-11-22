@@ -17,6 +17,8 @@ export default function AuthScreen({ navigation }) {
       navigation.replace('ProviderHome');
     } else if (userType === 'Advocate') {
       navigation.replace('AdvocateHome');
+    } else if (userType === 'Patient') {
+      navigation.replace('PatientHome');
     } else {
       navigation.replace('Home');
     }
