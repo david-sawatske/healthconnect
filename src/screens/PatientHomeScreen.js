@@ -12,11 +12,9 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
-import { getCurrentUser } from "aws-amplify/auth";
+import { useCurrentUser } from "../context/CurrentUserContext";
 
 const client = generateClient();
-
-const log = (...args) => console.log("[PATIENT_HOME]", ...args);
 
 const LIST_MY_CONVERSATIONS = /* GraphQL */ `
   query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
@@ -66,9 +64,7 @@ const PAGE_SIZE = 20;
 const PatientHomeScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-
-  const [userSub, setUserSub] = useState(null);
-  const [username, setUsername] = useState(null);
+  const { currentUser, loadingCurrentUser } = useCurrentUser();
 
   const [conversations, setConversations] = useState([]);
   const [nextToken, setNextToken] = useState(null);
@@ -78,151 +74,131 @@ const PatientHomeScreen = () => {
   const [providerUser, setProviderUser] = useState(null);
   const [advocates, setAdvocates] = useState([]);
 
-  const [loadingUser, setLoadingUser] = useState(true);
   const [loadingConvos, setLoadingConvos] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const loadUser = async () => {
-      try {
-        setLoadingUser(true);
-        const currUser = await getCurrentUser();
-        log("Current user:", currUser);
-        setUserSub(currUser.userId);
-        setUsername(
-          currUser?.username || currUser?.signInDetails?.loginId || "Patient",
-        );
-      } catch (err) {
-        log("Error loading current user", err);
-        setError("Unable to load current user.");
-      } finally {
-        setLoadingUser(false);
-      }
-    };
+  const roleLabelMap = {
+    PATIENT: "Patient",
+    PROVIDER: "Provider",
+    ADVOCATE: "Advocate",
+    ADMIN: "Admin",
+  };
 
-    loadUser();
-  }, []);
+  const username = currentUser?.displayName || "Patient";
+  const roleLabel =
+    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Patient";
 
   const fetchConversations = useCallback(
     async ({ reset = false } = {}) => {
-      if (!userSub) return;
+      if (!currentUser?.id) return;
+
       try {
         if (reset) {
           setLoadingConvos(true);
           setError(null);
         }
-        const variables = {
-          sub: userSub,
-          limit: PAGE_SIZE,
-          nextToken: reset ? null : nextToken,
-        };
-
-        log("Fetching conversations with variables:", variables);
 
         const { data } = await client.graphql({
           query: LIST_MY_CONVERSATIONS,
-          variables,
+          variables: {
+            sub: currentUser.id,
+            limit: PAGE_SIZE,
+            nextToken: reset ? null : nextToken,
+          },
+          authMode: "userPool",
         });
 
         const result = data?.listConversations;
         const newItems = result?.items || [];
 
         setConversations((prev) => (reset ? newItems : [...prev, ...newItems]));
+
         setNextToken(result?.nextToken || null);
       } catch (err) {
-        log("Error fetching conversations", err);
+        console.log("[PATIENT_HOME] Error fetching conversations:", err);
         setError("Unable to load conversations.");
       } finally {
         setLoadingConvos(false);
         setRefreshing(false);
       }
     },
-    [userSub, nextToken],
+    [currentUser?.id, nextToken],
   );
 
-  const fetchCareTeam = useCallback(
-    async ({ status = "ACTIVE" } = {}) => {
-      if (!userSub) return;
+  const fetchCareTeam = useCallback(async () => {
+    if (!currentUser?.id) return;
 
-      try {
-        setCareTeamLoading(true);
-        setCareTeamError(null);
+    try {
+      setCareTeamLoading(true);
+      setCareTeamError(null);
 
-        const { data } = await client.graphql({
-          query: ADVOCATE_ASSIGNMENTS_FOR_PATIENT,
-          variables: {
-            patientId: userSub,
-            status,
-          },
-        });
+      const { data } = await client.graphql({
+        query: ADVOCATE_ASSIGNMENTS_FOR_PATIENT,
+        variables: { patientId: currentUser.id },
+        authMode: "userPool",
+      });
 
-        const assignments = data?.advocateAssignmentsByPatient?.items || [];
+      const assignments = data?.advocateAssignmentsByPatient?.items || [];
 
-        log("Care team assignments:", assignments);
-
-        if (!assignments.length) {
-          setProviderUser(null);
-          setAdvocates([]);
-          return;
-        }
-
-        const providerIds = new Set(
-          assignments.map((a) => a.providerId).filter(Boolean),
-        );
-        const advocateIds = Array.from(
-          new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
-        );
-
-        const fetchUserById = async (id) => {
-          if (!id) return null;
-          try {
-            const { data: userData } = await client.graphql({
-              query: GET_USER,
-              variables: { id },
-            });
-            return userData?.getUser || null;
-          } catch (err) {
-            log("Error fetching user", id, err);
-            return null;
-          }
-        };
-
-        let primaryProvider = null;
-        if (providerIds.size > 0) {
-          const firstProviderId = Array.from(providerIds)[0];
-          primaryProvider = await fetchUserById(firstProviderId);
-        }
-
-        const advocateUsers = (
-          await Promise.all(advocateIds.map(fetchUserById))
-        ).filter(Boolean);
-
-        setProviderUser(primaryProvider);
-        setAdvocates(advocateUsers);
-      } catch (err) {
-        log("Error fetching care team", err);
-        setCareTeamError("Unable to load your care team.");
-      } finally {
-        setCareTeamLoading(false);
+      if (!assignments.length) {
+        setProviderUser(null);
+        setAdvocates([]);
+        return;
       }
-    },
-    [userSub],
-  );
+
+      const providerIds = [
+        ...new Set(assignments.map((a) => a.providerId).filter(Boolean)),
+      ];
+      const advocateIds = [
+        ...new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
+      ];
+
+      const fetchUser = async (id) => {
+        try {
+          const { data } = await client.graphql({
+            query: GET_USER,
+            variables: { id },
+            authMode: "userPool",
+          });
+          return data?.getUser || null;
+        } catch (err) {
+          console.log("[PATIENT_HOME] Error fetching user:", err);
+          return null;
+        }
+      };
+
+      const provider =
+        providerIds.length > 0 ? await fetchUser(providerIds[0]) : null;
+
+      const advocateUsers = (
+        await Promise.all(advocateIds.map(fetchUser))
+      ).filter(Boolean);
+
+      setProviderUser(provider);
+      setAdvocates(advocateUsers);
+    } catch (err) {
+      console.log("[PATIENT_HOME] Error fetching care team:", err);
+      setCareTeamError("Unable to load your care team.");
+    } finally {
+      setCareTeamLoading(false);
+    }
+  }, [currentUser?.id]);
 
   useEffect(() => {
-    if (userSub) {
-      fetchConversations({ reset: true });
-      fetchCareTeam({ status: "ACTIVE" });
-    }
-  }, [userSub, fetchConversations, fetchCareTeam]);
+    if (!currentUser?.id) return;
+
+    fetchConversations({ reset: true });
+    fetchCareTeam();
+  }, [currentUser?.id, fetchConversations, fetchCareTeam]);
 
   const onRefresh = useCallback(() => {
-    if (!userSub) return;
+    if (!currentUser?.id) return;
+
     setRefreshing(true);
     fetchConversations({ reset: true });
-    fetchCareTeam({ status: "ACTIVE" });
-  }, [userSub, fetchConversations, fetchCareTeam]);
+    fetchCareTeam();
+  }, [currentUser?.id, fetchConversations, fetchCareTeam]);
 
   const loadMore = () => {
     if (!nextToken || loadingConvos) return;
@@ -233,7 +209,7 @@ const PatientHomeScreen = () => {
     if (!conversation) {
       Alert.alert(
         "No conversation yet",
-        "We couldn't find a chat for this care team member yet. Ask them to start a conversation from their side.",
+        "We couldn't find a chat for this care team member yet.",
       );
       return;
     }
@@ -250,15 +226,16 @@ const PatientHomeScreen = () => {
   };
 
   const handleOpenCareTeamChat = (targetUser) => {
-    if (!targetUser || !userSub) return;
+    if (!targetUser || !currentUser?.id) return;
 
     const targetId = targetUser.id;
+
     const existingConversation =
       conversations.find((c) => {
         const members = c.memberIds || [];
         return (
           Array.isArray(members) &&
-          members.includes(userSub) &&
+          members.includes(currentUser.id) &&
           members.includes(targetId)
         );
       }) || null;
@@ -269,8 +246,9 @@ const PatientHomeScreen = () => {
     );
   };
 
-  const hasConversations = conversations && conversations.length > 0;
-  const showGlobalLoader = loadingUser && !hasConversations;
+  const hasConversations = conversations.length > 0;
+  const showGlobalLoader = loadingCurrentUser && !hasConversations;
+
   return (
     <View
       style={[
@@ -281,10 +259,10 @@ const PatientHomeScreen = () => {
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>Welcome back,</Text>
-          <Text style={styles.username}>{username || "Patient"}</Text>
+          <Text style={styles.username}>{username}</Text>
         </View>
         <View style={styles.rolePill}>
-          <Text style={styles.rolePillText}>Patient</Text>
+          <Text style={styles.rolePillText}>{roleLabel}</Text>
         </View>
       </View>
 
@@ -294,6 +272,7 @@ const PatientHomeScreen = () => {
         </View>
       )}
 
+      {/* Care Team */}
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>My Care Team</Text>
         {careTeamLoading && (
@@ -307,6 +286,7 @@ const PatientHomeScreen = () => {
 
       {providerUser || advocates.length > 0 ? (
         <View style={styles.careTeamContainer}>
+          {/* Provider */}
           {providerUser && (
             <View style={styles.careCard}>
               <View style={styles.careCardHeader}>
@@ -329,6 +309,7 @@ const PatientHomeScreen = () => {
             </View>
           )}
 
+          {/* Advocates */}
           {advocates.length > 0 && (
             <View style={styles.careSubsection}>
               <Text style={styles.careSubsectionTitle}>Advocates</Text>
@@ -360,18 +341,19 @@ const PatientHomeScreen = () => {
         <View style={styles.emptyCareTeam}>
           <Text style={styles.emptyCareTitle}>No care team yet</Text>
           <Text style={styles.emptyCareBody}>
-            Once a provider assigns themselves or an advocate to your care,
-            they&apos;ll show up here.
+            Once a provider assigns themselves or an advocate, they’ll appear
+            here.
           </Text>
         </View>
       ) : null}
 
       <View style={styles.sectionDivider} />
 
+      {/* Conversations */}
       {showGlobalLoader ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
-          <Text style={styles.loadingText}>Loading your home...</Text>
+          <Text style={styles.loadingText}>Loading your home…</Text>
         </View>
       ) : (
         <>
@@ -415,9 +397,8 @@ const PatientHomeScreen = () => {
             <View style={styles.emptyState}>
               <Text style={styles.emptyTitle}>No conversations yet</Text>
               <Text style={styles.emptyBody}>
-                Once a provider or advocate starts a chat with you, it will show
-                up here. Pull down to refresh if you’re expecting a new
-                conversation.
+                When someone starts a conversation with you, it will appear
+                here.
               </Text>
             </View>
           )}
