@@ -13,6 +13,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import { ensureDirectConversation } from "../utils/conversations";
 
 const client = generateClient();
 
@@ -99,21 +100,70 @@ const ProviderHomeScreen = () => {
     });
   };
 
+  /**
+   * Ensure a 1:1 Provider ↔ Patient conversation exists and open it.
+   * This will reuse a conversation created by the Patient side
+   * (same memberIds, isGroup: false) instead of creating a duplicate.
+   */
+  const handleMessagePatient = useCallback(
+    async (patient) => {
+      if (!patient?.id || !currentUser?.id) {
+        Alert.alert("Error", "Missing user information to start a chat.");
+        return;
+      }
+
+      try {
+        const conversation = await ensureDirectConversation({
+          currentUserId: currentUser.id,
+          memberIds: [currentUser.id, patient.id],
+          title: `${currentUser.displayName || "Provider"} ↔ ${
+            patient.displayName || "Patient"
+          }`,
+        });
+
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title:
+            conversation.title ||
+            patient.displayName ||
+            "Provider–Patient Conversation",
+        });
+      } catch (err) {
+        log("handleMessagePatient error:", err);
+        Alert.alert(
+          "Unable to open chat",
+          "Something went wrong while opening the conversation.",
+        );
+      }
+    },
+    [currentUser?.id, currentUser?.displayName, navigation],
+  );
+
   const renderPatientItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.patientRow}
-      onPress={() => handlePressPatient(item)}
-    >
-      <View style={{ flex: 1 }}>
+    <View style={styles.patientRow}>
+      <TouchableOpacity
+        style={styles.patientInfo}
+        onPress={() => handlePressPatient(item)}
+      >
         <Text style={styles.patientName}>
           {item.displayName || "Unnamed Patient"}
         </Text>
         {item.email ? (
           <Text style={styles.patientSub}>{item.email}</Text>
         ) : null}
+      </TouchableOpacity>
+
+      <View style={styles.rowRight}>
+        <TouchableOpacity
+          style={styles.messageButton}
+          onPress={() => handleMessagePatient(item)}
+        >
+          <Text style={styles.messageButtonText}>Message</Text>
+        </TouchableOpacity>
+        <Text style={styles.patientChevron}>›</Text>
       </View>
-      <Text style={styles.patientChevron}>›</Text>
-    </TouchableOpacity>
+    </View>
   );
 
   const showGlobalLoader = (loading || loadingCurrentUser) && !patients.length;
@@ -218,6 +268,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
   },
+  patientInfo: {
+    flex: 1,
+  },
   patientName: {
     fontSize: 16,
     fontWeight: "600",
@@ -227,10 +280,25 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     marginTop: 2,
   },
+  rowRight: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  messageButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    marginRight: 8,
+  },
+  messageButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#FFFFFF",
+  },
   patientChevron: {
     fontSize: 24,
     color: "#9CA3AF",
-    marginLeft: 8,
   },
   loadingContainer: {
     flex: 1,
