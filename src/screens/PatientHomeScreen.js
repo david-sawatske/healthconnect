@@ -13,6 +13,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import { ensureDirectConversation } from "../utils/conversations";
 
 const client = generateClient();
 
@@ -28,6 +29,8 @@ const LIST_MY_CONVERSATIONS = /* GraphQL */ `
         title
         memberIds
         createdAt
+        isGroup
+        createdBy
       }
       nextToken
     }
@@ -113,7 +116,6 @@ const PatientHomeScreen = () => {
         const newItems = result?.items || [];
 
         setConversations((prev) => (reset ? newItems : [...prev, ...newItems]));
-
         setNextToken(result?.nextToken || null);
       } catch (err) {
         console.log("[PATIENT_HOME] Error fetching conversations:", err);
@@ -205,46 +207,50 @@ const PatientHomeScreen = () => {
     fetchConversations({ reset: false });
   };
 
-  const openConversation = (conversation, fallbackTitle) => {
-    if (!conversation) {
-      Alert.alert(
-        "No conversation yet",
-        "We couldn't find a chat for this care team member yet.",
-      );
-      return;
-    }
-
+  const handleOpenConversation = (conversation) => {
     navigation.navigate("Chat", {
       conversationId: conversation.id,
       conversation,
-      title: conversation.title || fallbackTitle || "Conversation",
+      title: conversation.title || "Conversation",
     });
   };
 
-  const handleOpenConversation = (conversation) => {
-    openConversation(conversation, conversation.title || "Conversation");
-  };
+  const handleOpenCareTeamChat = useCallback(
+    async (targetUser) => {
+      if (!targetUser?.id || !currentUser?.id) return;
 
-  const handleOpenCareTeamChat = (targetUser) => {
-    if (!targetUser || !currentUser?.id) return;
+      try {
+        const conversation = await ensureDirectConversation({
+          currentUserId: currentUser.id,
+          memberIds: [currentUser.id, targetUser.id],
+          title: `${currentUser.displayName || "You"} ↔ ${
+            targetUser.displayName || "Care Team"
+          }`,
+        });
 
-    const targetId = targetUser.id;
+        setConversations((prev) => {
+          if (prev.some((c) => c.id === conversation.id)) return prev;
+          return [conversation, ...prev];
+        });
 
-    const existingConversation =
-      conversations.find((c) => {
-        const members = c.memberIds || [];
-        return (
-          Array.isArray(members) &&
-          members.includes(currentUser.id) &&
-          members.includes(targetId)
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title:
+            conversation.title ||
+            targetUser.displayName ||
+            "Care Team Conversation",
+        });
+      } catch (err) {
+        console.log("[PATIENT_HOME] handleOpenCareTeamChat error:", err);
+        Alert.alert(
+          "Unable to open chat",
+          "Something went wrong while opening the conversation.",
         );
-      }) || null;
-
-    openConversation(
-      existingConversation,
-      targetUser.displayName || "Care Team Chat",
-    );
-  };
+      }
+    },
+    [currentUser?.id, currentUser?.displayName, navigation],
+  );
 
   const hasConversations = conversations.length > 0;
   const showGlobalLoader = loadingCurrentUser && !hasConversations;
