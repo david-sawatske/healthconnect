@@ -7,11 +7,13 @@ import {
   TouchableOpacity,
   FlatList,
   RefreshControl,
+  Alert,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import { ensureDirectConversation } from "../utils/conversations";
 
 const client = generateClient();
 
@@ -205,17 +207,63 @@ const AdvocateHomeScreen = () => {
     });
   };
 
+  const handleMessagePatient = useCallback(
+    async (patient) => {
+      if (!patient?.patientId || !advocateId) {
+        Alert.alert("Error", "Missing user information to start a chat.");
+        return;
+      }
+
+      try {
+        const conversation = await ensureDirectConversation({
+          currentUserId: advocateId,
+          memberIds: [advocateId, patient.patientId],
+          title: `${currentUser?.displayName || "Advocate"} ↔ ${
+            patient.patientName || "Patient"
+          }`,
+        });
+
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title:
+            conversation.title ||
+            patient.patientName ||
+            "Advocate–Patient Conversation",
+        });
+      } catch (err) {
+        log("handleMessagePatient error:", err);
+        Alert.alert(
+          "Unable to open chat",
+          "Something went wrong while opening the conversation.",
+        );
+      }
+    },
+    [advocateId, currentUser?.displayName, navigation],
+  );
+
   const renderPatientItem = ({ item }) => (
-    <TouchableOpacity
-      onPress={() => handleOpenPatient(item)}
-      style={styles.patientCard}
-    >
-      <Text style={styles.patientName}>{item.patientName}</Text>
-      <Text style={styles.patientMeta}>Provider: {item.providerName}</Text>
-      <Text style={styles.patientMeta}>
-        Added: {new Date(item.createdAt).toLocaleString()}
-      </Text>
-    </TouchableOpacity>
+    <View style={styles.patientCard}>
+      <TouchableOpacity
+        onPress={() => handleOpenPatient(item)}
+        style={styles.patientInfo}
+      >
+        <Text style={styles.patientName}>{item.patientName}</Text>
+        <Text style={styles.patientMeta}>Provider: {item.providerName}</Text>
+        <Text style={styles.patientMeta}>
+          Added: {new Date(item.createdAt).toLocaleString()}
+        </Text>
+      </TouchableOpacity>
+
+      <View style={styles.cardRight}>
+        <TouchableOpacity
+          style={styles.messageButton}
+          onPress={() => handleMessagePatient(item)}
+        >
+          <Text style={styles.messageButtonText}>Message</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 
   const roleLabelMap = {
@@ -367,6 +415,11 @@ const styles = StyleSheet.create({
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 4,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  patientInfo: {
+    flex: 1,
   },
   patientName: {
     fontSize: 16,
@@ -376,6 +429,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#6B7280",
     marginTop: 4,
+  },
+  cardRight: {
+    marginLeft: 8,
+  },
+  messageButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+  },
+  messageButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   loadingText: {
     marginTop: 8,
