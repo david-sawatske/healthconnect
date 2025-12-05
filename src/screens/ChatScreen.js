@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -17,12 +17,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import * as DocumentPicker from "expo-document-picker";
 import { generateClient } from "aws-amplify/api";
-import { getCurrentUser } from "aws-amplify/auth";
 import { getUrl, uploadData } from "aws-amplify/storage";
 import { useCallSignals } from "../hooks/useCallSignals";
+import { useCurrentUser } from "../context/CurrentUserContext";
 
 const client = generateClient();
-const log = (...args) => console.log("[CHAT]", ...args);
 
 const MessagesByConversation = /* GraphQL */ `
   query MessagesByConversation(
@@ -117,6 +116,7 @@ function guessType({ mimeType, name }) {
 
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
+  const { currentUser } = useCurrentUser();
 
   const conversation = route?.params?.conversation;
   const conversationId = conversation?.id;
@@ -124,14 +124,26 @@ export default function ChatScreen({ route, navigation }) {
     ? conversation.memberIds
     : [];
 
-  const [me, setMe] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [usersById, setUsersById] = useState({});
   const [sending, setSending] = useState(false);
   const listRef = useRef(null);
 
-  useCallSignals({ conversationId, currentUserId: me?.sub });
+  const myId = currentUser?.id || null;
+
+  useCallSignals({ conversationId, currentUserId: myId });
+
+  useEffect(() => {
+    if (!conversationId) return;
+    console.log("[CHAT] user:", currentUser || null);
+    console.log(
+      "[CHAT] conversationId:",
+      conversationId,
+      "members:",
+      memberIds,
+    );
+  }, [conversationId]);
 
   const fetchMessages = useCallback(async () => {
     if (!conversationId) return;
@@ -148,31 +160,15 @@ export default function ChatScreen({ route, navigation }) {
         listRef.current?.scrollToEnd?.({ animated: false }),
       );
     } catch (err) {
-      console.log("[CHAT] fetchMessages error", err);
+      console.log("[CHAT] fetchMessages error:", err);
     }
   }, [conversationId]);
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const u = await getCurrentUser();
-        if (mounted) {
-          setMe({ sub: u.userId });
-          log("currentUser", { sub: u.userId, username: u.username });
-        }
-      } catch (err) {
-        console.log("Failed to load current user", err);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
+
     (async () => {
+      if (!memberIds.length) return;
       try {
         const ids = [...new Set(memberIds)].filter(Boolean);
         const results = await Promise.allSettled(
@@ -194,9 +190,10 @@ export default function ChatScreen({ route, navigation }) {
         });
         setUsersById(map);
       } catch (e) {
-        console.log("Load participants failed", e);
+        console.log("[CHAT] participant load error:", e);
       }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -230,13 +227,14 @@ export default function ChatScreen({ route, navigation }) {
               listRef.current?.scrollToEnd?.({ animated: true }),
             );
           },
-          error: (err) => console.log("message subscription error", err),
+          error: (err) => console.log("[CHAT] subscription error:", err),
         });
 
       return () => {
         try {
           sub?.unsubscribe?.();
-        } catch (e) {}
+        } catch (e) {
+        }
         if (retryTimer) clearTimeout(retryTimer);
       };
     }, [conversationId, fetchMessages]),
@@ -244,7 +242,8 @@ export default function ChatScreen({ route, navigation }) {
 
   const handleSend = async () => {
     const body = text.trim();
-    if (!body || !conversationId || !me?.sub) return;
+    if (!body || !conversationId || !myId) return;
+
     try {
       setSending(true);
       const { data } = await client.graphql({
@@ -252,8 +251,8 @@ export default function ChatScreen({ route, navigation }) {
         variables: {
           input: {
             conversationId,
-            senderId: me.sub,
-            memberIds: conversation.memberIds ?? [me.sub],
+            senderId: myId,
+            memberIds: conversation.memberIds ?? [myId],
             type: "TEXT",
             body,
           },
@@ -272,7 +271,7 @@ export default function ChatScreen({ route, navigation }) {
       }
       setText("");
     } catch (err) {
-      console.log("Failed to send message", err);
+      console.log("[CHAT] send error:", err);
       Alert.alert("Error", "Failed to send message.");
     } finally {
       setSending(false);
@@ -285,7 +284,7 @@ export default function ChatScreen({ route, navigation }) {
       if (result.canceled) return;
 
       const file = result.assets?.[0];
-      if (!file?.uri) return;
+      if (!file?.uri || !myId || !conversationId) return;
 
       const fileType = guessType({ mimeType: file.mimeType, name: file.name });
       const key = `uploads/${conversationId}/${Date.now()}-${(
@@ -305,8 +304,8 @@ export default function ChatScreen({ route, navigation }) {
         variables: {
           input: {
             conversationId,
-            senderId: me?.sub,
-            memberIds: conversation.memberIds ?? [me?.sub],
+            senderId: myId,
+            memberIds: conversation.memberIds ?? [myId],
             type: fileType,
             mediaKey: key,
           },
@@ -324,7 +323,7 @@ export default function ChatScreen({ route, navigation }) {
         );
       }
     } catch (e) {
-      console.log("Attach failed:", e);
+      console.log("[CHAT] attach error:", e);
       Alert.alert("Upload failed", "Could not upload attachment.");
     }
   };
@@ -332,15 +331,13 @@ export default function ChatScreen({ route, navigation }) {
   const roleForSender = (senderId, type) => {
     if (type === "SYSTEM") return "SYSTEM";
     const r = usersById?.[senderId]?.role;
-    return r || (senderId === me?.sub ? "USER" : "USER");
+    return r || (senderId === myId ? "USER" : "USER");
   };
 
   const nameForSender = (senderId, type) => {
     if (type === "SYSTEM") return "System";
     const u = usersById?.[senderId];
-    return (
-      u?.displayName || u?.email || (senderId === me?.sub ? "You" : "Member")
-    );
+    return u?.displayName || u?.email || (senderId === myId ? "You" : "Member");
   };
 
   const bubbleStyleForRole = (isMine, role, type) => {
@@ -385,7 +382,7 @@ export default function ChatScreen({ route, navigation }) {
           });
           if (mounted) setUrl(u?.url?.toString?.() || null);
         } catch (e) {
-          console.log("getUrl failed", e);
+          console.log("[CHAT] getUrl error:", e);
         }
       })();
       return () => {
@@ -426,7 +423,7 @@ export default function ChatScreen({ route, navigation }) {
 
   const renderItem = ({ item }) => {
     const isSystem = item.type === "SYSTEM";
-    const mine = item.senderId === me?.sub;
+    const mine = item.senderId === myId;
     const role = roleForSender(item.senderId, item.type);
     const name = nameForSender(item.senderId, item.type);
 
@@ -463,17 +460,41 @@ export default function ChatScreen({ route, navigation }) {
     );
   };
 
+  const roleLabelMap = {
+    PATIENT: "Patient",
+    PROVIDER: "Provider",
+    ADVOCATE: "Advocate",
+    ADMIN: "Admin",
+  };
+
+  const myDisplayName = currentUser?.displayName || "You";
+  const myRoleLabel =
+    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Member";
+
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      style={{ flex: 1, backgroundColor: "#fff" }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
+      {/* 🧑‍⚕️ Current user pill */}
+      <View
+        style={[
+          styles.mePillRow,
+          { paddingTop: insets.top ? insets.top / 4 : 6 },
+        ]}
+      >
+        <Text style={styles.mePillName}>{myDisplayName}</Text>
+        <View style={styles.mePillRole}>
+          <Text style={styles.mePillRoleText}>{myRoleLabel}</Text>
+        </View>
+      </View>
+
       <FlatList
         ref={listRef}
         data={messages}
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
-        contentContainerStyle={{ padding: 12 }}
+        contentContainerStyle={{ padding: 12, paddingTop: 4 }}
         onContentSizeChange={() =>
           listRef.current?.scrollToEnd?.({ animated: true })
         }
@@ -511,7 +532,7 @@ export default function ChatScreen({ route, navigation }) {
         <Button
           title={sending ? "Sending…" : "Send"}
           onPress={handleSend}
-          disabled={!text.trim() || sending}
+          disabled={!text.trim() || sending || !myId}
         />
       </View>
     </KeyboardAvoidingView>
@@ -561,6 +582,31 @@ const styles = StyleSheet.create({
   },
   badgeSystem: { backgroundColor: "#eee" },
   systemText: { fontSize: 12, opacity: 0.7, textAlign: "center" },
+
+  mePillRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingBottom: 4,
+    gap: 8,
+    backgroundColor: "#fff",
+  },
+  mePillName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  mePillRole: {
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "#E5E7EB",
+  },
+  mePillRoleText: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#374151",
+  },
 
   inputRow: {
     flexDirection: "row",
