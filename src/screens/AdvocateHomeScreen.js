@@ -11,7 +11,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
-import { getCurrentUser } from "aws-amplify/auth";
+import { useCurrentUser } from "../context/CurrentUserContext";
 
 const client = generateClient();
 
@@ -24,10 +24,7 @@ const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
     $nextToken: String
   ) {
     listAdvocateAssignments(
-      filter: {
-        advocateId: { eq: $advocateId }
-        active: { eq: true }
-      }
+      filter: { advocateId: { eq: $advocateId }, active: { eq: true } }
       limit: $limit
       nextToken: $nextToken
     ) {
@@ -63,12 +60,13 @@ const batchFetchUsers = async (ids) => {
       const { data } = await client.graphql({
         query: GET_USER,
         variables: { id },
+        authMode: "userPool",
       });
       if (data?.getUser) {
         results[id] = data.getUser;
       }
     } catch (err) {
-      console.error("[ADVOCATE_HOME] Failed to fetch user:", id, err);
+      log("Failed to fetch user:", id, err);
     }
   }
 
@@ -78,10 +76,10 @@ const batchFetchUsers = async (ids) => {
 const AdvocateHomeScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { currentUser, loadingCurrentUser } = useCurrentUser();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [userSub, setUserSub] = useState(null);
 
   const [assignments, setAssignments] = useState([]);
   const [nextToken, setNextToken] = useState(null);
@@ -89,52 +87,20 @@ const AdvocateHomeScreen = () => {
   const [error, setError] = useState(null);
   const [patients, setPatients] = useState([]);
 
-  const fetchAssignments = useCallback(
-    async ({ reset = false, advocateId } = {}) => {
-      try {
-        const id = advocateId ?? userSub;
-        if (!id) return;
-
-        const variables = {
-          advocateId: id,
-          limit: 50,
-          nextToken: reset ? null : nextToken,
-        };
-
-        log("Fetching assignments:", variables);
-
-        const { data } = await client.graphql({
-          query: LIST_MY_ADVOCATE_ASSIGNMENTS,
-          variables,
-        });
-
-        const result = data?.listAdvocateAssignments;
-        const newItems = result?.items ?? [];
-
-        const merged = reset ? newItems : [...assignments, ...newItems];
-        setAssignments(merged);
-        setNextToken(result?.nextToken ?? null);
-        setError(null);
-
-        await processAssignments(merged);
-      } catch (err) {
-        console.error("[ADVOCATE_HOME] Error fetching assignments:", err);
-        setError("Unable to load your patients.");
-      }
-    },
-    [userSub, nextToken, assignments],
-  );
+  const advocateId = currentUser?.id ?? null;
 
   const processAssignments = async (assignmentsList) => {
     try {
-      const activeAssignments = assignmentsList.filter((a) => a.active !== false);
+      const activeAssignments = assignmentsList.filter(
+        (a) => a.active !== false,
+      );
       const patientIds = activeAssignments.map((a) => a.patientId);
       const providerIds = activeAssignments.map((a) => a.providerId);
       const allIds = [...patientIds, ...providerIds];
 
       const userMap = await batchFetchUsers(allIds);
 
-      const map = {}
+      const map = {};
       assignmentsList.forEach((a) => {
         const pId = a.patientId;
         if (!pId) return;
@@ -152,28 +118,69 @@ const AdvocateHomeScreen = () => {
 
       setPatients(Object.values(map));
     } catch (err) {
-      console.error("[ADVOCATE_HOME] Error processing assignments:", err);
+      log("Error processing assignments:", err);
     }
   };
 
+  const fetchAssignments = useCallback(
+    async ({ reset = false } = {}) => {
+      if (!advocateId) return;
+
+      try {
+        const variables = {
+          advocateId,
+          limit: 50,
+          nextToken: reset ? null : nextToken,
+        };
+
+        const { data } = await client.graphql({
+          query: LIST_MY_ADVOCATE_ASSIGNMENTS,
+          variables,
+          authMode: "userPool",
+        });
+
+        const result = data?.listAdvocateAssignments;
+        const newItems = result?.items ?? [];
+
+        const merged = reset ? newItems : [...assignments, ...newItems];
+        setAssignments(merged);
+        setNextToken(result?.nextToken ?? null);
+        setError(null);
+
+        await processAssignments(merged);
+      } catch (err) {
+        log("Error fetching assignments:", err);
+        setError("Unable to load your patients.");
+      }
+    },
+    [advocateId, nextToken, assignments],
+  );
+
   useEffect(() => {
+    if (!advocateId) {
+      if (!loadingCurrentUser && loading) {
+        setLoading(false);
+      }
+      return;
+    }
+
+    let isMounted = true;
+
     const bootstrap = async () => {
       try {
-        const user = await getCurrentUser();
-        log("Advocate sub:", user?.userId);
-
-        setUserSub(user?.userId);
-        await fetchAssignments({ reset: true, advocateId: user?.userId });
-      } catch (err) {
-        console.error("[ADVOCATE_HOME] Error loading user:", err);
-        setError("Unable to load advocate info.");
+        setLoading(true);
+        await fetchAssignments({ reset: true });
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     bootstrap();
-  }, []);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [advocateId, loadingCurrentUser]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -193,7 +200,7 @@ const AdvocateHomeScreen = () => {
       patientId: patient.patientId,
       patientName: patient.patientName,
       providerId: patient.providerId,
-      advocateId: userSub,
+      advocateId,
       fromRole: "ADVOCATE",
     });
   };
@@ -211,7 +218,21 @@ const AdvocateHomeScreen = () => {
     </TouchableOpacity>
   );
 
-  if (loading && !refreshing) {
+  const roleLabelMap = {
+    PATIENT: "Patient",
+    PROVIDER: "Provider",
+    ADVOCATE: "Advocate",
+    ADMIN: "Admin",
+  };
+
+  const displayName = currentUser?.displayName ?? "Advocate";
+  const roleLabel =
+    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Advocate";
+
+  const showGlobalLoader =
+    (loading || loadingCurrentUser) && !refreshing && !patients.length;
+
+  if (showGlobalLoader) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <ActivityIndicator size="large" />
@@ -228,7 +249,15 @@ const AdvocateHomeScreen = () => {
       ]}
     >
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Advocate Home</Text>
+        <View style={styles.headerTopRow}>
+          <View>
+            <Text style={styles.greeting}>Hi, {displayName}</Text>
+            <Text style={styles.subGreeting}>{roleLabel}</Text>
+          </View>
+          <View style={styles.rolePill}>
+            <Text style={styles.rolePillText}>{roleLabel}</Text>
+          </View>
+        </View>
         <Text style={styles.headerSubtitle}>
           Your assigned patients and their providers
         </Text>
@@ -276,10 +305,34 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     marginTop: 8,
   },
-  headerTitle: {
-    fontSize: 24,
+  headerTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  greeting: {
+    fontSize: 20,
     fontWeight: "700",
     color: "#111827",
+  },
+  subGreeting: {
+    fontSize: 14,
+    color: "#6B7280",
+    marginTop: 2,
+  },
+  rolePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    backgroundColor: "#FFFFFF",
+  },
+  rolePillText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#374151",
   },
   headerSubtitle: {
     fontSize: 14,
