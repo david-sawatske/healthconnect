@@ -1,25 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, Button, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import { signIn, getCurrentUser } from 'aws-amplify/auth';
-import { generateClient } from 'aws-amplify/api';
+import React, { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  Button,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+} from "react-native";
+import { signIn, getCurrentUser } from "aws-amplify/auth";
+import { generateClient } from "aws-amplify/api";
 
 const client = generateClient();
 
-// Pre-seeded test accounts
 const USERS = {
-  Patient:  { username: 'patient@example.com',  password: 'Password123!' },
-  Provider: { username: 'provider@example.com', password: 'Password123!' },
-  Advocate: { username: 'advocate@example.com', password: 'Password123!' },
+  Patient: { username: "patient@example.com", password: "Password123!" },
+  Provider: { username: "provider@example.com", password: "Password123!" },
+  Advocate: { username: "advocate@example.com", password: "Password123!" },
 };
 
 const GET_USER = /* GraphQL */ `
-    query GetUser($id: ID!) {
-        getUser(id: $id) {
-            id
-            role
-            displayName
-        }
+  query GetUser($id: ID!) {
+    getUser(id: $id) {
+      id
+      role
+      displayName
     }
+  }
 `;
 
 export default function AuthScreen({ navigation }) {
@@ -33,6 +39,7 @@ export default function AuthScreen({ navigation }) {
       const { data } = await client.graphql({
         query: GET_USER,
         variables: { id: sub },
+        authMode: "userPool",
       });
 
       const user = data?.getUser;
@@ -44,7 +51,6 @@ export default function AuthScreen({ navigation }) {
       }
 
       const role = (user.role || "").toUpperCase();
-      console.log("$$$$", user)
 
       if (role === "PROVIDER") {
         navigation.replace("ProviderHome");
@@ -53,11 +59,10 @@ export default function AuthScreen({ navigation }) {
       } else if (role === "PATIENT") {
         navigation.replace("PatientHome");
       } else {
-        console.warn("Unknown role, routing to Home:", role);
         navigation.replace("Home");
       }
     } catch (err) {
-      console.log("Routing error:", err);
+      console.log("[AUTH] route error:", err);
       navigation.replace("Home");
     }
   };
@@ -79,17 +84,16 @@ export default function AuthScreen({ navigation }) {
 
     try {
       await signIn({ username, password });
-
       await routeByUserRecord();
-    } catch (error) {
-      console.error('Login error:', error);
-      Alert.alert('Login failed', error?.message || 'Unknown error');
+    } catch (err) {
+      console.log("[AUTH] login error:", err);
+      Alert.alert("Login failed", err?.message || "Unknown error");
     }
   };
 
   if (checking) {
     return (
-      <View style={[styles.container, { alignItems: 'center' }]}>
+      <View style={[styles.container, { alignItems: "center" }]}>
         <ActivityIndicator />
         <Text style={{ marginTop: 8 }}>Checking session…</Text>
       </View>
@@ -107,6 +111,6 @@ export default function AuthScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', gap: 12, padding: 20 },
-  title: { fontSize: 18, marginBottom: 20, textAlign: 'center' },
+  container: { flex: 1, justifyContent: "center", gap: 12, padding: 20 },
+  title: { fontSize: 18, marginBottom: 20, textAlign: "center" },
 });
