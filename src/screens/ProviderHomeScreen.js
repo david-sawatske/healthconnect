@@ -12,26 +12,11 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
-import { getCurrentUser } from "aws-amplify/auth";
+import { useCurrentUser } from "../context/CurrentUserContext";
 
 const client = generateClient();
 
 const log = (...args) => console.log("[PROVIDER_HOME]", ...args);
-
-async function safeGql({ query, variables = {}, label }) {
-  try {
-    const res = await client.graphql({
-      query,
-      variables,
-      authMode: "userPool",
-    });
-    log(label || "GQL", "OK", JSON.stringify(res?.data)?.slice(0, 300));
-    return res;
-  } catch (err) {
-    log(label || "GQL", "ERR", err);
-    throw err;
-  }
-}
 
 const LIST_PROVIDER_PATIENTS = /* GraphQL */ `
   query ListProviderPatients($providerId: ID!) {
@@ -52,39 +37,32 @@ const LIST_PROVIDER_PATIENTS = /* GraphQL */ `
 const ProviderHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const { currentUser, loadingCurrentUser } = useCurrentUser();
 
-  const [providerSub, setProviderSub] = useState(null);
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const user = await getCurrentUser();
-        if (!mounted) return;
+  const roleLabelMap = {
+    PATIENT: "Patient",
+    PROVIDER: "Provider",
+    ADVOCATE: "Advocate",
+    ADMIN: "Admin",
+  };
 
-        const sub = user?.userId || user?.username;
-        setProviderSub(sub);
-      } catch (err) {
-        log("getCurrentUser ERR", err);
-        Alert.alert("Error", "Unable to load current provider user.");
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const displayName = currentUser?.displayName || "Provider";
+  const roleLabel =
+    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Provider";
 
   const loadPatients = useCallback(async () => {
-    if (!providerSub) return;
+    if (!currentUser?.id) return;
+
     setLoading(true);
     try {
-      const res = await safeGql({
+      const res = await client.graphql({
         query: LIST_PROVIDER_PATIENTS,
-        variables: { providerId: providerSub },
-        label: "ListProviderPatients",
+        variables: { providerId: currentUser.id },
+        authMode: "userPool",
       });
 
       const links = res?.data?.providerPatientsByProvider?.items || [];
@@ -92,17 +70,18 @@ const ProviderHomeScreen = () => {
 
       setPatients(items);
     } catch (err) {
+      log("loadPatients error:", err);
       Alert.alert("Error", "Failed to load patients.");
     } finally {
       setLoading(false);
     }
-  }, [providerSub]);
+  }, [currentUser?.id]);
 
   useEffect(() => {
-    if (providerSub) {
+    if (currentUser?.id) {
       loadPatients();
     }
-  }, [providerSub, loadPatients]);
+  }, [currentUser?.id, loadPatients]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -137,17 +116,25 @@ const ProviderHomeScreen = () => {
     </TouchableOpacity>
   );
 
+  const showGlobalLoader = (loading || loadingCurrentUser) && !patients.length;
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Patients</Text>
-        {providerSub ? (
-          <Text style={styles.headerSub}>Provider dashboard</Text>
-        ) : null}
+        <View>
+          <Text style={styles.headerGreeting}>Hi,</Text>
+          <Text style={styles.headerTitle}>
+            {loadingCurrentUser ? "Loading..." : displayName}
+          </Text>
+          <Text style={styles.headerSub}>My Patients</Text>
+        </View>
+        <View style={styles.rolePill}>
+          <Text style={styles.rolePillText}>{roleLabel}</Text>
+        </View>
       </View>
 
-      {loading ? (
-        <View className="loadingContainer" style={styles.loadingContainer}>
+      {showGlobalLoader ? (
+        <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
           <Text style={styles.loadingText}>Loading patients…</Text>
         </View>
@@ -183,15 +170,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 8,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  headerGreeting: {
+    fontSize: 14,
+    color: "#6B7280",
   },
   headerTitle: {
     fontSize: 22,
     fontWeight: "700",
+    color: "#111827",
   },
   headerSub: {
     fontSize: 14,
     color: "#6B7280",
     marginTop: 2,
+  },
+  rolePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#E0F2FE",
+  },
+  rolePillText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#0369A1",
   },
   listContent: {
     paddingHorizontal: 16,
