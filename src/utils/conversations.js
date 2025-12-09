@@ -101,3 +101,25 @@ export async function ensureDirectConversation({
   log("Conversation created", created.id);
   return created;
 }
+
+export async function ensureCareTeamConversation({
+  currentUserId,
+  patientId,
+  providerId,
+  advocateIds = [],
+  title,
+}) {
+  const memberIds = [patientId, providerId, ...advocateIds.filter(Boolean)];
+
+  const unique = Array.from(new Set(memberIds));
+
+  if (unique.length < 3) {
+    throw new Error("Care team chat needs at least 3 members");
+  }
+
+  return ensureDirectConversation({
+    currentUserId,
+    memberIds: unique,
+    title: title || `Care Team: ${patientId}`,
+  });
+}

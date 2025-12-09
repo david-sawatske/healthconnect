@@ -13,56 +13,11 @@ import { useRoute, useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
+import { ensureDirectConversation } from "../utils/conversations";
 
 const client = generateClient();
 
 const log = (...args) => console.log("[PATIENT_DETAIL]", ...args);
-
-const LIST_MY_CONVERSATIONS = /* GraphQL */ `
-  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
-    listConversations(
-      filter: { memberIds: { contains: $sub } }
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        title
-        memberIds
-        isGroup
-        createdAt
-        createdBy
-      }
-      nextToken
-    }
-  }
-`;
-
-const CREATE_CONVERSATION = /* GraphQL */ `
-  mutation CreateConversation($input: CreateConversationInput!) {
-    createConversation(input: $input) {
-      id
-      title
-      memberIds
-      isGroup
-      createdBy
-      createdAt
-    }
-  }
-`;
-
-const UPDATE_CONVERSATION = /* GraphQL */ `
-  mutation UpdateConversation($input: UpdateConversationInput!) {
-    updateConversation(input: $input) {
-      id
-      title
-      memberIds
-      isGroup
-      createdBy
-      updatedAt
-    }
-  }
-`;
 
 const LIST_ADVOCATE_USERS = /* GraphQL */ `
   query ListAdvocateUsers {
@@ -159,7 +114,7 @@ const PatientDetailScreen = () => {
     advocateId: routeAdvocateId,
     fromRole,
   } = route.params || {};
-  
+
   const [providerSub, setProviderSub] = useState(null);
 
   const [loadingAssignments, setLoadingAssignments] = useState(true);
@@ -174,7 +129,7 @@ const PatientDetailScreen = () => {
   const [providerUser, setProviderUser] = useState(null);
 
   const isProviderView = !fromRole || fromRole === "PROVIDER";
-  
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -192,7 +147,7 @@ const PatientDetailScreen = () => {
       mounted = false;
     };
   }, []);
-  
+
   useEffect(() => {
     if (!patientId) return;
 
@@ -258,7 +213,7 @@ const PatientDetailScreen = () => {
       mounted = false;
     };
   }, [patientId]);
-  
+
   useEffect(() => {
     let mounted = true;
 
@@ -456,6 +411,11 @@ const PatientDetailScreen = () => {
     [advocateUsersById, isProviderView],
   );
   
+  const activeAdvocatesForSummary = advocateAssignments
+    .filter((a) => a.active)
+    .map((a) => advocateUsersById[a.advocateId])
+    .filter(Boolean);
+  
   const goToChat = async () => {
     if (!patientId) {
       Alert.alert("Error", "Missing patient info.");
@@ -467,112 +427,32 @@ const PatientDetailScreen = () => {
     }
 
     try {
-      const effectiveProviderId =
-        routeProviderId || (isProviderView ? providerSub : null);
-      const effectiveAdvocateId =
-        routeAdvocateId || (fromRole === "ADVOCATE" ? providerSub : null);
-
-      const hasAdvocate = !!effectiveAdvocateId;
-      const anchorSub = effectiveProviderId || patientId;
-      
-      const res = await safeGql({
-        query: LIST_MY_CONVERSATIONS,
-        variables: { sub: anchorSub, limit: 50 },
-        label: "ListConversationsForPatientDetail",
-      });
-
-      const items = res?.data?.listConversations?.items || [];
-      
-      let existing = items.find((conv) => {
-        if (!Array.isArray(conv.memberIds)) return false;
-        const hasPatient = conv.memberIds.includes(patientId);
-        if (!hasPatient) return false;
-
-        if (effectiveProviderId) {
-          return conv.memberIds.includes(effectiveProviderId);
-        }
-        return true;
-      });
-
-      if (existing) {
-        let memberIds = Array.from(new Set(existing.memberIds || []));
-        let isGroup = !!existing.isGroup;
-
-        if (effectiveProviderId && !memberIds.includes(effectiveProviderId)) {
-          memberIds.push(effectiveProviderId);
-        }
-        if (hasAdvocate && !memberIds.includes(effectiveAdvocateId)) {
-          memberIds.push(effectiveAdvocateId);
-        }
-
-        if (memberIds.length > 2) {
-          isGroup = true;
-        }
-
-        let updatedConversation = existing;
-
-        const membershipChanged =
-          memberIds.length !== (existing.memberIds || []).length ||
-          !memberIds.every((id) => existing.memberIds.includes(id)) ||
-          isGroup !== !!existing.isGroup;
-
-        if (membershipChanged) {
-          const updateRes = await safeGql({
-            query: UPDATE_CONVERSATION,
-            variables: {
-              input: {
-                id: existing.id,
-                memberIds,
-                isGroup,
-              },
-            },
-            label: "UpdateConversationCareTeam",
-          });
-
-          updatedConversation =
-            updateRes?.data?.updateConversation || updatedConversation;
-        }
-
-        navigation.navigate("Chat", {
-          conversationId: updatedConversation.id,
-          conversation: updatedConversation,
-          title: updatedConversation.title,
-        });
-        return;
-      }
-      
       const memberIds = [patientId];
-      if (effectiveProviderId) memberIds.push(effectiveProviderId);
-      if (hasAdvocate) memberIds.push(effectiveAdvocateId);
-
-      const uniqueMemberIds = Array.from(new Set(memberIds));
-      const isGroup = uniqueMemberIds.length > 2;
-
-      const input = {
-        title: isGroup
-          ? `${patientName || "Patient"} • Care Team`
-          : "Patient ↔ Provider Chat",
-        memberIds: uniqueMemberIds,
-        createdBy: effectiveProviderId || effectiveAdvocateId || providerSub,
-        isGroup,
-      };
-
-      const createRes = await safeGql({
-        query: CREATE_CONVERSATION,
-        variables: { input },
-        label: "CreateConversationCareTeam",
-      });
-
-      const conversation = createRes?.data?.createConversation;
-      if (!conversation) {
-        Alert.alert("Error", "Could not open conversation.");
-        return;
+      
+      if (providerUser?.id) {
+        memberIds.push(providerUser.id);
+      } else if (routeProviderId) {
+        memberIds.push(routeProviderId);
       }
+      
+      activeAdvocatesForSummary.forEach((adv) => {
+        if (adv?.id) {
+          memberIds.push(adv.id);
+        }
+      });
+      
+      memberIds.push(providerSub);
+
+      const conversation = await ensureDirectConversation({
+        currentUserId: providerSub,
+        memberIds,
+        title: `${patientName || "Patient"} • Care Team`,
+      });
 
       navigation.navigate("Chat", {
         conversationId: conversation.id,
         conversation,
-        title: conversation.title,
+        title: conversation.title || `${patientName || "Patient"} • Care Team`,
       });
     } catch (err) {
       log("goToChat ERR", err);
@@ -657,11 +537,6 @@ const PatientDetailScreen = () => {
     );
   };
 
-  const activeAdvocatesForSummary = advocateAssignments
-    .filter((a) => a.active)
-    .map((a) => advocateUsersById[a.advocateId])
-    .filter(Boolean);
-
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -674,7 +549,6 @@ const PatientDetailScreen = () => {
       </View>
 
       <View style={styles.content}>
-        {/* Care Team Summary */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Care Team Summary</Text>
 
