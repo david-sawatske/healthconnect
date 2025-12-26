@@ -37,6 +37,20 @@ const CREATE_CONVERSATION = /* GraphQL */ `
   }
 `;
 
+const UPDATE_CONVERSATION = /* GraphQL */ `
+  mutation UpdateConversation($input: UpdateConversationInput!) {
+    updateConversation(input: $input) {
+      id
+      title
+      memberIds
+      isGroup
+      createdBy
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
 const log = (...args) => console.log("[CONVO_UTIL]", ...args);
 
 export async function ensureDirectConversation({
@@ -109,17 +123,94 @@ export async function ensureCareTeamConversation({
   advocateIds = [],
   title,
 }) {
-  const memberIds = [patientId, providerId, ...advocateIds.filter(Boolean)];
+  if (!currentUserId) throw new Error("Missing currentUserId");
+  if (!patientId) throw new Error("Missing patientId");
+  if (!providerId) throw new Error("Missing providerId");
 
-  const unique = Array.from(new Set(memberIds));
+  const key = `CARE_TEAM:${patientId}:${providerId}`;
+  const desiredMemberIds = Array.from(
+    new Set([patientId, providerId, ...advocateIds].filter(Boolean)),
+  );
 
-  if (unique.length < 3) {
-    throw new Error("Care team chat needs at least 3 members");
+  if (desiredMemberIds.length < 3) {
+    throw new Error("Care team chat requires at least 3 members");
   }
 
-  return ensureDirectConversation({
-    currentUserId,
-    memberIds: unique,
-    title: title || `Care Team: ${patientId}`,
+  log("ensureCareTeamConversation → checking for existing care team", {
+    key,
+    desiredMemberIds,
   });
+
+  const listResp = await client.graphql({
+    query: LIST_MY_CONVERSATIONS,
+    variables: { sub: currentUserId, limit: 100, nextToken: null },
+    authMode: "userPool",
+  });
+
+  const items = listResp?.data?.listConversations?.items || [];
+
+  const existing = items.find((c) => {
+    if (!c?.isGroup) return false;
+    if (!Array.isArray(c.memberIds)) return false;
+    if (!c.memberIds.includes(patientId)) return false;
+    if (!c.memberIds.includes(providerId)) return false;
+    if (typeof c.title !== "string") return false;
+    return c.title.startsWith(key);
+  });
+
+  if (existing) {
+    const existingMembers = Array.from(new Set(existing.memberIds || []));
+    const same =
+      existingMembers.length === desiredMemberIds.length &&
+      desiredMemberIds.every((id) => existingMembers.includes(id));
+
+    if (!same) {
+      log("Updating care team conversation membership", {
+        id: existing.id,
+        from: existingMembers,
+        to: desiredMemberIds,
+      });
+
+      const updateResp = await client.graphql({
+        query: UPDATE_CONVERSATION,
+        variables: {
+          input: {
+            id: existing.id,
+            memberIds: desiredMemberIds,
+            isGroup: true,
+          },
+        },
+        authMode: "userPool",
+      });
+
+      const updated = updateResp?.data?.updateConversation;
+      if (updated) return updated;
+    }
+
+    log("Found existing care team conversation", existing.id);
+    return existing;
+  }
+
+  const finalTitle = title ? `${key} • ${title}` : `${key} • Care Team`;
+
+  const input = {
+    memberIds: desiredMemberIds,
+    createdBy: currentUserId,
+    isGroup: true,
+    title: finalTitle,
+  };
+
+  log("Creating new care team conversation", input);
+
+  const createResp = await client.graphql({
+    query: CREATE_CONVERSATION,
+    variables: { input },
+    authMode: "userPool",
+  });
+
+  const created = createResp?.data?.createConversation;
+  if (!created) throw new Error("Failed to create care team conversation");
+
+  log("Care team conversation created", created.id);
+  return created;
 }
