@@ -13,7 +13,10 @@ import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
-import { ensureDirectConversation } from "../utils/conversations";
+import {
+  ensureDirectConversation,
+  ensureCareTeamConversation,
+} from "../utils/conversations";
 
 const client = generateClient();
 
@@ -252,6 +255,46 @@ const PatientHomeScreen = () => {
     [currentUser?.id, currentUser?.displayName, navigation],
   );
 
+  const canMessageCareTeam = !!providerUser?.id && advocates.length > 0;
+
+  const handleOpenCareTeamGroupChat = useCallback(async () => {
+    if (!currentUser?.id) return;
+    if (!providerUser?.id || advocates.length === 0) return;
+
+    try {
+      const conversation = await ensureCareTeamConversation({
+        currentUserId: currentUser.id,
+        patientId: currentUser.id,
+        providerId: providerUser.id,
+        advocateIds: advocates.map((a) => a.id).filter(Boolean),
+        title: `Care Team: ${currentUser.displayName || "Patient"}`,
+      });
+
+      setConversations((prev) => {
+        if (prev.some((c) => c.id === conversation.id)) return prev;
+        return [conversation, ...prev];
+      });
+
+      navigation.navigate("Chat", {
+        conversationId: conversation.id,
+        conversation,
+        title: conversation.title || "Care Team Chat",
+      });
+    } catch (err) {
+      console.log("[PATIENT_HOME] handleOpenCareTeamGroupChat error:", err);
+      Alert.alert(
+        "Unable to open care team chat",
+        "Something went wrong while opening the care team conversation.",
+      );
+    }
+  }, [
+    currentUser?.id,
+    currentUser?.displayName,
+    providerUser?.id,
+    advocates,
+    navigation,
+  ]);
+
   const hasConversations = conversations.length > 0;
   const showGlobalLoader = loadingCurrentUser && !hasConversations;
 
@@ -292,6 +335,23 @@ const PatientHomeScreen = () => {
 
       {providerUser || advocates.length > 0 ? (
         <View style={styles.careTeamContainer}>
+          {/* ✅ NEW: Care Team group chat CTA */}
+          {canMessageCareTeam && (
+            <View style={styles.careTeamTopCTA}>
+              <TouchableOpacity
+                style={styles.careTeamCTAButton}
+                onPress={handleOpenCareTeamGroupChat}
+              >
+                <Text style={styles.careTeamCTAButtonText}>
+                  Message Care Team
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.careTeamCTASubtitle}>
+                Includes your provider + all active advocates.
+              </Text>
+            </View>
+          )}
+
           {/* Provider */}
           {providerUser && (
             <View style={styles.careCard}>
@@ -474,6 +534,33 @@ const styles = StyleSheet.create({
   careTeamContainer: {
     marginBottom: 8,
   },
+
+  careTeamTopCTA: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#EFF6FF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#BFDBFE",
+    marginBottom: 10,
+  },
+  careTeamCTAButton: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#1D4ED8",
+  },
+  careTeamCTAButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  careTeamCTASubtitle: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#475569",
+  },
+
   careCard: {
     padding: 12,
     borderRadius: 12,
