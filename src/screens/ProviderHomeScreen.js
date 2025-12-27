@@ -13,7 +13,10 @@ import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
-import { ensureDirectConversation } from "../utils/conversations";
+import {
+  ensureDirectConversation,
+  ensureCareTeamConversation,
+} from "../utils/conversations";
 
 const client = generateClient();
 
@@ -35,6 +38,31 @@ const LIST_PROVIDER_PATIENTS = /* GraphQL */ `
   }
 `;
 
+const LIST_ADVOCATE_ASSIGNMENTS_FOR_PROVIDER_PATIENT = /* GraphQL */ `
+  query ListAdvocateAssignmentsForProviderPatient(
+    $patientId: ID!
+    $providerId: ID!
+  ) {
+    listAdvocateAssignments(
+      filter: {
+        patientId: { eq: $patientId }
+        providerId: { eq: $providerId }
+        active: { eq: true }
+      }
+      limit: 50
+    ) {
+      items {
+        id
+        patientId
+        providerId
+        advocateId
+        active
+        createdAt
+      }
+    }
+  }
+`;
+
 const ProviderHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -43,6 +71,8 @@ const ProviderHomeScreen = () => {
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  const [advocateIdsByPatient, setAdvocateIdsByPatient] = useState({});
 
   const roleLabelMap = {
     PATIENT: "Patient",
@@ -78,6 +108,39 @@ const ProviderHomeScreen = () => {
     }
   }, [currentUser?.id]);
 
+  const loadAdvocateIdsForPatient = useCallback(
+    async (patientId) => {
+      if (!currentUser?.id || !patientId) return [];
+
+      if (advocateIdsByPatient[patientId])
+        return advocateIdsByPatient[patientId];
+
+      try {
+        const res = await client.graphql({
+          query: LIST_ADVOCATE_ASSIGNMENTS_FOR_PROVIDER_PATIENT,
+          variables: { patientId, providerId: currentUser.id },
+          authMode: "userPool",
+        });
+
+        const items = res?.data?.listAdvocateAssignments?.items || [];
+        const advocateIds = Array.from(
+          new Set(items.map((a) => a.advocateId).filter(Boolean)),
+        );
+
+        setAdvocateIdsByPatient((prev) => ({
+          ...prev,
+          [patientId]: advocateIds,
+        }));
+
+        return advocateIds;
+      } catch (err) {
+        log("loadAdvocateIdsForPatient error:", patientId, err);
+        return [];
+      }
+    },
+    [currentUser?.id, advocateIdsByPatient],
+  );
+
   useEffect(() => {
     if (currentUser?.id) {
       loadPatients();
@@ -87,6 +150,7 @@ const ProviderHomeScreen = () => {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
+      setAdvocateIdsByPatient({});
       await loadPatients();
     } finally {
       setRefreshing(false);
@@ -100,11 +164,6 @@ const ProviderHomeScreen = () => {
     });
   };
 
-  /**
-   * Ensure a 1:1 Provider ↔ Patient conversation exists and open it.
-   * This will reuse a conversation created by the Patient side
-   * (same memberIds, isGroup: false) instead of creating a duplicate.
-   */
   const handleMessagePatient = useCallback(
     async (patient) => {
       if (!patient?.id || !currentUser?.id) {
@@ -140,31 +199,91 @@ const ProviderHomeScreen = () => {
     [currentUser?.id, currentUser?.displayName, navigation],
   );
 
-  const renderPatientItem = ({ item }) => (
-    <View style={styles.patientRow}>
-      <TouchableOpacity
-        style={styles.patientInfo}
-        onPress={() => handlePressPatient(item)}
-      >
-        <Text style={styles.patientName}>
-          {item.displayName || "Unnamed Patient"}
-        </Text>
-        {item.email ? (
-          <Text style={styles.patientSub}>{item.email}</Text>
-        ) : null}
-      </TouchableOpacity>
+  const handleCareTeamChat = useCallback(
+    async (patient) => {
+      if (!patient?.id || !currentUser?.id) {
+        Alert.alert("Error", "Missing user information to start a chat.");
+        return;
+      }
 
-      <View style={styles.rowRight}>
-        <TouchableOpacity
-          style={styles.messageButton}
-          onPress={() => handleMessagePatient(item)}
-        >
-          <Text style={styles.messageButtonText}>Message</Text>
-        </TouchableOpacity>
-        <Text style={styles.patientChevron}>›</Text>
-      </View>
-    </View>
+      try {
+        const advocateIds = await loadAdvocateIdsForPatient(patient.id);
+
+        if (!advocateIds.length) {
+          Alert.alert(
+            "No advocates assigned",
+            "Assign an advocate to enable a care team chat for this patient.",
+          );
+          return;
+        }
+
+        const conversation = await ensureCareTeamConversation({
+          currentUserId: currentUser.id,
+          patientId: patient.id,
+          providerId: currentUser.id,
+          advocateIds,
+          title: `Care Team: ${patient.displayName || "Patient"}`,
+        });
+
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title: conversation.title || "Care Team Chat",
+        });
+      } catch (err) {
+        log("handleCareTeamChat error:", err);
+        Alert.alert(
+          "Unable to open care team chat",
+          "Something went wrong while opening the care team conversation.",
+        );
+      }
+    },
+    [currentUser?.id, loadAdvocateIdsForPatient, navigation],
   );
+
+  const renderPatientItem = ({ item }) => {
+    const cachedAdvIds = advocateIdsByPatient[item.id] || null;
+    const showHint = Array.isArray(cachedAdvIds) && cachedAdvIds.length === 0;
+
+    return (
+      <View style={styles.patientRow}>
+        <TouchableOpacity
+          style={styles.patientInfo}
+          onPress={() => handlePressPatient(item)}
+        >
+          <Text style={styles.patientName}>
+            {item.displayName || "Unnamed Patient"}
+          </Text>
+          {item.email ? (
+            <Text style={styles.patientSub}>{item.email}</Text>
+          ) : null}
+          {showHint ? (
+            <Text style={styles.patientHint}>
+              No advocates assigned (care team chat disabled)
+            </Text>
+          ) : null}
+        </TouchableOpacity>
+
+        <View style={styles.rowRight}>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => handleCareTeamChat(item)}
+          >
+            <Text style={styles.secondaryButtonText}>Care Team</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.messageButton}
+            onPress={() => handleMessagePatient(item)}
+          >
+            <Text style={styles.messageButtonText}>Message</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.patientChevron}>›</Text>
+        </View>
+      </View>
+    );
+  };
 
   const showGlobalLoader = (loading || loadingCurrentUser) && !patients.length;
 
@@ -280,9 +399,26 @@ const styles = StyleSheet.create({
     color: "#6B7280",
     marginTop: 2,
   },
+  patientHint: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 6,
+  },
   rowRight: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  secondaryButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#1D4ED8",
+    marginRight: 8,
+  },
+  secondaryButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   messageButton: {
     paddingHorizontal: 10,
