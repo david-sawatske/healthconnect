@@ -13,7 +13,10 @@ import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
-import { ensureDirectConversation } from "../utils/conversations";
+import {
+  ensureDirectConversation,
+  ensureCareTeamConversation,
+} from "../utils/conversations";
 
 const client = generateClient();
 
@@ -49,6 +52,31 @@ const GET_USER = /* GraphQL */ `
       id
       displayName
       role
+    }
+  }
+`;
+
+const LIST_ADVOCATE_ASSIGNMENTS_FOR_PROVIDER_PATIENT = /* GraphQL */ `
+  query ListAdvocateAssignmentsForProviderPatient(
+    $patientId: ID!
+    $providerId: ID!
+  ) {
+    listAdvocateAssignments(
+      filter: {
+        patientId: { eq: $patientId }
+        providerId: { eq: $providerId }
+        active: { eq: true }
+      }
+      limit: 50
+    ) {
+      items {
+        id
+        patientId
+        providerId
+        advocateId
+        active
+        createdAt
+      }
     }
   }
 `;
@@ -89,6 +117,8 @@ const AdvocateHomeScreen = () => {
   const [error, setError] = useState(null);
   const [patients, setPatients] = useState([]);
 
+  const [advocateIdsByPatient, setAdvocateIdsByPatient] = useState({});
+
   const advocateId = currentUser?.id ?? null;
 
   const processAssignments = async (assignmentsList) => {
@@ -107,8 +137,10 @@ const AdvocateHomeScreen = () => {
         const pId = a.patientId;
         if (!pId) return;
 
-        if (!map[pId]) {
-          map[pId] = {
+        const key = pId;
+
+        if (!map[key]) {
+          map[key] = {
             patientId: pId,
             patientName: userMap[pId]?.displayName ?? "Unknown Patient",
             providerId: a.providerId,
@@ -186,6 +218,7 @@ const AdvocateHomeScreen = () => {
 
   const onRefresh = () => {
     setRefreshing(true);
+    setAdvocateIdsByPatient({});
     fetchAssignments({ reset: true })
       .catch(() => {})
       .finally(() => setRefreshing(false));
@@ -206,6 +239,39 @@ const AdvocateHomeScreen = () => {
       fromRole: "ADVOCATE",
     });
   };
+
+  const loadAdvocateIdsForPatient = useCallback(
+    async (patientId, providerId) => {
+      if (!patientId || !providerId) return [];
+
+      const cacheKey = `${patientId}#${providerId}`;
+      if (advocateIdsByPatient[cacheKey]) return advocateIdsByPatient[cacheKey];
+
+      try {
+        const res = await client.graphql({
+          query: LIST_ADVOCATE_ASSIGNMENTS_FOR_PROVIDER_PATIENT,
+          variables: { patientId, providerId },
+          authMode: "userPool",
+        });
+
+        const items = res?.data?.listAdvocateAssignments?.items || [];
+        const advocateIds = Array.from(
+          new Set(items.map((a) => a.advocateId).filter(Boolean)),
+        );
+
+        setAdvocateIdsByPatient((prev) => ({
+          ...prev,
+          [cacheKey]: advocateIds,
+        }));
+
+        return advocateIds;
+      } catch (err) {
+        log("loadAdvocateIdsForPatient error:", patientId, providerId, err);
+        return [];
+      }
+    },
+    [advocateIdsByPatient],
+  );
 
   const handleMessagePatient = useCallback(
     async (patient) => {
@@ -242,6 +308,53 @@ const AdvocateHomeScreen = () => {
     [advocateId, currentUser?.displayName, navigation],
   );
 
+  const handleCareTeamChat = useCallback(
+    async (patient) => {
+      if (!patient?.patientId || !patient?.providerId || !advocateId) {
+        Alert.alert("Error", "Missing information to start a care team chat.");
+        return;
+      }
+
+      try {
+        const advocateIds = await loadAdvocateIdsForPatient(
+          patient.patientId,
+          patient.providerId,
+        );
+
+        if (!advocateIds.length) {
+          Alert.alert(
+            "No advocates assigned",
+            "A care team chat requires an active advocate assignment.",
+          );
+          return;
+        }
+
+        const conversation = await ensureCareTeamConversation({
+          currentUserId: advocateId,
+          patientId: patient.patientId,
+          providerId: patient.providerId,
+          advocateIds,
+          title: `Care Team: ${patient.patientName || "Patient"} • ${
+            patient.providerName || "Provider"
+          }`,
+        });
+
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title: conversation.title || "Care Team Chat",
+        });
+      } catch (err) {
+        log("handleCareTeamChat error:", err);
+        Alert.alert(
+          "Unable to open care team chat",
+          "Something went wrong while opening the care team conversation.",
+        );
+      }
+    },
+    [advocateId, loadAdvocateIdsForPatient, navigation],
+  );
+
   const renderPatientItem = ({ item }) => (
     <View style={styles.patientCard}>
       <TouchableOpacity
@@ -256,6 +369,13 @@ const AdvocateHomeScreen = () => {
       </TouchableOpacity>
 
       <View style={styles.cardRight}>
+        <TouchableOpacity
+          style={styles.careTeamButton}
+          onPress={() => handleCareTeamChat(item)}
+        >
+          <Text style={styles.careTeamButtonText}>Care Team</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.messageButton}
           onPress={() => handleMessagePatient(item)}
@@ -327,7 +447,7 @@ const AdvocateHomeScreen = () => {
         ) : (
           <FlatList
             data={patients}
-            keyExtractor={(item) => item.patientId}
+            keyExtractor={(item) => `${item.patientId}#${item.providerId}`}
             renderItem={renderPatientItem}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -432,6 +552,19 @@ const styles = StyleSheet.create({
   },
   cardRight: {
     marginLeft: 8,
+    gap: 8,
+    alignItems: "flex-end",
+  },
+  careTeamButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#1D4ED8",
+  },
+  careTeamButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
   messageButton: {
     paddingHorizontal: 10,
