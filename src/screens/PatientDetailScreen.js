@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,8 +12,11 @@ import {
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
-import { getCurrentUser } from "aws-amplify/auth";
-import { ensureDirectConversation } from "../utils/conversations";
+import { useCurrentUser } from "../context/CurrentUserContext";
+import {
+  ensureDirectConversation,
+  ensureCareTeamConversation,
+} from "../utils/conversations";
 
 const client = generateClient();
 
@@ -107,6 +110,8 @@ const PatientDetailScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
 
+  const { currentUser, loadingCurrentUser } = useCurrentUser();
+
   const {
     patientId,
     patientName,
@@ -114,8 +119,6 @@ const PatientDetailScreen = () => {
     advocateId: routeAdvocateId,
     fromRole,
   } = route.params || {};
-
-  const [providerSub, setProviderSub] = useState(null);
 
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [advocateAssignments, setAdvocateAssignments] = useState([]);
@@ -128,25 +131,16 @@ const PatientDetailScreen = () => {
 
   const [providerUser, setProviderUser] = useState(null);
 
-  const isProviderView = !fromRole || fromRole === "PROVIDER";
+  const viewerId = currentUser?.id ?? null;
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const user = await getCurrentUser();
-        if (!mounted) return;
-        const sub = user?.userId || user?.username;
-        setProviderSub(sub);
-      } catch (e) {
-        log("getCurrentUser ERR", e);
-        Alert.alert("Error", "Could not load current user.");
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const isProviderView = !fromRole || fromRole === "PROVIDER";
+  const isAdvocateView = fromRole === "ADVOCATE";
+
+  const effectiveProviderId = useMemo(() => {
+    if (routeProviderId) return routeProviderId;
+    if (isProviderView) return viewerId;
+    return null;
+  }, [routeProviderId, isProviderView, viewerId]);
 
   useEffect(() => {
     if (!patientId) return;
@@ -193,11 +187,9 @@ const PatientDetailScreen = () => {
           if (!mounted) return;
 
           const usersById = {};
-          userResults.forEach((res) => {
-            const u = res?.data?.getUser;
-            if (u?.id) {
-              usersById[u.id] = u;
-            }
+          userResults.forEach((r) => {
+            const u = r?.data?.getUser;
+            if (u?.id) usersById[u.id] = u;
           });
           setAdvocateUsersById(usersById);
         }
@@ -218,11 +210,12 @@ const PatientDetailScreen = () => {
     let mounted = true;
 
     const loadProviderUser = async () => {
-      try {
-        const effectiveProviderId =
-          routeProviderId || (isProviderView ? providerSub : null);
-        if (!effectiveProviderId) return;
+      if (!effectiveProviderId) {
+        setProviderUser(null);
+        return;
+      }
 
+      try {
         const res = await safeGql({
           query: GET_USER,
           variables: { id: effectiveProviderId },
@@ -241,10 +234,28 @@ const PatientDetailScreen = () => {
     return () => {
       mounted = false;
     };
-  }, [routeProviderId, providerSub, isProviderView]);
+  }, [effectiveProviderId]);
+
+  const providerScopedAssignments = useMemo(() => {
+    if (!effectiveProviderId) return [];
+    return (advocateAssignments || []).filter(
+      (a) => a.providerId === effectiveProviderId,
+    );
+  }, [advocateAssignments, effectiveProviderId]);
+
+  const activeAdvocatesForSummary = providerScopedAssignments
+    .filter((a) => a.active)
+    .map((a) => advocateUsersById[a.advocateId])
+    .filter(Boolean);
 
   const openAdvocatePicker = useCallback(async () => {
     if (!isProviderView) return;
+
+    if (!viewerId) {
+      Alert.alert("Error", "Provider not loaded yet.");
+      return;
+    }
+
     setAdvocatePickerVisible(true);
     if (advocates.length > 0) return;
 
@@ -263,7 +274,7 @@ const PatientDetailScreen = () => {
     } finally {
       setAdvocatesLoading(false);
     }
-  }, [advocates.length, isProviderView]);
+  }, [advocates.length, isProviderView, viewerId]);
 
   const handleAssignAdvocate = useCallback(
     async (selectedAdvocate) => {
@@ -271,16 +282,19 @@ const PatientDetailScreen = () => {
         Alert.alert("Error", "Only providers can assign advocates.");
         return;
       }
-
-      if (!providerSub) {
+      if (!viewerId) {
         Alert.alert("Error", "Provider not loaded yet.");
+        return;
+      }
+      if (!patientId) {
+        Alert.alert("Error", "Missing patient info.");
         return;
       }
 
       const matchingAssignments = advocateAssignments.filter(
         (a) =>
           a.patientId === patientId &&
-          a.providerId === providerSub &&
+          a.providerId === viewerId &&
           a.advocateId === selectedAdvocate.id,
       );
 
@@ -315,7 +329,7 @@ const PatientDetailScreen = () => {
             variables: {
               input: {
                 patientId,
-                providerId: providerSub,
+                providerId: viewerId,
                 advocateId: selectedAdvocate.id,
                 active: true,
               },
@@ -326,9 +340,7 @@ const PatientDetailScreen = () => {
           updatedOrNew = res?.data?.createAdvocateAssignment;
         }
 
-        if (!updatedOrNew) {
-          throw new Error("No assignment returned from mutation");
-        }
+        if (!updatedOrNew) throw new Error("No assignment returned");
 
         setAdvocateAssignments((prev) => {
           const existsIndex = prev.findIndex((a) => a.id === updatedOrNew.id);
@@ -360,7 +372,7 @@ const PatientDetailScreen = () => {
         setAssigning(false);
       }
     },
-    [patientId, providerSub, advocateAssignments, isProviderView],
+    [patientId, viewerId, advocateAssignments, isProviderView],
   );
 
   const handleRemoveAssignment = useCallback(
@@ -410,59 +422,80 @@ const PatientDetailScreen = () => {
     },
     [advocateUsersById, isProviderView],
   );
-  
-  const activeAdvocatesForSummary = advocateAssignments
-    .filter((a) => a.active)
-    .map((a) => advocateUsersById[a.advocateId])
-    .filter(Boolean);
-  
-  const goToChat = async () => {
+
+  const goToChat = useCallback(async () => {
     if (!patientId) {
       Alert.alert("Error", "Missing patient info.");
       return;
     }
-    if (!providerSub) {
+    if (!viewerId) {
       Alert.alert("Error", "Current user not loaded yet.");
+      return;
+    }
+    if (!effectiveProviderId) {
+      Alert.alert(
+        "Missing provider context",
+        "This patient can have multiple providers. Please open this screen from a specific provider relationship so we can start the correct care team chat.",
+      );
       return;
     }
 
     try {
-      const memberIds = [patientId];
-      
-      if (providerUser?.id) {
-        memberIds.push(providerUser.id);
-      } else if (routeProviderId) {
-        memberIds.push(routeProviderId);
-      }
-      
-      activeAdvocatesForSummary.forEach((adv) => {
-        if (adv?.id) {
-          memberIds.push(adv.id);
-        }
-      });
-      
-      memberIds.push(providerSub);
+      const activeForThisProvider = (providerScopedAssignments || []).filter(
+        (a) => a.active,
+      );
 
-      const conversation = await ensureDirectConversation({
-        currentUserId: providerSub,
-        memberIds,
-        title: `${patientName || "Patient"} • Care Team`,
+      const advocateIds = Array.from(
+        new Set(activeForThisProvider.map((a) => a.advocateId).filter(Boolean)),
+      );
+
+      if (advocateIds.length > 0) {
+        const conversation = await ensureCareTeamConversation({
+          currentUserId: viewerId,
+          patientId,
+          providerId: effectiveProviderId,
+          advocateIds,
+          title: `Care Team: ${patientName || "Patient"}`,
+        });
+
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title: conversation.title || "Care Team Chat",
+        });
+        return;
+      }
+
+      const direct = await ensureDirectConversation({
+        currentUserId: viewerId,
+        memberIds: [patientId, effectiveProviderId],
+        title: `${providerUser?.displayName || "Provider"} ↔ ${
+          patientName || "Patient"
+        }`,
       });
 
       navigation.navigate("Chat", {
-        conversationId: conversation.id,
-        conversation,
-        title: conversation.title || `${patientName || "Patient"} • Care Team`,
+        conversationId: direct.id,
+        conversation: direct,
+        title: direct.title || "Conversation",
       });
     } catch (err) {
       log("goToChat ERR", err);
       Alert.alert("Error", "Unable to open conversation.");
     }
-  };
+  }, [
+    patientId,
+    patientName,
+    viewerId,
+    effectiveProviderId,
+    providerScopedAssignments,
+    providerUser?.displayName,
+    navigation,
+  ]);
 
   const renderAdvocateRow = (assignment) => {
     const user = advocateUsersById[assignment.advocateId] || {};
-    const statusLabel = assignment.active ? "Active" : "Pending";
+    const statusLabel = assignment.active ? "Active" : "Inactive";
 
     return (
       <View key={assignment.id} style={styles.advocateListRow}>
@@ -497,7 +530,7 @@ const PatientDetailScreen = () => {
       );
     }
 
-    const activeAssignments = advocateAssignments.filter((a) => a.active);
+    const activeAssignments = providerScopedAssignments.filter((a) => a.active);
     const hasAnyAssignments = activeAssignments.length > 0;
 
     return (
@@ -549,6 +582,7 @@ const PatientDetailScreen = () => {
       </View>
 
       <View style={styles.content}>
+        {/* Care Team Summary */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Care Team Summary</Text>
 
@@ -559,31 +593,41 @@ const PatientDetailScreen = () => {
 
           <Text style={styles.cardText}>
             <Text style={styles.summaryLabel}>Provider: </Text>
-            {providerUser?.displayName ||
-              providerUser?.email ||
-              "Unknown Provider"}
+            {effectiveProviderId
+              ? providerUser?.displayName ||
+                providerUser?.email ||
+                "Unknown Provider"
+              : "Select a provider relationship"}
           </Text>
 
-          {activeAdvocatesForSummary.length > 0 ? (
-            <>
-              <Text style={[styles.summaryLabel, { marginTop: 8 }]}>
-                Advocates:
-              </Text>
-              {activeAdvocatesForSummary.map((adv) => (
-                <Text key={adv.id} style={styles.cardText}>
-                  • {adv.displayName || adv.email}
+          {effectiveProviderId ? (
+            activeAdvocatesForSummary.length > 0 ? (
+              <>
+                <Text style={[styles.summaryLabel, { marginTop: 8 }]}>
+                  Advocates:
                 </Text>
-              ))}
-            </>
+                {activeAdvocatesForSummary.map((adv) => (
+                  <Text key={adv.id} style={styles.cardText}>
+                    • {adv.displayName || adv.email}
+                  </Text>
+                ))}
+              </>
+            ) : (
+              <Text style={[styles.cardText, { marginTop: 8 }]}>
+                No active advocates
+              </Text>
+            )
           ) : (
             <Text style={[styles.cardText, { marginTop: 8 }]}>
-              No active advocates
+              This patient can have multiple providers. Open this screen from a
+              specific provider relationship to see the correct care team.
             </Text>
           )}
 
           <TouchableOpacity
             style={[styles.primaryButton, { marginTop: 12 }]}
             onPress={goToChat}
+            disabled={!viewerId || loadingCurrentUser}
           >
             <Text style={styles.primaryButtonText}>Open Care Team Chat</Text>
           </TouchableOpacity>
@@ -599,7 +643,7 @@ const PatientDetailScreen = () => {
           advocates={advocates}
           loading={advocatesLoading}
           onSelect={handleAssignAdvocate}
-          existingAssignments={advocateAssignments}
+          existingAssignments={providerScopedAssignments}
         />
       )}
     </View>
@@ -622,9 +666,7 @@ const AdvocatePickerModal = ({
 
   const assignedMap = {};
   existingAssignments.forEach((a) => {
-    if (a.active) {
-      assignedMap[a.advocateId] = "Active";
-    }
+    if (a.active) assignedMap[a.advocateId] = "Active";
   });
 
   const handleConfirm = () => {
@@ -755,9 +797,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 4,
   },
-  mono: {
-    fontFamily: "Menlo",
-  },
   primaryButton: {
     marginTop: 8,
     paddingVertical: 10,
@@ -808,6 +847,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "flex-end",
     marginTop: 12,
+    gap: 10,
   },
   advocateRow: {
     flexDirection: "row",
