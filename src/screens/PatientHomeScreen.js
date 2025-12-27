@@ -77,8 +77,8 @@ const PatientHomeScreen = () => {
 
   const [careTeamLoading, setCareTeamLoading] = useState(false);
   const [careTeamError, setCareTeamError] = useState(null);
-  const [providerUser, setProviderUser] = useState(null);
-  const [advocates, setAdvocates] = useState([]);
+
+  const [careTeams, setCareTeams] = useState([]);
 
   const [loadingConvos, setLoadingConvos] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -147,17 +147,28 @@ const PatientHomeScreen = () => {
       const assignments = data?.advocateAssignmentsByPatient?.items || [];
 
       if (!assignments.length) {
-        setProviderUser(null);
-        setAdvocates([]);
+        setCareTeams([]);
         return;
       }
 
-      const providerIds = [
-        ...new Set(assignments.map((a) => a.providerId).filter(Boolean)),
-      ];
-      const advocateIds = [
-        ...new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
-      ];
+      const providerToAdvocates = new Map();
+
+      assignments.forEach((a) => {
+        if (!a?.providerId) return;
+        if (!providerToAdvocates.has(a.providerId)) {
+          providerToAdvocates.set(a.providerId, new Set());
+        }
+        if (a.advocateId) {
+          providerToAdvocates.get(a.providerId).add(a.advocateId);
+        }
+      });
+
+      const providerIds = Array.from(providerToAdvocates.keys()).filter(
+        Boolean,
+      );
+      const advocateIds = Array.from(
+        new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
+      );
 
       const fetchUser = async (id) => {
         try {
@@ -173,18 +184,40 @@ const PatientHomeScreen = () => {
         }
       };
 
-      const provider =
-        providerIds.length > 0 ? await fetchUser(providerIds[0]) : null;
+      const allIds = Array.from(new Set([...providerIds, ...advocateIds]));
+      const results = await Promise.all(allIds.map(fetchUser));
 
-      const advocateUsers = (
-        await Promise.all(advocateIds.map(fetchUser))
-      ).filter(Boolean);
+      const usersById = {};
+      results.forEach((u) => {
+        if (u?.id) usersById[u.id] = u;
+      });
 
-      setProviderUser(provider);
-      setAdvocates(advocateUsers);
+      const teams = providerIds
+        .map((providerId) => {
+          const providerUser = usersById[providerId] || null;
+          const advocatesForProvider = Array.from(
+            providerToAdvocates.get(providerId) || [],
+          )
+            .map((advId) => usersById[advId])
+            .filter(Boolean);
+
+          return {
+            providerId,
+            providerUser,
+            advocates: advocatesForProvider,
+          };
+        })
+        .sort((a, b) => {
+          const an = (a.providerUser?.displayName || "").toLowerCase();
+          const bn = (b.providerUser?.displayName || "").toLowerCase();
+          return an.localeCompare(bn);
+        });
+
+      setCareTeams(teams);
     } catch (err) {
       console.log("[PATIENT_HOME] Error fetching care team:", err);
       setCareTeamError("Unable to load your care team.");
+      setCareTeams([]);
     } finally {
       setCareTeamLoading(false);
     }
@@ -255,48 +288,47 @@ const PatientHomeScreen = () => {
     [currentUser?.id, currentUser?.displayName, navigation],
   );
 
-  const canMessageCareTeam = !!providerUser?.id && advocates.length > 0;
+  const handleOpenCareTeamGroupChat = useCallback(
+    async ({ providerId, providerName, advocateIds }) => {
+      if (!currentUser?.id) return;
+      if (!providerId) return;
 
-  const handleOpenCareTeamGroupChat = useCallback(async () => {
-    if (!currentUser?.id) return;
-    if (!providerUser?.id || advocates.length === 0) return;
+      try {
+        const conversation = await ensureCareTeamConversation({
+          currentUserId: currentUser.id,
+          patientId: currentUser.id,
+          providerId,
+          advocateIds,
+          title: `Care Team: ${currentUser.displayName || "Patient"} • ${
+            providerName || "Provider"
+          }`,
+        });
 
-    try {
-      const conversation = await ensureCareTeamConversation({
-        currentUserId: currentUser.id,
-        patientId: currentUser.id,
-        providerId: providerUser.id,
-        advocateIds: advocates.map((a) => a.id).filter(Boolean),
-        title: `Care Team: ${currentUser.displayName || "Patient"}`,
-      });
+        setConversations((prev) => {
+          if (prev.some((c) => c.id === conversation.id)) return prev;
+          return [conversation, ...prev];
+        });
 
-      setConversations((prev) => {
-        if (prev.some((c) => c.id === conversation.id)) return prev;
-        return [conversation, ...prev];
-      });
-
-      navigation.navigate("Chat", {
-        conversationId: conversation.id,
-        conversation,
-        title: conversation.title || "Care Team Chat",
-      });
-    } catch (err) {
-      console.log("[PATIENT_HOME] handleOpenCareTeamGroupChat error:", err);
-      Alert.alert(
-        "Unable to open care team chat",
-        "Something went wrong while opening the care team conversation.",
-      );
-    }
-  }, [
-    currentUser?.id,
-    currentUser?.displayName,
-    providerUser?.id,
-    advocates,
-    navigation,
-  ]);
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title: conversation.title || "Care Team Chat",
+        });
+      } catch (err) {
+        console.log("[PATIENT_HOME] handleOpenCareTeamGroupChat error:", err);
+        Alert.alert(
+          "Unable to open care team chat",
+          "Something went wrong while opening the care team conversation.",
+        );
+      }
+    },
+    [currentUser?.id, currentUser?.displayName, navigation],
+  );
 
   const hasConversations = conversations.length > 0;
   const showGlobalLoader = loadingCurrentUser && !hasConversations;
+
+  const hasAnyCareTeams = careTeams.length > 0;
 
   return (
     <View
@@ -321,7 +353,6 @@ const PatientHomeScreen = () => {
         </View>
       )}
 
-      {/* Care Team */}
       <View style={styles.sectionHeaderRow}>
         <Text style={styles.sectionTitle}>My Care Team</Text>
         {careTeamLoading && (
@@ -333,75 +364,112 @@ const PatientHomeScreen = () => {
         <Text style={styles.sectionErrorText}>{careTeamError}</Text>
       )}
 
-      {providerUser || advocates.length > 0 ? (
+      {hasAnyCareTeams ? (
         <View style={styles.careTeamContainer}>
-          {/* ✅ NEW: Care Team group chat CTA */}
-          {canMessageCareTeam && (
-            <View style={styles.careTeamTopCTA}>
-              <TouchableOpacity
-                style={styles.careTeamCTAButton}
-                onPress={handleOpenCareTeamGroupChat}
-              >
-                <Text style={styles.careTeamCTAButtonText}>
-                  Message Care Team
-                </Text>
-              </TouchableOpacity>
-              <Text style={styles.careTeamCTASubtitle}>
-                Includes your provider + all active advocates.
-              </Text>
-            </View>
-          )}
+          {careTeams.map((team) => {
+            const providerName =
+              team.providerUser?.displayName ||
+              team.providerUser?.email ||
+              "Provider";
 
-          {/* Provider */}
-          {providerUser && (
-            <View style={styles.careCard}>
-              <View style={styles.careCardHeader}>
-                <Text style={styles.careName}>
-                  {providerUser.displayName || "Provider"}
-                </Text>
-                <Text style={[styles.careRoleBadge, styles.providerBadge]}>
-                  Provider
-                </Text>
-              </View>
-              <Text style={styles.careSubtitle}>
-                Primary provider for your care.
-              </Text>
-              <TouchableOpacity
-                style={styles.careButton}
-                onPress={() => handleOpenCareTeamChat(providerUser)}
-              >
-                <Text style={styles.careButtonText}>Open Chat</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+            const advocateIds = team.advocates.map((a) => a.id).filter(Boolean);
+            const canMessageTeam = !!team.providerId && advocateIds.length > 0;
 
-          {/* Advocates */}
-          {advocates.length > 0 && (
-            <View style={styles.careSubsection}>
-              <Text style={styles.careSubsectionTitle}>Advocates</Text>
-              {advocates.map((adv) => (
-                <View key={adv.id} style={styles.careCard}>
+            return (
+              <View key={team.providerId} style={styles.teamGroup}>
+                <View style={styles.careCard}>
                   <View style={styles.careCardHeader}>
-                    <Text style={styles.careName}>
-                      {adv.displayName || "Advocate"}
-                    </Text>
-                    <Text style={[styles.careRoleBadge, styles.advocateBadge]}>
-                      Advocate
+                    <Text style={styles.careName}>{providerName}</Text>
+                    <Text style={[styles.careRoleBadge, styles.providerBadge]}>
+                      Provider
                     </Text>
                   </View>
+
                   <Text style={styles.careSubtitle}>
-                    Supports you in communicating with your providers.
+                    Your care team for this provider.
                   </Text>
-                  <TouchableOpacity
-                    style={styles.careButton}
-                    onPress={() => handleOpenCareTeamChat(adv)}
-                  >
-                    <Text style={styles.careButtonText}>Open Chat</Text>
-                  </TouchableOpacity>
+
+                  <View style={styles.teamButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.careButton}
+                      onPress={() =>
+                        handleOpenCareTeamChat(
+                          team.providerUser || {
+                            id: team.providerId,
+                            displayName: providerName,
+                          },
+                        )
+                      }
+                    >
+                      <Text style={styles.careButtonText}>
+                        Message Provider
+                      </Text>
+                    </TouchableOpacity>
+
+                    {canMessageTeam && (
+                      <TouchableOpacity
+                        style={styles.careTeamButton}
+                        onPress={() =>
+                          handleOpenCareTeamGroupChat({
+                            providerId: team.providerId,
+                            providerName,
+                            advocateIds,
+                          })
+                        }
+                      >
+                        <Text style={styles.careTeamButtonText}>
+                          Care Team Chat
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {!canMessageTeam && (
+                    <Text style={styles.teamHintText}>
+                      Add an advocate to enable a care team chat for this
+                      provider.
+                    </Text>
+                  )}
                 </View>
-              ))}
-            </View>
-          )}
+
+                {team.advocates.length > 0 ? (
+                  <View style={styles.careSubsection}>
+                    <Text style={styles.careSubsectionTitle}>
+                      Advocates (for {providerName})
+                    </Text>
+
+                    {team.advocates.map((adv) => (
+                      <View key={adv.id} style={styles.careCard}>
+                        <View style={styles.careCardHeader}>
+                          <Text style={styles.careName}>
+                            {adv.displayName || adv.email || "Advocate"}
+                          </Text>
+                          <Text
+                            style={[styles.careRoleBadge, styles.advocateBadge]}
+                          >
+                            Advocate
+                          </Text>
+                        </View>
+
+                        <Text style={styles.careSubtitle}>
+                          Supports you in communicating with your providers.
+                        </Text>
+
+                        <TouchableOpacity
+                          style={styles.careButton}
+                          onPress={() => handleOpenCareTeamChat(adv)}
+                        >
+                          <Text style={styles.careButtonText}>
+                            Message Advocate
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            );
+          })}
         </View>
       ) : !careTeamLoading ? (
         <View style={styles.emptyCareTeam}>
@@ -415,7 +483,6 @@ const PatientHomeScreen = () => {
 
       <View style={styles.sectionDivider} />
 
-      {/* Conversations */}
       {showGlobalLoader ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
@@ -534,29 +601,17 @@ const styles = StyleSheet.create({
   careTeamContainer: {
     marginBottom: 8,
   },
-
-  careTeamTopCTA: {
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#EFF6FF",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#BFDBFE",
-    marginBottom: 10,
+  teamGroup: {
+    marginBottom: 6,
   },
-  careTeamCTAButton: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#1D4ED8",
+  teamButtonsRow: {
+    flexDirection: "row",
+    gap: 10,
+    flexWrap: "wrap",
+    marginTop: 8,
   },
-  careTeamCTAButtonText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  careTeamCTASubtitle: {
-    marginTop: 6,
+  teamHintText: {
+    marginTop: 8,
     fontSize: 12,
     color: "#475569",
   },
@@ -603,17 +658,31 @@ const styles = StyleSheet.create({
   careButton: {
     alignSelf: "flex-start",
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: "#2563EB",
   },
   careButtonText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
     color: "#FFFFFF",
   },
+
+  careTeamButton: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#1D4ED8",
+  },
+  careTeamButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+
   careSubsection: {
-    marginTop: 4,
+    marginTop: 0,
   },
   careSubsectionTitle: {
     fontSize: 14,
