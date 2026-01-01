@@ -158,9 +158,16 @@ const ProviderHomeScreen = () => {
   }, [loadPatients]);
 
   const handlePressPatient = (patient) => {
+    if (!currentUser?.id) {
+      Alert.alert("Error", "Provider not loaded yet.");
+      return;
+    }
+
     navigation.navigate("PatientDetail", {
       patientId: patient.id,
       patientName: patient.displayName || "Patient",
+      providerId: currentUser.id,
+      fromRole: "PROVIDER",
     });
   };
 
