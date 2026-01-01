@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -77,19 +77,21 @@ const PatientHomeScreen = () => {
 
   const [careTeamLoading, setCareTeamLoading] = useState(false);
   const [careTeamError, setCareTeamError] = useState(null);
-
   const [careTeams, setCareTeams] = useState([]);
 
   const [loadingConvos, setLoadingConvos] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const roleLabelMap = {
-    PATIENT: "Patient",
-    PROVIDER: "Provider",
-    ADVOCATE: "Advocate",
-    ADMIN: "Admin",
-  };
+  const roleLabelMap = useMemo(
+    () => ({
+      PATIENT: "Patient",
+      PROVIDER: "Provider",
+      ADVOCATE: "Advocate",
+      ADMIN: "Admin",
+    }),
+    [],
+  );
 
   const username = currentUser?.displayName || "Patient";
   const roleLabel =
@@ -251,7 +253,7 @@ const PatientHomeScreen = () => {
     });
   };
 
-  const handleOpenCareTeamChat = useCallback(
+  const handleOpenDirectChat = useCallback(
     async (targetUser) => {
       if (!targetUser?.id || !currentUser?.id) return;
 
@@ -278,7 +280,7 @@ const PatientHomeScreen = () => {
             "Care Team Conversation",
         });
       } catch (err) {
-        console.log("[PATIENT_HOME] handleOpenCareTeamChat error:", err);
+        console.log("[PATIENT_HOME] handleOpenDirectChat error:", err);
         Alert.alert(
           "Unable to open chat",
           "Something went wrong while opening the conversation.",
@@ -372,7 +374,10 @@ const PatientHomeScreen = () => {
               team.providerUser?.email ||
               "Provider";
 
-            const advocateIds = team.advocates.map((a) => a.id).filter(Boolean);
+            const advocateIds = (team.advocates || [])
+              .map((a) => a?.id)
+              .filter(Boolean);
+
             const canMessageTeam = !!team.providerId && advocateIds.length > 0;
 
             return (
@@ -393,7 +398,7 @@ const PatientHomeScreen = () => {
                     <TouchableOpacity
                       style={styles.careButton}
                       onPress={() =>
-                        handleOpenCareTeamChat(
+                        handleOpenDirectChat(
                           team.providerUser || {
                             id: team.providerId,
                             displayName: providerName,
@@ -432,13 +437,13 @@ const PatientHomeScreen = () => {
                   )}
                 </View>
 
-                {team.advocates.length > 0 ? (
+                {(team.advocates || []).length > 0 ? (
                   <View style={styles.careSubsection}>
                     <Text style={styles.careSubsectionTitle}>
                       Advocates (for {providerName})
                     </Text>
 
-                    {team.advocates.map((adv) => (
+                    {(team.advocates || []).map((adv) => (
                       <View key={adv.id} style={styles.careCard}>
                         <View style={styles.careCardHeader}>
                           <Text style={styles.careName}>
@@ -457,7 +462,7 @@ const PatientHomeScreen = () => {
 
                         <TouchableOpacity
                           style={styles.careButton}
-                          onPress={() => handleOpenCareTeamChat(adv)}
+                          onPress={() => handleOpenDirectChat(adv)}
                         >
                           <Text style={styles.careButtonText}>
                             Message Advocate
