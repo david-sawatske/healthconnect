@@ -85,29 +85,6 @@ const ProviderHomeScreen = () => {
   const roleLabel =
     roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Provider";
 
-  const loadPatients = useCallback(async () => {
-    if (!currentUser?.id) return;
-
-    setLoading(true);
-    try {
-      const res = await client.graphql({
-        query: LIST_PROVIDER_PATIENTS,
-        variables: { providerId: currentUser.id },
-        authMode: "userPool",
-      });
-
-      const links = res?.data?.providerPatientsByProvider?.items || [];
-      const items = links.map((link) => link.patient).filter(Boolean);
-
-      setPatients(items);
-    } catch (err) {
-      log("loadPatients error:", err);
-      Alert.alert("Error", "Failed to load patients.");
-    } finally {
-      setLoading(false);
-    }
-  }, [currentUser?.id]);
-
   const loadAdvocateIdsForPatient = useCallback(
     async (patientId) => {
       if (!currentUser?.id || !patientId) return [];
@@ -140,6 +117,38 @@ const ProviderHomeScreen = () => {
     },
     [currentUser?.id, advocateIdsByPatient],
   );
+
+  const loadPatients = useCallback(async () => {
+    if (!currentUser?.id) return;
+
+    setLoading(true);
+    try {
+      const res = await client.graphql({
+        query: LIST_PROVIDER_PATIENTS,
+        variables: { providerId: currentUser.id },
+        authMode: "userPool",
+      });
+
+      const links = res?.data?.providerPatientsByProvider?.items || [];
+      const items = links.map((link) => link.patient).filter(Boolean);
+
+      setPatients(items);
+
+      (async () => {
+        const first = items.slice(0, 10);
+        for (const p of first) {
+          if (!p?.id) continue;
+          if (advocateIdsByPatient[p.id]) continue;
+          await loadAdvocateIdsForPatient(p.id);
+        }
+      })().catch(() => {});
+    } catch (err) {
+      log("loadPatients error:", err);
+      Alert.alert("Error", "Failed to load patients.");
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser?.id, loadAdvocateIdsForPatient, advocateIdsByPatient]);
 
   useEffect(() => {
     if (currentUser?.id) {
@@ -249,8 +258,9 @@ const ProviderHomeScreen = () => {
   );
 
   const renderPatientItem = ({ item }) => {
-    const cachedAdvIds = advocateIdsByPatient[item.id] || null;
-    const showHint = Array.isArray(cachedAdvIds) && cachedAdvIds.length === 0;
+    const cachedAdvIds = advocateIdsByPatient[item.id];
+    const hasCache = Array.isArray(cachedAdvIds);
+    const count = hasCache ? cachedAdvIds.length : null;
 
     return (
       <View style={styles.patientRow}>
@@ -261,14 +271,26 @@ const ProviderHomeScreen = () => {
           <Text style={styles.patientName}>
             {item.displayName || "Unnamed Patient"}
           </Text>
+
           {item.email ? (
             <Text style={styles.patientSub}>{item.email}</Text>
           ) : null}
-          {showHint ? (
-            <Text style={styles.patientHint}>
-              No advocates assigned (care team chat disabled)
+
+          {hasCache ? (
+            count > 0 ? (
+              <Text style={styles.patientMetaLine}>
+                Advocates assigned: {count}
+              </Text>
+            ) : (
+              <Text style={styles.patientHint}>
+                No advocates assigned (care team chat disabled)
+              </Text>
+            )
+          ) : (
+            <Text style={styles.patientMetaLine}>
+              Advocates: — (tap Care Team to load)
             </Text>
-          ) : null}
+          )}
         </TouchableOpacity>
 
         <View style={styles.rowRight}>
@@ -405,6 +427,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#6B7280",
     marginTop: 2,
+  },
+  patientMetaLine: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 6,
   },
   patientHint: {
     fontSize: 12,
