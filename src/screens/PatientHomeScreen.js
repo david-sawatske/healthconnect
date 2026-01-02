@@ -32,6 +32,7 @@ const LIST_MY_CONVERSATIONS = /* GraphQL */ `
         title
         memberIds
         createdAt
+        updatedAt
         isGroup
         createdBy
       }
@@ -65,6 +66,24 @@ const GET_USER = /* GraphQL */ `
   }
 `;
 
+const LAST_MESSAGE_BY_CONVERSATION = /* GraphQL */ `
+  query LastMessageByConversation($conversationId: ID!, $limit: Int) {
+    messagesByConversation(
+      conversationId: $conversationId
+      sortDirection: DESC
+      limit: $limit
+    ) {
+      items {
+        id
+        type
+        body
+        senderId
+        createdAt
+      }
+    }
+  }
+`;
+
 const PAGE_SIZE = 20;
 
 const PatientHomeScreen = () => {
@@ -83,6 +102,9 @@ const PatientHomeScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
+  const [lastMessageByConvo, setLastMessageByConvo] = useState({});
+  const [loadingLastByConvo, setLoadingLastByConvo] = useState({});
+
   const roleLabelMap = useMemo(
     () => ({
       PATIENT: "Patient",
@@ -96,6 +118,51 @@ const PatientHomeScreen = () => {
   const username = currentUser?.displayName || "Patient";
   const roleLabel =
     roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Patient";
+
+  const sortByRecent = useCallback((arr) => {
+    return [...arr].sort((a, b) => {
+      const at = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
+      const bt = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
+      return bt - at;
+    });
+  }, []);
+
+  const fetchLastMessage = useCallback(
+    async (conversationId) => {
+      if (!conversationId) return;
+
+      if (
+        Object.prototype.hasOwnProperty.call(lastMessageByConvo, conversationId)
+      )
+        return;
+      if (loadingLastByConvo[conversationId]) return;
+
+      setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: true }));
+
+      try {
+        const { data } = await client.graphql({
+          query: LAST_MESSAGE_BY_CONVERSATION,
+          variables: { conversationId, limit: 1 },
+          authMode: "userPool",
+        });
+
+        const items = data?.messagesByConversation?.items || [];
+        const last = items[0] || null;
+
+        setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: last }));
+      } catch (err) {
+        console.log(
+          "[PATIENT_HOME] fetchLastMessage error:",
+          conversationId,
+          err,
+        );
+        setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: null }));
+      } finally {
+        setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: false }));
+      }
+    },
+    [lastMessageByConvo, loadingLastByConvo],
+  );
 
   const fetchConversations = useCallback(
     async ({ reset = false } = {}) => {
@@ -120,7 +187,11 @@ const PatientHomeScreen = () => {
         const result = data?.listConversations;
         const newItems = result?.items || [];
 
-        setConversations((prev) => (reset ? newItems : [...prev, ...newItems]));
+        setConversations((prev) => {
+          const merged = reset ? newItems : [...prev, ...newItems];
+          return sortByRecent(merged);
+        });
+
         setNextToken(result?.nextToken || null);
       } catch (err) {
         console.log("[PATIENT_HOME] Error fetching conversations:", err);
@@ -130,7 +201,7 @@ const PatientHomeScreen = () => {
         setRefreshing(false);
       }
     },
-    [currentUser?.id, nextToken],
+    [currentUser?.id, nextToken, sortByRecent],
   );
 
   const fetchCareTeam = useCallback(async () => {
@@ -232,10 +303,18 @@ const PatientHomeScreen = () => {
     fetchCareTeam();
   }, [currentUser?.id, fetchConversations, fetchCareTeam]);
 
+  useEffect(() => {
+    if (!conversations.length) return;
+    conversations.slice(0, 20).forEach((c) => fetchLastMessage(c.id));
+  }, [conversations, fetchLastMessage]);
+
   const onRefresh = useCallback(() => {
     if (!currentUser?.id) return;
 
     setRefreshing(true);
+    setLastMessageByConvo({});
+    setLoadingLastByConvo({});
+
     fetchConversations({ reset: true });
     fetchCareTeam();
   }, [currentUser?.id, fetchConversations, fetchCareTeam]);
@@ -253,7 +332,7 @@ const PatientHomeScreen = () => {
     });
   };
 
-  const handleOpenDirectChat = useCallback(
+  const handleOpenCareTeamChat = useCallback(
     async (targetUser) => {
       if (!targetUser?.id || !currentUser?.id) return;
 
@@ -268,7 +347,7 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           if (prev.some((c) => c.id === conversation.id)) return prev;
-          return [conversation, ...prev];
+          return sortByRecent([conversation, ...prev]);
         });
 
         navigation.navigate("Chat", {
@@ -280,14 +359,14 @@ const PatientHomeScreen = () => {
             "Care Team Conversation",
         });
       } catch (err) {
-        console.log("[PATIENT_HOME] handleOpenDirectChat error:", err);
+        console.log("[PATIENT_HOME] handleOpenCareTeamChat error:", err);
         Alert.alert(
           "Unable to open chat",
           "Something went wrong while opening the conversation.",
         );
       }
     },
-    [currentUser?.id, currentUser?.displayName, navigation],
+    [currentUser?.id, currentUser?.displayName, navigation, sortByRecent],
   );
 
   const handleOpenCareTeamGroupChat = useCallback(
@@ -308,7 +387,7 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           if (prev.some((c) => c.id === conversation.id)) return prev;
-          return [conversation, ...prev];
+          return sortByRecent([conversation, ...prev]);
         });
 
         navigation.navigate("Chat", {
@@ -324,7 +403,7 @@ const PatientHomeScreen = () => {
         );
       }
     },
-    [currentUser?.id, currentUser?.displayName, navigation],
+    [currentUser?.id, currentUser?.displayName, navigation, sortByRecent],
   );
 
   const hasConversations = conversations.length > 0;
@@ -374,10 +453,7 @@ const PatientHomeScreen = () => {
               team.providerUser?.email ||
               "Provider";
 
-            const advocateIds = (team.advocates || [])
-              .map((a) => a?.id)
-              .filter(Boolean);
-
+            const advocateIds = team.advocates.map((a) => a.id).filter(Boolean);
             const canMessageTeam = !!team.providerId && advocateIds.length > 0;
 
             return (
@@ -398,7 +474,7 @@ const PatientHomeScreen = () => {
                     <TouchableOpacity
                       style={styles.careButton}
                       onPress={() =>
-                        handleOpenDirectChat(
+                        handleOpenCareTeamChat(
                           team.providerUser || {
                             id: team.providerId,
                             displayName: providerName,
@@ -437,13 +513,13 @@ const PatientHomeScreen = () => {
                   )}
                 </View>
 
-                {(team.advocates || []).length > 0 ? (
+                {team.advocates.length > 0 ? (
                   <View style={styles.careSubsection}>
                     <Text style={styles.careSubsectionTitle}>
                       Advocates (for {providerName})
                     </Text>
 
-                    {(team.advocates || []).map((adv) => (
+                    {team.advocates.map((adv) => (
                       <View key={adv.id} style={styles.careCard}>
                         <View style={styles.careCardHeader}>
                           <Text style={styles.careName}>
@@ -462,7 +538,7 @@ const PatientHomeScreen = () => {
 
                         <TouchableOpacity
                           style={styles.careButton}
-                          onPress={() => handleOpenDirectChat(adv)}
+                          onPress={() => handleOpenCareTeamChat(adv)}
                         >
                           <Text style={styles.careButtonText}>
                             Message Advocate
@@ -504,21 +580,37 @@ const PatientHomeScreen = () => {
             <FlatList
               data={conversations}
               keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.conversationCard}
-                  onPress={() => handleOpenConversation(item)}
-                >
-                  <Text style={styles.conversationTitle}>
-                    {item.title || "Conversation"}
-                  </Text>
-                  <Text style={styles.conversationMeta}>
-                    {item.createdAt
-                      ? new Date(item.createdAt).toLocaleString()
-                      : "No timestamp"}
-                  </Text>
-                </TouchableOpacity>
-              )}
+              renderItem={({ item }) => {
+                const last = lastMessageByConvo[item.id];
+                const lastLoading = loadingLastByConvo[item.id];
+
+                const preview = lastLoading
+                  ? "Loading preview…"
+                  : last?.type === "SYSTEM"
+                    ? last?.body || "System update"
+                    : last?.body || "No messages yet";
+
+                const ts = last?.createdAt || item.updatedAt || item.createdAt;
+
+                return (
+                  <TouchableOpacity
+                    style={styles.conversationCard}
+                    onPress={() => handleOpenConversation(item)}
+                  >
+                    <Text style={styles.conversationTitle}>
+                      {item.title || "Conversation"}
+                    </Text>
+
+                    <Text style={styles.conversationPreview} numberOfLines={1}>
+                      {preview}
+                    </Text>
+
+                    <Text style={styles.conversationMeta}>
+                      {ts ? new Date(ts).toLocaleString() : "No timestamp"}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
               contentContainerStyle={styles.listContent}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -728,6 +820,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
     marginBottom: 4,
+  },
+  conversationPreview: {
+    fontSize: 13,
+    color: "#475569",
+    marginBottom: 6,
   },
   conversationMeta: {
     fontSize: 12,
