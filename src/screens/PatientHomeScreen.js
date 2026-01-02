@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -9,7 +15,7 @@ import {
   RefreshControl,
   Alert,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
@@ -85,6 +91,7 @@ const LAST_MESSAGE_BY_CONVERSATION = /* GraphQL */ `
 `;
 
 const PAGE_SIZE = 20;
+const PREVIEW_COUNT = 20;
 
 const PatientHomeScreen = () => {
   const navigation = useNavigation();
@@ -105,6 +112,17 @@ const PatientHomeScreen = () => {
   const [lastMessageByConvo, setLastMessageByConvo] = useState({});
   const [loadingLastByConvo, setLoadingLastByConvo] = useState({});
 
+  const lastMessageRef = useRef({});
+  const loadingLastRef = useRef({});
+
+  useEffect(() => {
+    lastMessageRef.current = lastMessageByConvo;
+  }, [lastMessageByConvo]);
+
+  useEffect(() => {
+    loadingLastRef.current = loadingLastByConvo;
+  }, [loadingLastByConvo]);
+
   const roleLabelMap = useMemo(
     () => ({
       PATIENT: "Patient",
@@ -119,50 +137,75 @@ const PatientHomeScreen = () => {
   const roleLabel =
     roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Patient";
 
-  const sortByRecent = useCallback((arr) => {
-    return [...arr].sort((a, b) => {
-      const at = new Date(a?.updatedAt || a?.createdAt || 0).getTime();
-      const bt = new Date(b?.updatedAt || b?.createdAt || 0).getTime();
-      return bt - at;
-    });
+  const getLastActivityTs = useCallback((c) => {
+    const last = lastMessageRef.current?.[c?.id];
+    return last?.createdAt || c?.updatedAt || c?.createdAt || 0;
   }, []);
 
-  const fetchLastMessage = useCallback(
-    async (conversationId) => {
-      if (!conversationId) return;
-
-      if (
-        Object.prototype.hasOwnProperty.call(lastMessageByConvo, conversationId)
-      )
-        return;
-      if (loadingLastByConvo[conversationId]) return;
-
-      setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: true }));
-
-      try {
-        const { data } = await client.graphql({
-          query: LAST_MESSAGE_BY_CONVERSATION,
-          variables: { conversationId, limit: 1 },
-          authMode: "userPool",
-        });
-
-        const items = data?.messagesByConversation?.items || [];
-        const last = items[0] || null;
-
-        setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: last }));
-      } catch (err) {
-        console.log(
-          "[PATIENT_HOME] fetchLastMessage error:",
-          conversationId,
-          err,
-        );
-        setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: null }));
-      } finally {
-        setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: false }));
-      }
+  const sortByLastActivity = useCallback(
+    (arr) => {
+      return [...arr].sort((a, b) => {
+        const at = new Date(getLastActivityTs(a)).getTime();
+        const bt = new Date(getLastActivityTs(b)).getTime();
+        return bt - at;
+      });
     },
-    [lastMessageByConvo, loadingLastByConvo],
+    [getLastActivityTs],
   );
+
+  const fetchLastMessage = useCallback(async (conversationId) => {
+    if (!conversationId) return;
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        lastMessageRef.current,
+        conversationId,
+      )
+    ) {
+      return;
+    }
+    if (loadingLastRef.current?.[conversationId]) return;
+
+    loadingLastRef.current = {
+      ...loadingLastRef.current,
+      [conversationId]: true,
+    };
+    setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: true }));
+
+    try {
+      const { data } = await client.graphql({
+        query: LAST_MESSAGE_BY_CONVERSATION,
+        variables: { conversationId, limit: 1 },
+        authMode: "userPool",
+      });
+
+      const items = data?.messagesByConversation?.items || [];
+      const last = items[0] || null;
+
+      lastMessageRef.current = {
+        ...lastMessageRef.current,
+        [conversationId]: last,
+      };
+      setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: last }));
+    } catch (err) {
+      console.log(
+        "[PATIENT_HOME] fetchLastMessage error:",
+        conversationId,
+        err,
+      );
+      lastMessageRef.current = {
+        ...lastMessageRef.current,
+        [conversationId]: null,
+      };
+      setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: null }));
+    } finally {
+      loadingLastRef.current = {
+        ...loadingLastRef.current,
+        [conversationId]: false,
+      };
+      setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: false }));
+    }
+  }, []);
 
   const fetchConversations = useCallback(
     async ({ reset = false } = {}) => {
@@ -189,7 +232,7 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           const merged = reset ? newItems : [...prev, ...newItems];
-          return sortByRecent(merged);
+          return sortByLastActivity(merged);
         });
 
         setNextToken(result?.nextToken || null);
@@ -201,7 +244,7 @@ const PatientHomeScreen = () => {
         setRefreshing(false);
       }
     },
-    [currentUser?.id, nextToken, sortByRecent],
+    [currentUser?.id, nextToken, sortByLastActivity],
   );
 
   const fetchCareTeam = useCallback(async () => {
@@ -298,26 +341,58 @@ const PatientHomeScreen = () => {
 
   useEffect(() => {
     if (!currentUser?.id) return;
-
     fetchConversations({ reset: true });
     fetchCareTeam();
   }, [currentUser?.id, fetchConversations, fetchCareTeam]);
 
   useEffect(() => {
     if (!conversations.length) return;
-    conversations.slice(0, 20).forEach((c) => fetchLastMessage(c.id));
+    conversations
+      .slice(0, PREVIEW_COUNT)
+      .forEach((c) => fetchLastMessage(c.id));
   }, [conversations, fetchLastMessage]);
+
+  useEffect(() => {
+    if (!conversations.length) return;
+
+    setConversations((prev) => {
+      const next = sortByLastActivity(prev);
+
+      const prevIds = prev.map((c) => c.id).join(",");
+      const nextIds = next.map((c) => c.id).join(",");
+      return prevIds === nextIds ? prev : next;
+    });
+  }, [lastMessageByConvo, sortByLastActivity, conversations.length]);
 
   const onRefresh = useCallback(() => {
     if (!currentUser?.id) return;
 
     setRefreshing(true);
+
+    lastMessageRef.current = {};
+    loadingLastRef.current = {};
     setLastMessageByConvo({});
     setLoadingLastByConvo({});
 
     fetchConversations({ reset: true });
     fetchCareTeam();
   }, [currentUser?.id, fetchConversations, fetchCareTeam]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentUser?.id) return;
+
+      lastMessageRef.current = {};
+      loadingLastRef.current = {};
+      setLastMessageByConvo({});
+      setLoadingLastByConvo({});
+
+      fetchConversations({ reset: true });
+      fetchCareTeam();
+
+      return () => {};
+    }, [currentUser?.id, fetchConversations, fetchCareTeam]),
+  );
 
   const loadMore = () => {
     if (!nextToken || loadingConvos) return;
@@ -347,7 +422,7 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           if (prev.some((c) => c.id === conversation.id)) return prev;
-          return sortByRecent([conversation, ...prev]);
+          return sortByLastActivity([conversation, ...prev]);
         });
 
         navigation.navigate("Chat", {
@@ -366,7 +441,7 @@ const PatientHomeScreen = () => {
         );
       }
     },
-    [currentUser?.id, currentUser?.displayName, navigation, sortByRecent],
+    [currentUser?.id, currentUser?.displayName, navigation, sortByLastActivity],
   );
 
   const handleOpenCareTeamGroupChat = useCallback(
@@ -387,7 +462,7 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           if (prev.some((c) => c.id === conversation.id)) return prev;
-          return sortByRecent([conversation, ...prev]);
+          return sortByLastActivity([conversation, ...prev]);
         });
 
         navigation.navigate("Chat", {
@@ -403,7 +478,7 @@ const PatientHomeScreen = () => {
         );
       }
     },
-    [currentUser?.id, currentUser?.displayName, navigation, sortByRecent],
+    [currentUser?.id, currentUser?.displayName, navigation, sortByLastActivity],
   );
 
   const hasConversations = conversations.length > 0;
@@ -590,7 +665,7 @@ const PatientHomeScreen = () => {
                     ? last?.body || "System update"
                     : last?.body || "No messages yet";
 
-                const ts = last?.createdAt || item.updatedAt || item.createdAt;
+                const ts = getLastActivityTs(item);
 
                 return (
                   <TouchableOpacity
