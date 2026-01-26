@@ -94,6 +94,56 @@ const GetUser = /* GraphQL */ `
   }
 `;
 
+const GetConversationParticipant = /* GraphQL */ `
+  query GetConversationParticipant($id: ID!) {
+    getConversationParticipant(id: $id) {
+      id
+      conversationId
+      userId
+      lastReadAt
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+const CreateConversationParticipant = /* GraphQL */ `
+  mutation CreateConversationParticipant(
+    $input: CreateConversationParticipantInput!
+  ) {
+    createConversationParticipant(input: $input) {
+      id
+      conversationId
+      userId
+      lastReadAt
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+const UpdateConversationParticipant = /* GraphQL */ `
+  mutation UpdateConversationParticipant(
+    $input: UpdateConversationParticipantInput!
+  ) {
+    updateConversationParticipant(input: $input) {
+      id
+      lastReadAt
+      updatedAt
+    }
+  }
+`;
+
+const UpdateConversationLastMessageAt = /* GraphQL */ `
+  mutation UpdateConversationLastMessageAt($input: UpdateConversationInput!) {
+    updateConversation(input: $input) {
+      id
+      lastMessageAt
+      updatedAt
+    }
+  }
+`;
+
 function extFromName(name = "") {
   const m = name.toLowerCase().match(/\.(\w+)$/);
   return m ? m[1] : "";
@@ -133,6 +183,76 @@ export default function ChatScreen({ route, navigation }) {
   const myId = currentUser?.id || null;
 
   useCallSignals({ conversationId, currentUserId: myId });
+
+  const participantId =
+    conversationId && myId ? `${conversationId}:${myId}` : null;
+
+  const ensureParticipantAndMarkRead = useCallback(async () => {
+    if (!conversationId || !myId || !participantId) return;
+
+    try {
+      const existing = await client.graphql({
+        query: GetConversationParticipant,
+        variables: { id: participantId },
+        authMode: "userPool",
+      });
+
+      const row = existing?.data?.getConversationParticipant;
+
+      if (!row) {
+        try {
+          await client.graphql({
+            query: CreateConversationParticipant,
+            variables: {
+              input: {
+                id: participantId,
+                conversationId,
+                userId: myId,
+                lastReadAt: null,
+              },
+            },
+            authMode: "userPool",
+          });
+        } catch (e) {
+          const msg = e?.errors?.[0]?.message || String(e);
+          const alreadyExists =
+            msg.includes("ConditionalCheckFailed") ||
+            msg.toLowerCase().includes("conditional request failed");
+          if (!alreadyExists) throw e;
+        }
+      }
+
+      const now = new Date().toISOString();
+      await client.graphql({
+        query: UpdateConversationParticipant,
+        variables: {
+          input: { id: participantId, lastReadAt: now },
+        },
+        authMode: "userPool",
+      });
+    } catch (e) {
+      console.log("[CHAT] ensure/markRead error:", e);
+    }
+  }, [conversationId, myId, participantId]);
+
+  const bumpConversationLastMessageAt = useCallback(async () => {
+    if (!conversationId) return;
+    try {
+      const now = new Date().toISOString();
+      await client.graphql({
+        query: UpdateConversationLastMessageAt,
+        variables: {
+          input: {
+            id: conversationId,
+            lastMessageAt: now,
+          },
+        },
+        authMode: "userPool",
+      });
+    } catch (e) {
+      console.log("[CHAT] updateConversation lastMessageAt error:", e);
+    }
+  }, [conversationId]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -207,6 +327,7 @@ export default function ChatScreen({ route, navigation }) {
       let retryTimer;
 
       fetchMessages();
+      ensureParticipantAndMarkRead();
 
       retryTimer = setTimeout(() => {
         fetchMessages();
@@ -223,6 +344,8 @@ export default function ChatScreen({ route, navigation }) {
               prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
             );
 
+            ensureParticipantAndMarkRead();
+
             requestAnimationFrame(() =>
               listRef.current?.scrollToEnd?.({ animated: true }),
             );
@@ -233,11 +356,10 @@ export default function ChatScreen({ route, navigation }) {
       return () => {
         try {
           sub?.unsubscribe?.();
-        } catch (e) {
-        }
+        } catch (e) {}
         if (retryTimer) clearTimeout(retryTimer);
       };
-    }, [conversationId, fetchMessages]),
+    }, [conversationId, fetchMessages, ensureParticipantAndMarkRead]),
   );
 
   const handleSend = async () => {
@@ -262,6 +384,8 @@ export default function ChatScreen({ route, navigation }) {
 
       const created = data?.createMessage;
       if (created) {
+        await bumpConversationLastMessageAt();
+
         setMessages((prev) =>
           prev.some((m) => m.id === created.id) ? prev : [...prev, created],
         );
@@ -269,7 +393,10 @@ export default function ChatScreen({ route, navigation }) {
           listRef.current?.scrollToEnd?.({ animated: true }),
         );
       }
+
       setText("");
+
+      ensureParticipantAndMarkRead();
     } catch (err) {
       console.log("[CHAT] send error:", err);
       Alert.alert("Error", "Failed to send message.");
@@ -315,6 +442,8 @@ export default function ChatScreen({ route, navigation }) {
 
       const created = data?.createMessage;
       if (created) {
+        await bumpConversationLastMessageAt();
+
         setMessages((prev) =>
           prev.some((m) => m.id === created.id) ? prev : [...prev, created],
         );
@@ -322,6 +451,8 @@ export default function ChatScreen({ route, navigation }) {
           listRef.current?.scrollToEnd?.({ animated: true }),
         );
       }
+
+      ensureParticipantAndMarkRead();
     } catch (e) {
       console.log("[CHAT] attach error:", e);
       Alert.alert("Upload failed", "Could not upload attachment.");
@@ -476,7 +607,6 @@ export default function ChatScreen({ route, navigation }) {
       style={{ flex: 1, backgroundColor: "#fff" }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      {/* 🧑‍⚕️ Current user pill */}
       <View
         style={[
           styles.mePillRow,
