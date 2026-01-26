@@ -19,6 +19,7 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import ConversationListItem from "../components/ConversationListItem";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
@@ -668,22 +669,12 @@ const PatientHomeScreen = () => {
                 const ts = getLastActivityTs(item);
 
                 return (
-                  <TouchableOpacity
-                    style={styles.conversationCard}
+                  <ConversationListItem
+                    title={item.title || "Conversation"}
+                    preview={preview}
+                    timestamp={ts}
                     onPress={() => handleOpenConversation(item)}
-                  >
-                    <Text style={styles.conversationTitle}>
-                      {item.title || "Conversation"}
-                    </Text>
-
-                    <Text style={styles.conversationPreview} numberOfLines={1}>
-                      {preview}
-                    </Text>
-
-                    <Text style={styles.conversationMeta}>
-                      {ts ? new Date(ts).toLocaleString() : "No timestamp"}
-                    </Text>
-                  </TouchableOpacity>
+                  />
                 );
               }}
               contentContainerStyle={styles.listContent}
@@ -881,29 +872,6 @@ const styles = StyleSheet.create({
 
   listContent: {
     paddingBottom: 16,
-  },
-  conversationCard: {
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-    marginBottom: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-  },
-  conversationTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  conversationPreview: {
-    fontSize: 13,
-    color: "#475569",
-    marginBottom: 6,
-  },
-  conversationMeta: {
-    fontSize: 12,
-    color: "#6B7280",
   },
 
   errorBanner: {

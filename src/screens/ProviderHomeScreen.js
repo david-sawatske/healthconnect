@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import ConversationListItem from "../components/ConversationListItem";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
@@ -74,12 +75,15 @@ const ProviderHomeScreen = () => {
 
   const [advocateIdsByPatient, setAdvocateIdsByPatient] = useState({});
 
-  const roleLabelMap = {
-    PATIENT: "Patient",
-    PROVIDER: "Provider",
-    ADVOCATE: "Advocate",
-    ADMIN: "Admin",
-  };
+  const roleLabelMap = useMemo(
+    () => ({
+      PATIENT: "Patient",
+      PROVIDER: "Provider",
+      ADVOCATE: "Advocate",
+      ADMIN: "Admin",
+    }),
+    [],
+  );
 
   const displayName = currentUser?.displayName || "Provider";
   const roleLabel =
@@ -166,19 +170,22 @@ const ProviderHomeScreen = () => {
     }
   }, [loadPatients]);
 
-  const handlePressPatient = (patient) => {
-    if (!currentUser?.id) {
-      Alert.alert("Error", "Provider not loaded yet.");
-      return;
-    }
+  const handlePressPatient = useCallback(
+    (patient) => {
+      if (!currentUser?.id) {
+        Alert.alert("Error", "Provider not loaded yet.");
+        return;
+      }
 
-    navigation.navigate("PatientDetail", {
-      patientId: patient.id,
-      patientName: patient.displayName || "Patient",
-      providerId: currentUser.id,
-      fromRole: "PROVIDER",
-    });
-  };
+      navigation.navigate("PatientDetail", {
+        patientId: patient.id,
+        patientName: patient.displayName || "Patient",
+        providerId: currentUser.id,
+        fromRole: "PROVIDER",
+      });
+    },
+    [currentUser?.id, navigation],
+  );
 
   const handleMessagePatient = useCallback(
     async (patient) => {
@@ -262,55 +269,43 @@ const ProviderHomeScreen = () => {
     const hasCache = Array.isArray(cachedAdvIds);
     const count = hasCache ? cachedAdvIds.length : null;
 
-    return (
-      <View style={styles.patientRow}>
+    const preview = item.email
+      ? item.email
+      : hasCache
+        ? count > 0
+          ? `Advocates assigned: ${count}`
+          : "No advocates assigned (care team chat disabled)"
+        : "Advocates: — (tap Care Team to load)";
+
+    const rightAccessory = (
+      <View style={styles.rowRight}>
         <TouchableOpacity
-          style={styles.patientInfo}
-          onPress={() => handlePressPatient(item)}
+          style={styles.secondaryButton}
+          onPress={() => handleCareTeamChat(item)}
         >
-          <Text style={styles.patientName}>
-            {item.displayName || "Unnamed Patient"}
-          </Text>
-
-          {item.email ? (
-            <Text style={styles.patientSub}>{item.email}</Text>
-          ) : null}
-
-          {hasCache ? (
-            count > 0 ? (
-              <Text style={styles.patientMetaLine}>
-                Advocates assigned: {count}
-              </Text>
-            ) : (
-              <Text style={styles.patientHint}>
-                No advocates assigned (care team chat disabled)
-              </Text>
-            )
-          ) : (
-            <Text style={styles.patientMetaLine}>
-              Advocates: — (tap Care Team to load)
-            </Text>
-          )}
+          <Text style={styles.secondaryButtonText}>Care Team</Text>
         </TouchableOpacity>
 
-        <View style={styles.rowRight}>
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => handleCareTeamChat(item)}
-          >
-            <Text style={styles.secondaryButtonText}>Care Team</Text>
-          </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.messageButton}
+          onPress={() => handleMessagePatient(item)}
+        >
+          <Text style={styles.messageButtonText}>Message</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.messageButton}
-            onPress={() => handleMessagePatient(item)}
-          >
-            <Text style={styles.messageButtonText}>Message</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.patientChevron}>›</Text>
-        </View>
+        <Text style={styles.patientChevron}>›</Text>
       </View>
+    );
+
+    return (
+      <ConversationListItem
+        title={item.displayName || "Unnamed Patient"}
+        preview={preview}
+        timestamp={null}
+        onPress={() => handlePressPatient(item)}
+        maxPreviewLines={2}
+        rightAccessory={rightAccessory}
+      />
     );
   };
 
@@ -359,6 +354,8 @@ const ProviderHomeScreen = () => {
   );
 };
 
+export default ProviderHomeScreen;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -402,52 +399,17 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 16,
   },
-  patientRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
-  },
-  patientInfo: {
-    flex: 1,
-  },
-  patientName: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  patientSub: {
-    fontSize: 13,
-    color: "#6B7280",
-    marginTop: 2,
-  },
-  patientMetaLine: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 6,
-  },
-  patientHint: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 6,
-  },
+
   rowRight: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
   },
   secondaryButton: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: "#1D4ED8",
-    marginRight: 8,
   },
   secondaryButtonText: {
     fontSize: 13,
@@ -459,7 +421,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: "#2563EB",
-    marginRight: 8,
   },
   messageButtonText: {
     fontSize: 13,
@@ -469,7 +430,9 @@ const styles = StyleSheet.create({
   patientChevron: {
     fontSize: 24,
     color: "#9CA3AF",
+    marginLeft: 2,
   },
+
   loadingContainer: {
     flex: 1,
     alignItems: "center",
@@ -497,5 +460,3 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
-
-export default ProviderHomeScreen;

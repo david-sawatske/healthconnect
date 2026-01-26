@@ -13,6 +13,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import ConversationListItem from "../components/ConversationListItem";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
@@ -382,20 +383,12 @@ const AdvocateHomeScreen = () => {
     [advocateId, loadAdvocateIdsForPatient, navigation],
   );
 
-  const renderPatientItem = ({ item }) => (
-    <View style={styles.patientCard}>
-      <TouchableOpacity
-        onPress={() => handleOpenPatient(item)}
-        style={styles.patientInfo}
-      >
-        <Text style={styles.patientName}>{item.patientName}</Text>
-        <Text style={styles.patientMeta}>Provider: {item.providerName}</Text>
-        <Text style={styles.patientMeta}>
-          Added: {new Date(item.createdAt).toLocaleString()}
-        </Text>
-      </TouchableOpacity>
+  const renderPatientItem = ({ item }) => {
+    const preview = `Provider: ${item.providerName || "Unknown Provider"}`;
+    const ts = item.createdAt;
 
-      <View style={styles.cardRight}>
+    const rightAccessory = (
+      <View style={styles.rowRight}>
         <TouchableOpacity
           style={styles.careTeamButton}
           onPress={() => handleCareTeamChat(item)}
@@ -410,8 +403,21 @@ const AdvocateHomeScreen = () => {
           <Text style={styles.messageButtonText}>Message</Text>
         </TouchableOpacity>
       </View>
-    </View>
-  );
+    );
+
+    return (
+      <View style={{ marginBottom: 10 }}>
+        <ConversationListItem
+          title={item.patientName || "Patient"}
+          preview={preview}
+          timestamp={ts}
+          onPress={() => handleOpenPatient(item)}
+          maxPreviewLines={2}
+          rightAccessory={rightAccessory}
+        />
+      </View>
+    );
+  };
 
   const showGlobalLoader =
     (loading || loadingCurrentUser) && !refreshing && !patients.length;
@@ -545,34 +551,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#6B7280",
   },
-  patientCard: {
-    backgroundColor: "#FFF",
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+  loadingText: {
+    marginTop: 8,
+    color: "#6B7280",
+  },
+
+  rowRight: {
     flexDirection: "row",
     alignItems: "center",
-  },
-  patientInfo: {
-    flex: 1,
-  },
-  patientName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  patientMeta: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginTop: 4,
-  },
-  cardRight: {
-    marginLeft: 8,
     gap: 8,
-    alignItems: "flex-end",
   },
   careTeamButton: {
     paddingHorizontal: 10,
@@ -595,9 +582,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: "#FFFFFF",
-  },
-  loadingText: {
-    marginTop: 8,
-    color: "#6B7280",
   },
 });
