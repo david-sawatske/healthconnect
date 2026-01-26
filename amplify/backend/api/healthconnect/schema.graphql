@@ -78,8 +78,47 @@ type Conversation
   isGroup: Boolean!
   memberIds: [String!]!
   createdBy: String!
+  lastMessageAt: AWSDateTime
   messages: [Message] @hasMany(indexName: "byConversation", fields: ["id"])
   createdAt: AWSDateTime
+}
+
+type ConversationParticipant
+  @model
+  @auth(
+    rules: [
+      {
+        allow: owner
+        ownerField: "userId"
+        identityClaim: "sub"
+        operations: [create, read, update, delete]
+      }
+      {
+        allow: groups
+        groups: ["Admin"]
+        operations: [create, read, update, delete]
+      }
+    ]
+  ) {
+  id: ID!
+
+  userId: String!
+    @index(
+      name: "byUser"
+      queryField: "conversationParticipantsByUser"
+      sortKeyFields: ["conversationId"]
+    )
+
+  conversationId: ID!
+    @index(
+      name: "byConversation"
+      queryField: "conversationParticipantsByConversation"
+      sortKeyFields: ["userId"]
+    )
+
+  lastReadAt: AWSDateTime
+  createdAt: AWSDateTime
+  updatedAt: AWSDateTime
 }
 
 type Message
