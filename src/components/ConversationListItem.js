@@ -11,6 +11,9 @@ const ConversationListItem = memo(
     rightAccessory = null,
     maxPreviewLines = 1,
     testID,
+
+    unread = false,
+    showUnreadDot = true,
   }) => {
     const tsLabel = useMemo(() => {
       if (!timestamp) return "No timestamp";
@@ -26,26 +29,40 @@ const ConversationListItem = memo(
       return d.toLocaleString();
     }, [timestamp]);
 
+    const accessory =
+      rightAccessory ??
+      (unread && showUnreadDot ? <View style={styles.unreadDot} /> : null);
+
     return (
       <TouchableOpacity
         testID={testID}
-        style={[styles.card, disabled && styles.cardDisabled]}
+        style={[
+          styles.card,
+          unread && styles.cardUnread,
+          disabled && styles.cardDisabled,
+        ]}
         onPress={disabled ? undefined : onPress}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityState={{ disabled }}
       >
         <View style={styles.rowTop}>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text
+            style={[styles.title, unread && styles.titleUnread]}
+            numberOfLines={1}
+          >
             {title || "Conversation"}
           </Text>
 
-          {rightAccessory ? (
-            <View style={styles.rightAccessory}>{rightAccessory}</View>
+          {accessory ? (
+            <View style={styles.rightAccessory}>{accessory}</View>
           ) : null}
         </View>
 
-        <Text style={styles.preview} numberOfLines={maxPreviewLines}>
+        <Text
+          style={[styles.preview, unread && styles.previewUnread]}
+          numberOfLines={maxPreviewLines}
+        >
           {preview || "No messages yet"}
         </Text>
 
@@ -65,6 +82,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#E5E7EB",
+  },
+  cardUnread: {
+    borderColor: "#CBD5E1",
   },
   cardDisabled: {
     opacity: 0.6,
@@ -87,13 +107,27 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
   },
+  titleUnread: {
+    fontWeight: "800",
+  },
   preview: {
     fontSize: 13,
     color: "#475569",
     marginBottom: 6,
   },
+  previewUnread: {
+    fontWeight: "700",
+    color: "#0F172A",
+  },
   meta: {
     fontSize: 12,
     color: "#6B7280",
+  },
+
+  unreadDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
   },
 });

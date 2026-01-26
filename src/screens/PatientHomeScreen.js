@@ -42,6 +42,30 @@ const LIST_MY_CONVERSATIONS = /* GraphQL */ `
         updatedAt
         isGroup
         createdBy
+        lastMessageAt
+      }
+      nextToken
+    }
+  }
+`;
+
+const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
+  query ConversationParticipantsByUser(
+    $userId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    conversationParticipantsByUser(
+      userId: $userId
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        conversationId
+        userId
+        lastReadAt
+        updatedAt
       }
       nextToken
     }
@@ -113,8 +137,12 @@ const PatientHomeScreen = () => {
   const [lastMessageByConvo, setLastMessageByConvo] = useState({});
   const [loadingLastByConvo, setLoadingLastByConvo] = useState({});
 
+  const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
+  const [loadingReads, setLoadingReads] = useState(false);
+
   const lastMessageRef = useRef({});
   const loadingLastRef = useRef({});
+  const lastReadAtRef = useRef({});
 
   useEffect(() => {
     lastMessageRef.current = lastMessageByConvo;
@@ -123,6 +151,10 @@ const PatientHomeScreen = () => {
   useEffect(() => {
     loadingLastRef.current = loadingLastByConvo;
   }, [loadingLastByConvo]);
+
+  useEffect(() => {
+    lastReadAtRef.current = lastReadAtByConvoId;
+  }, [lastReadAtByConvoId]);
 
   const roleLabelMap = useMemo(
     () => ({
@@ -139,8 +171,7 @@ const PatientHomeScreen = () => {
     roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Patient";
 
   const getLastActivityTs = useCallback((c) => {
-    const last = lastMessageRef.current?.[c?.id];
-    return last?.createdAt || c?.updatedAt || c?.createdAt || 0;
+    return c?.lastMessageAt || c?.updatedAt || c?.createdAt || 0;
   }, []);
 
   const sortByLastActivity = useCallback(
@@ -207,6 +238,45 @@ const PatientHomeScreen = () => {
       setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: false }));
     }
   }, []);
+
+  const fetchMyReadState = useCallback(async () => {
+    if (!currentUser?.id) return;
+
+    setLoadingReads(true);
+    try {
+      let next = null;
+      const map = {};
+
+      do {
+        const { data } = await client.graphql({
+          query: CONVERSATION_PARTICIPANTS_BY_USER,
+          variables: {
+            userId: currentUser.id,
+            limit: 200,
+            nextToken: next,
+          },
+          authMode: "userPool",
+        });
+
+        const res = data?.conversationParticipantsByUser;
+        const items = res?.items || [];
+        next = res?.nextToken || null;
+
+        items.forEach((p) => {
+          if (p?.conversationId) map[p.conversationId] = p.lastReadAt || null;
+        });
+      } while (next);
+
+      lastReadAtRef.current = map;
+      setLastReadAtByConvoId(map);
+    } catch (err) {
+      console.log("[PATIENT_HOME] fetchMyReadState error:", err);
+      lastReadAtRef.current = {};
+      setLastReadAtByConvoId({});
+    } finally {
+      setLoadingReads(false);
+    }
+  }, [currentUser?.id]);
 
   const fetchConversations = useCallback(
     async ({ reset = false } = {}) => {
@@ -343,8 +413,9 @@ const PatientHomeScreen = () => {
   useEffect(() => {
     if (!currentUser?.id) return;
     fetchConversations({ reset: true });
+    fetchMyReadState();
     fetchCareTeam();
-  }, [currentUser?.id, fetchConversations, fetchCareTeam]);
+  }, [currentUser?.id, fetchConversations, fetchMyReadState, fetchCareTeam]);
 
   useEffect(() => {
     if (!conversations.length) return;
@@ -352,18 +423,6 @@ const PatientHomeScreen = () => {
       .slice(0, PREVIEW_COUNT)
       .forEach((c) => fetchLastMessage(c.id));
   }, [conversations, fetchLastMessage]);
-
-  useEffect(() => {
-    if (!conversations.length) return;
-
-    setConversations((prev) => {
-      const next = sortByLastActivity(prev);
-
-      const prevIds = prev.map((c) => c.id).join(",");
-      const nextIds = next.map((c) => c.id).join(",");
-      return prevIds === nextIds ? prev : next;
-    });
-  }, [lastMessageByConvo, sortByLastActivity, conversations.length]);
 
   const onRefresh = useCallback(() => {
     if (!currentUser?.id) return;
@@ -376,23 +435,20 @@ const PatientHomeScreen = () => {
     setLoadingLastByConvo({});
 
     fetchConversations({ reset: true });
+    fetchMyReadState();
     fetchCareTeam();
-  }, [currentUser?.id, fetchConversations, fetchCareTeam]);
+  }, [currentUser?.id, fetchConversations, fetchMyReadState, fetchCareTeam]);
 
   useFocusEffect(
     useCallback(() => {
       if (!currentUser?.id) return;
 
-      lastMessageRef.current = {};
-      loadingLastRef.current = {};
-      setLastMessageByConvo({});
-      setLoadingLastByConvo({});
-
       fetchConversations({ reset: true });
+      fetchMyReadState();
       fetchCareTeam();
 
       return () => {};
-    }, [currentUser?.id, fetchConversations, fetchCareTeam]),
+    }, [currentUser?.id, fetchConversations, fetchMyReadState, fetchCareTeam]),
   );
 
   const loadMore = () => {
@@ -647,10 +703,15 @@ const PatientHomeScreen = () => {
         </View>
       ) : (
         <>
-          <Text style={styles.sectionTitle}>
-            My Conversations
-            {hasConversations ? ` (${conversations.length})` : ""}
-          </Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>
+              My Conversations
+              {hasConversations ? ` (${conversations.length})` : ""}
+            </Text>
+            {loadingReads ? (
+              <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
+            ) : null}
+          </View>
 
           {hasConversations ? (
             <FlatList
@@ -668,12 +729,23 @@ const PatientHomeScreen = () => {
 
                 const ts = getLastActivityTs(item);
 
+                const lastReadAt = lastReadAtRef.current?.[item.id] || null;
+                const lastMsgAt = item?.lastMessageAt || null;
+
+                const isUnread =
+                  !!lastMsgAt &&
+                  (!lastReadAt ||
+                    new Date(lastReadAt).getTime() <
+                      new Date(lastMsgAt).getTime());
+
                 return (
                   <ConversationListItem
                     title={item.title || "Conversation"}
                     preview={preview}
                     timestamp={ts}
+                    unread={isUnread}
                     onPress={() => handleOpenConversation(item)}
+                    testID={`conversation-${item.id}`}
                   />
                 );
               }}

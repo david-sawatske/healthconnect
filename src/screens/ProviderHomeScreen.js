@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -9,7 +15,7 @@ import {
   RefreshControl,
   Alert,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
@@ -64,6 +70,50 @@ const LIST_ADVOCATE_ASSIGNMENTS_FOR_PROVIDER_PATIENT = /* GraphQL */ `
   }
 `;
 
+const LIST_MY_CONVERSATIONS = /* GraphQL */ `
+  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
+    listConversations(
+      filter: { memberIds: { contains: $sub } }
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        title
+        memberIds
+        isGroup
+        createdAt
+        updatedAt
+        lastMessageAt
+      }
+      nextToken
+    }
+  }
+`;
+
+const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
+  query ConversationParticipantsByUser(
+    $userId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    conversationParticipantsByUser(
+      userId: $userId
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        conversationId
+        userId
+        lastReadAt
+        updatedAt
+      }
+      nextToken
+    }
+  }
+`;
+
 const ProviderHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -74,6 +124,22 @@ const ProviderHomeScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   const [advocateIdsByPatient, setAdvocateIdsByPatient] = useState({});
+
+  const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
+  const [directConvoByPatientId, setDirectConvoByPatientId] = useState({});
+  const [loadingReads, setLoadingReads] = useState(false);
+  const [loadingConvos, setLoadingConvos] = useState(false);
+
+  const lastReadAtRef = useRef({});
+  const directConvoRef = useRef({});
+
+  useEffect(() => {
+    lastReadAtRef.current = lastReadAtByConvoId;
+  }, [lastReadAtByConvoId]);
+
+  useEffect(() => {
+    directConvoRef.current = directConvoByPatientId;
+  }, [directConvoByPatientId]);
 
   const roleLabelMap = useMemo(
     () => ({
@@ -88,6 +154,95 @@ const ProviderHomeScreen = () => {
   const displayName = currentUser?.displayName || "Provider";
   const roleLabel =
     roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Provider";
+
+  const fetchMyReadState = useCallback(async () => {
+    if (!currentUser?.id) return;
+
+    setLoadingReads(true);
+    try {
+      let next = null;
+      const map = {};
+
+      do {
+        const { data } = await client.graphql({
+          query: CONVERSATION_PARTICIPANTS_BY_USER,
+          variables: { userId: currentUser.id, limit: 200, nextToken: next },
+          authMode: "userPool",
+        });
+
+        const res = data?.conversationParticipantsByUser;
+        const items = res?.items || [];
+        next = res?.nextToken || null;
+
+        items.forEach((p) => {
+          if (p?.conversationId) map[p.conversationId] = p.lastReadAt || null;
+        });
+      } while (next);
+
+      lastReadAtRef.current = map;
+      setLastReadAtByConvoId(map);
+    } catch (e) {
+      log("fetchMyReadState error:", e);
+      lastReadAtRef.current = {};
+      setLastReadAtByConvoId({});
+    } finally {
+      setLoadingReads(false);
+    }
+  }, [currentUser?.id]);
+
+  const fetchMyConversationsAndIndexByPatient = useCallback(async () => {
+    if (!currentUser?.id) return;
+
+    setLoadingConvos(true);
+    try {
+      let nextToken = null;
+      const all = [];
+
+      do {
+        const { data } = await client.graphql({
+          query: LIST_MY_CONVERSATIONS,
+          variables: { sub: currentUser.id, limit: 200, nextToken },
+          authMode: "userPool",
+        });
+
+        const res = data?.listConversations;
+        const items = res?.items || [];
+        nextToken = res?.nextToken || null;
+
+        all.push(...items);
+      } while (nextToken);
+
+      const directs = all.filter((c) => c && c.isGroup === false);
+
+      const map = {};
+      directs.forEach((c) => {
+        const memberIds = Array.isArray(c.memberIds) ? c.memberIds : [];
+        const otherIds = memberIds.filter((id) => id && id !== currentUser.id);
+        const otherId = otherIds[0] || null;
+        if (!otherId) return;
+
+        const existing = map[otherId];
+        if (!existing) {
+          map[otherId] = c;
+          return;
+        }
+        const a = new Date(
+          existing.lastMessageAt || existing.updatedAt || 0,
+        ).getTime();
+        const b = new Date(c.lastMessageAt || c.updatedAt || 0).getTime();
+        if (b > a) map[otherId] = c;
+      });
+
+      directConvoRef.current = map;
+      setDirectConvoByPatientId(map);
+    } catch (e) {
+      log("fetchMyConversationsAndIndexByPatient error:", e);
+      directConvoRef.current = {};
+      setDirectConvoByPatientId({});
+    } finally {
+      setLoadingConvos(false);
+    }
+  }, [currentUser?.id]);
 
   const loadAdvocateIdsForPatient = useCallback(
     async (patientId) => {
@@ -157,18 +312,44 @@ const ProviderHomeScreen = () => {
   useEffect(() => {
     if (currentUser?.id) {
       loadPatients();
+      fetchMyReadState();
+      fetchMyConversationsAndIndexByPatient();
     }
-  }, [currentUser?.id, loadPatients]);
+  }, [
+    currentUser?.id,
+    loadPatients,
+    fetchMyReadState,
+    fetchMyConversationsAndIndexByPatient,
+  ]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       setAdvocateIdsByPatient({});
-      await loadPatients();
+      await Promise.all([
+        loadPatients(),
+        fetchMyReadState(),
+        fetchMyConversationsAndIndexByPatient(),
+      ]);
     } finally {
       setRefreshing(false);
     }
-  }, [loadPatients]);
+  }, [loadPatients, fetchMyReadState, fetchMyConversationsAndIndexByPatient]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentUser?.id) return;
+
+      fetchMyReadState();
+      fetchMyConversationsAndIndexByPatient();
+
+      return () => {};
+    }, [
+      currentUser?.id,
+      fetchMyReadState,
+      fetchMyConversationsAndIndexByPatient,
+    ]),
+  );
 
   const handlePressPatient = useCallback(
     (patient) => {
@@ -202,6 +383,11 @@ const ProviderHomeScreen = () => {
             patient.displayName || "Patient"
           }`,
         });
+
+        setDirectConvoByPatientId((prev) => ({
+          ...prev,
+          [patient.id]: conversation,
+        }));
 
         navigation.navigate("Chat", {
           conversationId: conversation.id,
@@ -277,8 +463,21 @@ const ProviderHomeScreen = () => {
           : "No advocates assigned (care team chat disabled)"
         : "Advocates: — (tap Care Team to load)";
 
+    const convo = directConvoRef.current?.[item.id] || null;
+    const lastMsgAt = convo?.lastMessageAt || null;
+    const lastReadAt = convo?.id ? lastReadAtRef.current?.[convo.id] : null;
+
+    const isUnread =
+      !!lastMsgAt &&
+      (!lastReadAt ||
+        new Date(lastReadAt).getTime() < new Date(lastMsgAt).getTime());
+
+    const timestamp = lastMsgAt || null;
+
     const rightAccessory = (
       <View style={styles.rowRight}>
+        {isUnread ? <View style={styles.unreadDot} /> : null}
+
         <TouchableOpacity
           style={styles.secondaryButton}
           onPress={() => handleCareTeamChat(item)}
@@ -301,10 +500,12 @@ const ProviderHomeScreen = () => {
       <ConversationListItem
         title={item.displayName || "Unnamed Patient"}
         preview={preview}
-        timestamp={null}
+        timestamp={timestamp}
+        unread={isUnread}
         onPress={() => handlePressPatient(item)}
         maxPreviewLines={2}
         rightAccessory={rightAccessory}
+        testID={`patient-${item.id}`}
       />
     );
   };
@@ -319,7 +520,12 @@ const ProviderHomeScreen = () => {
           <Text style={styles.headerTitle}>
             {loadingCurrentUser ? "Loading..." : displayName}
           </Text>
-          <Text style={styles.headerSub}>My Patients</Text>
+          <View style={styles.subRow}>
+            <Text style={styles.headerSub}>My Patients</Text>
+            {(loadingReads || loadingConvos) && (
+              <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
+            )}
+          </View>
         </View>
         <View style={styles.rolePill}>
           <Text style={styles.rolePillText}>{roleLabel}</Text>
@@ -378,6 +584,10 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#111827",
   },
+  subRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   headerSub: {
     fontSize: 14,
     color: "#6B7280",
@@ -405,6 +615,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+
+  unreadDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "#2563EB",
+    marginRight: 2,
+  },
+
   secondaryButton: {
     paddingHorizontal: 10,
     paddingVertical: 6,
