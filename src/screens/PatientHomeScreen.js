@@ -24,6 +24,7 @@ import {
   ensureDirectConversation,
   ensureCareTeamConversation,
 } from "../utils/conversations";
+import { theme } from "../ui/theme";
 
 const client = generateClient();
 
@@ -123,6 +124,8 @@ const PatientHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const { currentUser, loadingCurrentUser } = useCurrentUser();
 
+  const [activeTab, setActiveTab] = useState("conversations");
+
   const [conversations, setConversations] = useState([]);
   const [nextToken, setNextToken] = useState(null);
 
@@ -139,6 +142,7 @@ const PatientHomeScreen = () => {
 
   const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
   const [loadingReads, setLoadingReads] = useState(false);
+  const [expandedProviders, setExpandedProviders] = useState(() => new Set());
 
   const lastMessageRef = useRef({});
   const loadingLastRef = useRef({});
@@ -410,6 +414,16 @@ const PatientHomeScreen = () => {
     }
   }, [currentUser?.id]);
 
+  const toggleProviderExpanded = useCallback((providerId) => {
+    if (!providerId) return;
+    setExpandedProviders((prev) => {
+      const next = new Set(prev);
+      if (next.has(providerId)) next.delete(providerId);
+      else next.add(providerId);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (!currentUser?.id) return;
     fetchConversations({ reset: true });
@@ -543,235 +557,285 @@ const PatientHomeScreen = () => {
 
   const hasAnyCareTeams = careTeams.length > 0;
 
-  return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 8 },
-      ]}
-    >
+  const Header = (
+    <>
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>Welcome back,</Text>
           <Text style={styles.username}>{username}</Text>
         </View>
+
         <View style={styles.rolePill}>
           <Text style={styles.rolePillText}>{roleLabel}</Text>
         </View>
       </View>
 
-      {error && (
+      {error ? (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      )}
-
-      <View style={styles.sectionHeaderRow}>
-        <Text style={styles.sectionTitle}>My Care Team</Text>
-        {careTeamLoading && (
-          <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
-        )}
-      </View>
-
-      {careTeamError && (
-        <Text style={styles.sectionErrorText}>{careTeamError}</Text>
-      )}
-
-      {hasAnyCareTeams ? (
-        <View style={styles.careTeamContainer}>
-          {careTeams.map((team) => {
-            const providerName =
-              team.providerUser?.displayName ||
-              team.providerUser?.email ||
-              "Provider";
-
-            const advocateIds = team.advocates.map((a) => a.id).filter(Boolean);
-            const canMessageTeam = !!team.providerId && advocateIds.length > 0;
-
-            return (
-              <View key={team.providerId} style={styles.teamGroup}>
-                <View style={styles.careCard}>
-                  <View style={styles.careCardHeader}>
-                    <Text style={styles.careName}>{providerName}</Text>
-                    <Text style={[styles.careRoleBadge, styles.providerBadge]}>
-                      Provider
-                    </Text>
-                  </View>
-
-                  <Text style={styles.careSubtitle}>
-                    Your care team for this provider.
-                  </Text>
-
-                  <View style={styles.teamButtonsRow}>
-                    <TouchableOpacity
-                      style={styles.careButton}
-                      onPress={() =>
-                        handleOpenCareTeamChat(
-                          team.providerUser || {
-                            id: team.providerId,
-                            displayName: providerName,
-                          },
-                        )
-                      }
-                    >
-                      <Text style={styles.careButtonText}>
-                        Message Provider
-                      </Text>
-                    </TouchableOpacity>
-
-                    {canMessageTeam && (
-                      <TouchableOpacity
-                        style={styles.careTeamButton}
-                        onPress={() =>
-                          handleOpenCareTeamGroupChat({
-                            providerId: team.providerId,
-                            providerName,
-                            advocateIds,
-                          })
-                        }
-                      >
-                        <Text style={styles.careTeamButtonText}>
-                          Care Team Chat
-                        </Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  {!canMessageTeam && (
-                    <Text style={styles.teamHintText}>
-                      Add an advocate to enable a care team chat for this
-                      provider.
-                    </Text>
-                  )}
-                </View>
-
-                {team.advocates.length > 0 ? (
-                  <View style={styles.careSubsection}>
-                    <Text style={styles.careSubsectionTitle}>
-                      Advocates (for {providerName})
-                    </Text>
-
-                    {team.advocates.map((adv) => (
-                      <View key={adv.id} style={styles.careCard}>
-                        <View style={styles.careCardHeader}>
-                          <Text style={styles.careName}>
-                            {adv.displayName || adv.email || "Advocate"}
-                          </Text>
-                          <Text
-                            style={[styles.careRoleBadge, styles.advocateBadge]}
-                          >
-                            Advocate
-                          </Text>
-                        </View>
-
-                        <Text style={styles.careSubtitle}>
-                          Supports you in communicating with your providers.
-                        </Text>
-
-                        <TouchableOpacity
-                          style={styles.careButton}
-                          onPress={() => handleOpenCareTeamChat(adv)}
-                        >
-                          <Text style={styles.careButtonText}>
-                            Message Advocate
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
-      ) : !careTeamLoading ? (
-        <View style={styles.emptyCareTeam}>
-          <Text style={styles.emptyCareTitle}>No care team yet</Text>
-          <Text style={styles.emptyCareBody}>
-            Once a provider assigns themselves or an advocate, they’ll appear
-            here.
-          </Text>
-        </View>
       ) : null}
 
-      <View style={styles.sectionDivider} />
+      <View style={styles.segmentWrap}>
+        <TouchableOpacity
+          style={[
+            styles.segmentBtn,
+            activeTab === "conversations" && styles.segmentBtnActive,
+          ]}
+          onPress={() => setActiveTab("conversations")}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              activeTab === "conversations" && styles.segmentTextActive,
+            ]}
+          >
+            Conversations
+          </Text>
+        </TouchableOpacity>
 
-      {showGlobalLoader ? (
+        <TouchableOpacity
+          style={[
+            styles.segmentBtn,
+            activeTab === "careTeam" && styles.segmentBtnActive,
+          ]}
+          onPress={() => setActiveTab("careTeam")}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              activeTab === "careTeam" && styles.segmentTextActive,
+            ]}
+          >
+            Care Team
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  const renderCareTeam = () => {
+    const renderTeamItem = ({ item: team }) => {
+      const providerName =
+        team.providerUser?.displayName ||
+        team.providerUser?.email ||
+        "Provider";
+
+      const advocateIds = (team.advocates || [])
+        .map((a) => a.id)
+        .filter(Boolean);
+      const canMessageTeam = !!team.providerId && advocateIds.length > 0;
+
+      const isExpanded = expandedProviders.has(team.providerId);
+      const advocateCount = team.advocates?.length || 0;
+
+      return (
+        <View style={styles.providerCard}>
+          <View style={styles.providerTopRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.providerName} numberOfLines={1}>
+                {providerName}
+              </Text>
+            </View>
+
+            <Text style={[styles.badge, styles.providerBadge]}>Provider</Text>
+          </View>
+
+          <View style={styles.actionsRow}>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={() =>
+                handleOpenCareTeamChat(
+                  team.providerUser || {
+                    id: team.providerId,
+                    displayName: providerName,
+                  },
+                )
+              }
+            >
+              <Text style={styles.primaryBtnText}>Message</Text>
+            </TouchableOpacity>
+
+            {canMessageTeam ? (
+              <TouchableOpacity
+                style={styles.secondaryBtn}
+                onPress={() =>
+                  handleOpenCareTeamGroupChat({
+                    providerId: team.providerId,
+                    providerName,
+                    advocateIds,
+                  })
+                }
+              >
+                <Text style={styles.secondaryBtnText}>Care Team Chat</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.disabledPill}>
+                <Text style={styles.disabledPillText}>
+                  Add advocate to enable group
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {advocateCount > 0 ? (
+            <TouchableOpacity
+              style={styles.advocatesHeaderRow}
+              onPress={() => toggleProviderExpanded(team.providerId)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.advocatesHeaderRowText}>
+                Advocates ({advocateCount})
+              </Text>
+
+              <Text style={styles.chevronText}>{isExpanded ? "▴" : "▾"}</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {isExpanded && advocateCount > 0 ? (
+            <View style={styles.advocatesWrap}>
+              {team.advocates.map((adv) => (
+                <TouchableOpacity
+                  key={adv.id}
+                  style={styles.advocateRow}
+                  onPress={() => handleOpenCareTeamChat(adv)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.advocateName} numberOfLines={1}>
+                      {adv.displayName || adv.email || "Advocate"}
+                    </Text>
+                    <Text style={styles.advocateHint} numberOfLines={1}>
+                      Tap to message
+                    </Text>
+                  </View>
+
+                  <Text style={[styles.badge, styles.advocateBadge]}>
+                    Advocate
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      );
+    };
+
+    return (
+      <View style={{ paddingBottom: 0 }}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>My Care Team</Text>
+          {careTeamLoading ? (
+            <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
+          ) : null}
+        </View>
+
+        {careTeamError ? (
+          <Text style={styles.sectionErrorText}>{careTeamError}</Text>
+        ) : null}
+
+        {hasAnyCareTeams ? (
+          <FlatList
+            data={careTeams}
+            keyExtractor={(t) => t.providerId}
+            renderItem={renderTeamItem}
+            contentContainerStyle={{ paddingBottom: 16 }}
+          />
+        ) : !careTeamLoading ? (
+          <View style={styles.emptyInfo}>
+            <Text style={styles.emptyInfoTitle}>No care team yet</Text>
+            <Text style={styles.emptyInfoBody}>
+              Once a provider assigns themselves or an advocate, they’ll appear
+              here.
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  if (showGlobalLoader) {
+    return (
+      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+        {Header}
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
           <Text style={styles.loadingText}>Loading your home…</Text>
         </View>
-      ) : (
-        <>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>
-              My Conversations
-              {hasConversations ? ` (${conversations.length})` : ""}
-            </Text>
-            {loadingReads ? (
-              <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
-            ) : null}
-          </View>
+      </View>
+    );
+  }
 
-          {hasConversations ? (
-            <FlatList
-              data={conversations}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => {
-                const last = lastMessageByConvo[item.id];
-                const lastLoading = loadingLastByConvo[item.id];
+  if (activeTab === "careTeam") {
+    return (
+      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+        {Header}
+        {renderCareTeam()}
+      </View>
+    );
+  }
 
-                const preview = lastLoading
-                  ? "Loading preview…"
-                  : last?.type === "SYSTEM"
-                    ? last?.body || "System update"
-                    : last?.body || "No messages yet";
+  return (
+    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+      <FlatList
+        data={conversations}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={Header}
+        renderItem={({ item }) => {
+          const last = lastMessageByConvo[item.id];
+          const lastLoading = loadingLastByConvo[item.id];
 
-                const ts = getLastActivityTs(item);
+          const preview = lastLoading
+            ? "Loading preview…"
+            : last?.type === "SYSTEM"
+              ? last?.body || "System update"
+              : last?.body || "No messages yet";
 
-                const lastReadAt = lastReadAtRef.current?.[item.id] || null;
-                const lastMsgAt = item?.lastMessageAt || null;
+          const ts = getLastActivityTs(item);
 
-                const isUnread =
-                  !!lastMsgAt &&
-                  (!lastReadAt ||
-                    new Date(lastReadAt).getTime() <
-                      new Date(lastMsgAt).getTime());
+          const lastReadAt = lastReadAtRef.current?.[item.id] || null;
+          const lastMsgAt = item?.lastMessageAt || null;
 
-                return (
-                  <ConversationListItem
-                    title={item.title || "Conversation"}
-                    preview={preview}
-                    timestamp={ts}
-                    unread={isUnread}
-                    onPress={() => handleOpenConversation(item)}
-                    testID={`conversation-${item.id}`}
-                  />
-                );
-              }}
-              contentContainerStyle={styles.listContent}
-              refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-              }
-              onEndReached={loadMore}
-              onEndReachedThreshold={0.5}
-              ListFooterComponent={
-                loadingConvos && !refreshing ? (
-                  <ActivityIndicator style={{ marginVertical: 12 }} />
-                ) : null
-              }
+          const isUnread =
+            !!lastMsgAt &&
+            (!lastReadAt ||
+              new Date(lastReadAt).getTime() < new Date(lastMsgAt).getTime());
+
+          return (
+            <ConversationListItem
+              title={item.title || "Conversation"}
+              preview={preview}
+              timestamp={ts}
+              unread={isUnread}
+              onPress={() => handleOpenConversation(item)}
+              testID={`conversation-${item.id}`}
             />
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>No conversations yet</Text>
-              <Text style={styles.emptyBody}>
-                When someone starts a conversation with you, it will appear
-                here.
-              </Text>
-            </View>
-          )}
-        </>
-      )}
+          );
+        }}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 16 }]}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListEmptyComponent={
+          <View style={styles.emptyInfo}>
+            <Text style={styles.emptyInfoTitle}>No conversations yet</Text>
+            <Text style={styles.emptyInfoBody}>
+              When someone starts a conversation with you, it will appear here.
+            </Text>
+          </View>
+        }
+        ListFooterComponent={
+          loadingConvos && !refreshing ? (
+            <ActivityIndicator style={{ marginVertical: 12 }} />
+          ) : null
+        }
+      />
+      {loadingReads ? (
+        <View style={styles.readsSpinner}>
+          <ActivityIndicator size="small" />
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -781,34 +845,74 @@ export default PatientHomeScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 16,
-    backgroundColor: "#F7F8FA",
+    paddingHorizontal: theme.space.lg,
+    backgroundColor: theme.colors.bg,
   },
+
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: theme.space.md,
+    marginTop: 0,
   },
   greeting: {
     fontSize: 16,
-    color: "#666",
+    color: theme.colors.subtext,
   },
   username: {
-    fontSize: 22,
+    fontSize: theme.type.h1,
     fontWeight: "700",
-    color: "#111827",
+    color: theme.colors.text,
   },
   rolePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#E0F2FE",
+    paddingHorizontal: theme.space.md,
+    paddingVertical: theme.space.xs,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.pillInfoBg,
   },
   rolePillText: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#0369A1",
+    color: theme.colors.pillInfoText,
+  },
+
+  errorBanner: {
+    backgroundColor: theme.colors.dangerBg,
+    padding: theme.space.sm,
+    borderRadius: theme.radius.sm,
+    marginBottom: theme.space.sm,
+  },
+  errorText: {
+    color: theme.colors.dangerText,
+    fontSize: theme.type.small,
+  },
+
+  segmentWrap: {
+    flexDirection: "row",
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+    marginBottom: theme.space.md,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentBtnActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+  segmentTextActive: {
+    color: theme.colors.primaryText,
   },
 
   sectionHeaderRow: {
@@ -817,171 +921,195 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 4,
-    color: "#111827",
-  },
-  sectionDivider: {
-    height: 1,
-    backgroundColor: "#E5E7EB",
-    marginVertical: 12,
+    fontSize: theme.type.h2,
+    fontWeight: "800",
+    color: theme.colors.text,
   },
   sectionErrorText: {
-    fontSize: 12,
-    color: "#B91C1C",
-    marginBottom: 4,
-  },
-
-  careTeamContainer: {
-    marginBottom: 8,
-  },
-  teamGroup: {
+    fontSize: theme.type.small,
+    color: theme.colors.dangerText,
     marginBottom: 6,
-  },
-  teamButtonsRow: {
-    flexDirection: "row",
-    gap: 10,
-    flexWrap: "wrap",
-    marginTop: 8,
-  },
-  teamHintText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#475569",
-  },
-
-  careCard: {
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-    marginBottom: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-  },
-  careCardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  careName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  careRoleBadge: {
-    fontSize: 11,
-    fontWeight: "600",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  providerBadge: {
-    backgroundColor: "#DBEAFE",
-    color: "#1D4ED8",
-  },
-  advocateBadge: {
-    backgroundColor: "#ECFDF5",
-    color: "#15803D",
-  },
-  careSubtitle: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginBottom: 8,
-  },
-  careButton: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#2563EB",
-  },
-  careButtonText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-
-  careTeamButton: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#1D4ED8",
-  },
-  careTeamButtonText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-
-  careSubsection: {
-    marginTop: 0,
-  },
-  careSubsectionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
-    marginBottom: 4,
-  },
-  emptyCareTeam: {
-    marginTop: 4,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#EFF6FF",
-  },
-  emptyCareTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#1D4ED8",
-    marginBottom: 2,
-  },
-  emptyCareBody: {
-    fontSize: 13,
-    color: "#4B5563",
   },
 
   listContent: {
     paddingBottom: 16,
   },
 
-  errorBanner: {
-    backgroundColor: "#FEE2E2",
-    padding: 8,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  errorText: {
-    color: "#B91C1C",
-    fontSize: 12,
-  },
-
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    paddingTop: 20,
   },
   loadingText: {
     marginTop: 8,
     fontSize: 14,
-    color: "#6B7280",
+    color: theme.colors.subtext,
   },
 
-  emptyState: {
+  emptyInfo: {
     marginTop: 12,
     padding: 16,
-    borderRadius: 12,
-    backgroundColor: "#EFF6FF",
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.infoBg,
   },
-  emptyTitle: {
+  emptyInfoTitle: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#1D4ED8",
+    fontWeight: "700",
+    color: theme.colors.infoText,
     marginBottom: 4,
   },
-  emptyBody: {
+  emptyInfoBody: {
     fontSize: 13,
     color: "#4B5563",
+  },
+
+  readsSpinner: {
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    backgroundColor: theme.colors.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+
+  providerCard: {
+    padding: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.card,
+    marginBottom: theme.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
+  },
+
+  providerTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.space.sm,
+    marginBottom: theme.space.sm,
+  },
+
+  providerName: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  badge: {
+    fontSize: 11,
+    fontWeight: "700",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: theme.radius.pill,
+  },
+  providerBadge: {
+    backgroundColor: theme.colors.providerBg,
+    color: theme.colors.providerText,
+  },
+  advocateBadge: {
+    backgroundColor: theme.colors.advocateBg,
+    color: theme.colors.advocateText,
+  },
+
+  actionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    flexWrap: "wrap",
+    marginTop: 6,
+  },
+  primaryBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.primary,
+  },
+  primaryBtnText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: theme.colors.primaryText,
+  },
+  secondaryBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: theme.radius.pill,
+    backgroundColor: "#1D4ED8",
+  },
+  secondaryBtnText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: theme.colors.primaryText,
+  },
+
+  disabledPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.border,
+  },
+  disabledPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.muted,
+  },
+
+  advocatesWrap: {
+    marginTop: theme.space.md,
+    paddingTop: theme.space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+
+  advocateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.space.sm,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: theme.radius.md,
+    backgroundColor: "#F8FAFC",
+    marginBottom: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+
+  advocateName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  advocateHint: {
+    marginTop: 2,
+    fontSize: 12,
+    color: theme.colors.subtext,
+  },
+
+  advocatesHeaderRow: {
+    marginTop: theme.space.sm,
+    paddingTop: theme.space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  advocatesHeaderRowText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  chevronText: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: theme.colors.subtext,
   },
 });
