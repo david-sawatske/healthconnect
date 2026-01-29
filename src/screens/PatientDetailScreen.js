@@ -13,6 +13,7 @@ import { useRoute, useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import RolePill from "../components/RolePill";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
@@ -116,7 +117,6 @@ const PatientDetailScreen = () => {
     patientId,
     patientName,
     providerId: routeProviderId,
-    advocateId: routeAdvocateId,
     fromRole,
   } = route.params || {};
 
@@ -250,7 +250,6 @@ const PatientDetailScreen = () => {
       .filter(Boolean);
   }, [providerScopedAssignments, advocateUsersById]);
 
-
   const openDirectChat = useCallback(
     async (targetUser) => {
       if (!targetUser?.id || !viewerId) return;
@@ -347,7 +346,6 @@ const PatientDetailScreen = () => {
     navigation,
   ]);
 
-
   const openAdvocatePicker = useCallback(async () => {
     if (!isProviderView) return;
 
@@ -440,7 +438,10 @@ const PatientDetailScreen = () => {
           updatedOrNew = res?.data?.createAdvocateAssignment;
         }
 
-        if (!updatedOrNew) throw new Error("No assignment returned");
+        if (!updatedOrNew) {
+          console.log("[ASSIGN_ADVOCATE] No assignment returned");
+          return;
+        }
 
         setAdvocateAssignments((prev) => {
           const existsIndex = prev.findIndex((a) => a.id === updatedOrNew.id);
@@ -523,10 +524,8 @@ const PatientDetailScreen = () => {
     [advocateUsersById, isProviderView],
   );
 
-
   const providerDisplayName =
     providerUser?.displayName || providerUser?.email || "Provider";
-
   const patientDisplayName = patientName || "Patient";
 
   const canOpenGroupChat =
@@ -619,7 +618,6 @@ const PatientDetailScreen = () => {
     );
   };
 
-
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -641,11 +639,12 @@ const PatientDetailScreen = () => {
 
         <View style={styles.careCard}>
           <View style={styles.careCardHeader}>
-            <Text style={styles.careName}>{patientDisplayName}</Text>
-            <Text style={[styles.careRoleBadge, styles.patientBadge]}>
-              Patient
+            <Text style={styles.careName} numberOfLines={1}>
+              {patientDisplayName}
             </Text>
+            <RolePill role="PATIENT" />
           </View>
+
           <Text style={styles.careSubtitle}>
             This is the patient this care team supports.
           </Text>
@@ -667,12 +666,10 @@ const PatientDetailScreen = () => {
 
         <View style={styles.careCard}>
           <View style={styles.careCardHeader}>
-            <Text style={styles.careName}>
+            <Text style={styles.careName} numberOfLines={1}>
               {effectiveProviderId ? providerDisplayName : "Provider"}
             </Text>
-            <Text style={[styles.careRoleBadge, styles.providerBadge]}>
-              Provider
-            </Text>
+            <RolePill role={providerUser?.role || "PROVIDER"} />
           </View>
 
           {!effectiveProviderId ? (
@@ -736,12 +733,10 @@ const PatientDetailScreen = () => {
               activeAdvocatesForSummary.map((adv) => (
                 <View key={adv.id} style={styles.careCard}>
                   <View style={styles.careCardHeader}>
-                    <Text style={styles.careName}>
+                    <Text style={styles.careName} numberOfLines={1}>
                       {adv.displayName || adv.email || "Advocate"}
                     </Text>
-                    <Text style={[styles.careRoleBadge, styles.advocateBadge]}>
-                      Advocate
-                    </Text>
+                    <RolePill role={adv?.role || "ADVOCATE"} />
                   </View>
 
                   <Text style={styles.careSubtitle}>
@@ -965,10 +960,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#E5E7EB",
   },
+
   careCardHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
     marginBottom: 4,
   },
   careName: {
@@ -976,27 +973,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111827",
     flex: 1,
-    paddingRight: 10,
+    flexShrink: 1,
+    paddingRight: 6,
   },
-  careRoleBadge: {
-    fontSize: 11,
-    fontWeight: "600",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  patientBadge: {
-    backgroundColor: "#E0E7FF",
-    color: "#3730A3",
-  },
-  providerBadge: {
-    backgroundColor: "#DBEAFE",
-    color: "#1D4ED8",
-  },
-  advocateBadge: {
-    backgroundColor: "#ECFDF5",
-    color: "#15803D",
-  },
+
   careSubtitle: {
     fontSize: 12,
     color: "#6B7280",
