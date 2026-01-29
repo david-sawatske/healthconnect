@@ -2,7 +2,6 @@ import React, {
   useEffect,
   useState,
   useCallback,
-  useMemo,
   useRef,
 } from "react";
 import {
@@ -10,20 +9,15 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
-  TouchableOpacity,
   FlatList,
   RefreshControl,
-  Alert,
 } from "react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
-import ConversationListItem from "../components/ConversationListItem";
-import {
-  ensureDirectConversation,
-  ensureCareTeamConversation,
-} from "../utils/conversations";
+import PatientListItem from "../components/PatientListItem";
+import RolePill from "../components/RolePill";
 
 const client = generateClient();
 
@@ -60,31 +54,6 @@ const GET_USER = /* GraphQL */ `
       displayName
       role
       email
-    }
-  }
-`;
-
-const LIST_ADVOCATE_ASSIGNMENTS_FOR_PROVIDER_PATIENT = /* GraphQL */ `
-  query ListAdvocateAssignmentsForProviderPatient(
-    $patientId: ID!
-    $providerId: ID!
-  ) {
-    listAdvocateAssignments(
-      filter: {
-        patientId: { eq: $patientId }
-        providerId: { eq: $providerId }
-        active: { eq: true }
-      }
-      limit: 50
-    ) {
-      items {
-        id
-        patientId
-        providerId
-        advocateId
-        active
-        createdAt
-      }
     }
   }
 `;
@@ -144,9 +113,7 @@ const batchFetchUsers = async (ids) => {
         variables: { id },
         authMode: "userPool",
       });
-      if (data?.getUser) {
-        results[id] = data.getUser;
-      }
+      if (data?.getUser) results[id] = data.getUser;
     } catch (err) {
       log("Failed to fetch user:", id, err);
     }
@@ -160,28 +127,37 @@ const AdvocateHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const { currentUser, loadingCurrentUser } = useCurrentUser();
 
+  const advocateId = currentUser?.id ?? null;
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const [assignments, setAssignments] = useState([]);
   const [nextToken, setNextToken] = useState(null);
-
   const [error, setError] = useState(null);
+
   const [patients, setPatients] = useState([]);
 
-  const [advocateIdsByPatient, setAdvocateIdsByPatient] = useState({});
-
-  const advocateId = currentUser?.id ?? null;
-
   const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
+  const [loadingReads, setLoadingReads] = useState(false);
+
   const [directConvoByPatientId, setDirectConvoByPatientId] = useState({});
   const [careTeamConvoByPairKey, setCareTeamConvoByPairKey] = useState({});
-  const [loadingReads, setLoadingReads] = useState(false);
-  const [loadingConvos, setLoadingConvos] = useState(false);
+
+  const assignmentsRef = useRef([]);
+  const nextTokenRef = useRef(null);
 
   const lastReadAtRef = useRef({});
   const directConvoRef = useRef({});
   const careTeamConvoRef = useRef({});
+
+  useEffect(() => {
+    assignmentsRef.current = assignments;
+  }, [assignments]);
+
+  useEffect(() => {
+    nextTokenRef.current = nextToken;
+  }, [nextToken]);
 
   useEffect(() => {
     lastReadAtRef.current = lastReadAtByConvoId;
@@ -195,19 +171,7 @@ const AdvocateHomeScreen = () => {
     careTeamConvoRef.current = careTeamConvoByPairKey;
   }, [careTeamConvoByPairKey]);
 
-  const roleLabelMap = useMemo(
-    () => ({
-      PATIENT: "Patient",
-      PROVIDER: "Provider",
-      ADVOCATE: "Advocate",
-      ADMIN: "Admin",
-    }),
-    [],
-  );
-
   const displayName = currentUser?.displayName ?? "Advocate";
-  const roleLabel =
-    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Advocate";
 
   const processAssignments = useCallback(async (assignmentsList) => {
     try {
@@ -222,14 +186,12 @@ const AdvocateHomeScreen = () => {
       const userMap = await batchFetchUsers(allIds);
 
       const map = {};
-
       activeAssignments.forEach((a) => {
         const pId = a.patientId;
         const prId = a.providerId;
         if (!pId || !prId) return;
 
         const key = `${pId}#${prId}`;
-
         if (!map[key]) {
           map[key] = {
             patientId: pId,
@@ -260,7 +222,7 @@ const AdvocateHomeScreen = () => {
         const variables = {
           advocateId,
           limit: 50,
-          nextToken: reset ? null : nextToken,
+          nextToken: reset ? null : nextTokenRef.current,
         };
 
         const { data } = await client.graphql({
@@ -272,7 +234,12 @@ const AdvocateHomeScreen = () => {
         const result = data?.listAdvocateAssignments;
         const newItems = result?.items ?? [];
 
-        const merged = reset ? newItems : [...assignments, ...newItems];
+        const merged = reset
+          ? newItems
+          : [...(assignmentsRef.current || []), ...newItems];
+
+        assignmentsRef.current = merged;
+        nextTokenRef.current = result?.nextToken ?? null;
 
         setAssignments(merged);
         setNextToken(result?.nextToken ?? null);
@@ -284,13 +251,18 @@ const AdvocateHomeScreen = () => {
         setError("Unable to load your patients.");
       }
     },
-    [advocateId, nextToken, assignments, processAssignments],
+    [advocateId, processAssignments],
   );
+
+  const readsInFlightRef = useRef(false);
 
   const fetchMyReadState = useCallback(async () => {
     if (!advocateId) return;
+    if (readsInFlightRef.current) return;
 
+    readsInFlightRef.current = true;
     setLoadingReads(true);
+
     try {
       let next = null;
       const map = {};
@@ -298,7 +270,11 @@ const AdvocateHomeScreen = () => {
       do {
         const { data } = await client.graphql({
           query: CONVERSATION_PARTICIPANTS_BY_USER,
-          variables: { userId: advocateId, limit: 200, nextToken: next },
+          variables: {
+            userId: advocateId,
+            limit: 200,
+            nextToken: next,
+          },
           authMode: "userPool",
         });
 
@@ -313,61 +289,70 @@ const AdvocateHomeScreen = () => {
 
       lastReadAtRef.current = map;
       setLastReadAtByConvoId(map);
-    } catch (e) {
-      log("fetchMyReadState error:", e);
+    } catch (err) {
+      log("fetchMyReadState error:", err);
       lastReadAtRef.current = {};
       setLastReadAtByConvoId({});
     } finally {
       setLoadingReads(false);
+      readsInFlightRef.current = false;
     }
   }, [advocateId]);
 
+  const convosInFlightRef = useRef(false);
+
   const fetchMyConversationsAndIndex = useCallback(async () => {
     if (!advocateId) return;
+    if (convosInFlightRef.current) return;
 
-    setLoadingConvos(true);
+    convosInFlightRef.current = true;
+
     try {
-      let nextToken = null;
+      let nt = null;
       const all = [];
 
       do {
         const { data } = await client.graphql({
           query: LIST_MY_CONVERSATIONS,
-          variables: { sub: advocateId, limit: 200, nextToken },
+          variables: { sub: advocateId, limit: 200, nextToken: nt },
           authMode: "userPool",
         });
 
         const res = data?.listConversations;
         const items = res?.items || [];
-        nextToken = res?.nextToken || null;
+        nt = res?.nextToken || null;
 
         all.push(...items);
-      } while (nextToken);
+      } while (nt);
 
       const directMap = {};
-      const careTeamMap = {};
+      const groupConvos = [];
 
-      all
-        .filter((c) => c && c.isGroup === false)
-        .forEach((c) => {
-          const memberIds = Array.isArray(c.memberIds) ? c.memberIds : [];
-          const otherIds = memberIds.filter((id) => id && id !== advocateId);
-          const otherId = otherIds[0] || null;
-          if (!otherId) return;
+      all.forEach((c) => {
+        if (!c) return;
 
-          const existing = directMap[otherId];
-          if (!existing) {
-            directMap[otherId] = c;
-            return;
-          }
-          const a = new Date(
-            existing.lastMessageAt || existing.updatedAt || 0,
-          ).getTime();
-          const b = new Date(c.lastMessageAt || c.updatedAt || 0).getTime();
-          if (b > a) directMap[otherId] = c;
-        });
+        if (c.isGroup === true) {
+          groupConvos.push(c);
+          return;
+        }
 
-      const groupConvos = all.filter((c) => c && c.isGroup === true);
+        const memberIds = Array.isArray(c.memberIds) ? c.memberIds : [];
+        const otherIds = memberIds.filter((id) => id && id !== advocateId);
+        const otherId = otherIds[0] || null;
+        if (!otherId) return;
+
+        const existing = directMap[otherId];
+        if (!existing) {
+          directMap[otherId] = c;
+          return;
+        }
+
+        const a = new Date(
+          existing.lastMessageAt || existing.updatedAt || 0,
+        ).getTime();
+        const b = new Date(c.lastMessageAt || c.updatedAt || 0).getTime();
+        if (b > a) directMap[otherId] = c;
+      });
 
       const groupById = {};
       groupConvos.forEach((c) => {
@@ -377,24 +362,23 @@ const AdvocateHomeScreen = () => {
       directConvoRef.current = directMap;
       setDirectConvoByPatientId(directMap);
 
-      careTeamConvoRef.current = { __groupById: groupById };
-      setCareTeamConvoByPairKey({ __groupById: groupById });
-    } catch (e) {
-      log("fetchMyConversationsAndIndex error:", e);
+      const careTeamMap = { __groupById: groupById };
+      careTeamConvoRef.current = careTeamMap;
+      setCareTeamConvoByPairKey(careTeamMap);
+    } catch (err) {
+      log("fetchMyConversationsAndIndex error:", err);
       directConvoRef.current = {};
       careTeamConvoRef.current = {};
       setDirectConvoByPatientId({});
       setCareTeamConvoByPairKey({});
     } finally {
-      setLoadingConvos(false);
+      convosInFlightRef.current = false;
     }
   }, [advocateId]);
 
   useEffect(() => {
     if (!advocateId) {
-      if (!loadingCurrentUser && loading) {
-        setLoading(false);
-      }
+      if (!loadingCurrentUser) setLoading(false);
       return;
     }
 
@@ -424,12 +408,11 @@ const AdvocateHomeScreen = () => {
     fetchAssignments,
     fetchMyReadState,
     fetchMyConversationsAndIndex,
-    loading,
   ]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    setAdvocateIdsByPatient({});
+
     Promise.all([
       fetchAssignments({ reset: true }).catch(() => {}),
       fetchMyReadState().catch(() => {}),
@@ -440,16 +423,27 @@ const AdvocateHomeScreen = () => {
   }, [fetchAssignments, fetchMyReadState, fetchMyConversationsAndIndex]);
 
   const loadMore = () => {
-    if (nextToken && !loading) {
+    if (nextTokenRef.current && !loading) {
       fetchAssignments({ reset: false }).catch(() => {});
     }
   };
 
+  const focusStaleRef = useRef({ lastAt: 0 });
+
   useFocusEffect(
     useCallback(() => {
       if (!advocateId) return;
+
+      const now = Date.now();
+      const STALE_MS = 15000;
+
+      if (now - focusStaleRef.current.lastAt < STALE_MS) return;
+
+      focusStaleRef.current.lastAt = now;
+
       fetchMyReadState();
       fetchMyConversationsAndIndex();
+
       return () => {};
     }, [advocateId, fetchMyReadState, fetchMyConversationsAndIndex]),
   );
@@ -467,196 +461,54 @@ const AdvocateHomeScreen = () => {
     [navigation, advocateId],
   );
 
-  const loadAdvocateIdsForPatient = useCallback(
-    async (patientId, providerId) => {
-      if (!patientId || !providerId) return [];
+  const computeUnreadForRow = useCallback(
+    (row) => {
+      const directConvo = directConvoRef.current?.[row.patientId] || null;
 
-      const cacheKey = `${patientId}#${providerId}`;
-      if (advocateIdsByPatient[cacheKey]) return advocateIdsByPatient[cacheKey];
+      const groupById = careTeamConvoRef.current?.__groupById || {};
+      const candidateGroups = Object.values(groupById);
 
-      try {
-        const res = await client.graphql({
-          query: LIST_ADVOCATE_ASSIGNMENTS_FOR_PROVIDER_PATIENT,
-          variables: { patientId, providerId },
-          authMode: "userPool",
-        });
-
-        const items = res?.data?.listAdvocateAssignments?.items || [];
-        const advocateIds = Array.from(
-          new Set(items.map((a) => a.advocateId).filter(Boolean)),
-        );
-
-        setAdvocateIdsByPatient((prev) => ({
-          ...prev,
-          [cacheKey]: advocateIds,
-        }));
-
-        return advocateIds;
-      } catch (err) {
-        log("loadAdvocateIdsForPatient error:", patientId, providerId, err);
-        return [];
-      }
-    },
-    [advocateIdsByPatient],
-  );
-
-  const handleMessagePatient = useCallback(
-    async (patient) => {
-      if (!patient?.patientId || !advocateId) {
-        Alert.alert("Error", "Missing user information to start a chat.");
-        return;
-      }
-
-      try {
-        const conversation = await ensureDirectConversation({
-          currentUserId: advocateId,
-          memberIds: [advocateId, patient.patientId],
-          title: `${currentUser?.displayName || "Advocate"} ↔ ${
-            patient.patientName || "Patient"
-          }`,
-        });
-
-        setDirectConvoByPatientId((prev) => ({
-          ...prev,
-          [patient.patientId]: conversation,
-        }));
-
-        navigation.navigate("Chat", {
-          conversationId: conversation.id,
-          conversation,
-          title:
-            conversation.title ||
-            patient.patientName ||
-            "Advocate–Patient Conversation",
-        });
-      } catch (err) {
-        log("handleMessagePatient error:", err);
-        Alert.alert(
-          "Unable to open chat",
-          "Something went wrong while opening the conversation.",
-        );
-      }
-    },
-    [advocateId, currentUser?.displayName, navigation],
-  );
-
-  const handleCareTeamChat = useCallback(
-    async (patient) => {
-      if (!patient?.patientId || !patient?.providerId || !advocateId) {
-        Alert.alert("Error", "Missing information to start a care team chat.");
-        return;
-      }
-
-      try {
-        const advocateIds = await loadAdvocateIdsForPatient(
-          patient.patientId,
-          patient.providerId,
-        );
-
-        if (!advocateIds.length) {
-          Alert.alert(
-            "No advocates assigned",
-            "A care team chat requires an active advocate assignment.",
+      const careTeamConvo =
+        candidateGroups.find((c) => {
+          const ids = Array.isArray(c?.memberIds) ? c.memberIds : [];
+          return (
+            c?.isGroup === true &&
+            ids.includes(advocateId) &&
+            ids.includes(row.patientId) &&
+            ids.includes(row.providerId)
           );
-          return;
-        }
+        }) || null;
 
-        const conversation = await ensureCareTeamConversation({
-          currentUserId: advocateId,
-          patientId: patient.patientId,
-          providerId: patient.providerId,
-          advocateIds,
-          title: `Care Team: ${patient.patientName || "Patient"} • ${
-            patient.providerName || "Provider"
-          }`,
-        });
+      const convos = [directConvo, careTeamConvo].filter(Boolean);
 
-        navigation.navigate("Chat", {
-          conversationId: conversation.id,
-          conversation,
-          title: conversation.title || "Care Team Chat",
-        });
-      } catch (err) {
-        log("handleCareTeamChat error:", err);
-        Alert.alert(
-          "Unable to open care team chat",
-          "Something went wrong while opening the care team conversation.",
+      const unreadForConvo = (c) => {
+        const lastMsgAt = c?.lastMessageAt || null;
+        if (!lastMsgAt) return false;
+
+        const lastReadAt = lastReadAtRef.current?.[c.id] || null;
+
+        return (
+          !lastReadAt ||
+          new Date(lastReadAt).getTime() < new Date(lastMsgAt).getTime()
         );
-      }
+      };
+
+      return convos.some(unreadForConvo);
     },
-    [advocateId, loadAdvocateIdsForPatient, navigation],
+    [advocateId],
   );
 
   const renderPatientItem = ({ item }) => {
-    const preview = `Provider: ${item.providerName || "Unknown Provider"}`;
-
-    const directConvo = directConvoRef.current?.[item.patientId] || null;
-
-    const groupById = careTeamConvoRef.current?.__groupById || {};
-    const candidateGroupConvos = Object.values(groupById);
-
-    const careTeamConvo =
-      candidateGroupConvos.find((c) => {
-        const ids = Array.isArray(c?.memberIds) ? c.memberIds : [];
-        return (
-          c?.isGroup === true &&
-          ids.includes(advocateId) &&
-          ids.includes(item.patientId) &&
-          ids.includes(item.providerId)
-        );
-      }) || null;
-
-    const convos = [directConvo, careTeamConvo].filter(Boolean);
-
-    const unreadForConvo = (c) => {
-      const lastMsgAt = c?.lastMessageAt || null;
-      if (!lastMsgAt) return false;
-      const lastReadAt = lastReadAtRef.current?.[c.id] || null;
-      return (
-        !lastReadAt ||
-        new Date(lastReadAt).getTime() < new Date(lastMsgAt).getTime()
-      );
-    };
-
-    const isUnread = convos.some(unreadForConvo);
-
-    const latestTs = convos.reduce((acc, c) => {
-      const t = c?.lastMessageAt || c?.updatedAt || c?.createdAt || null;
-      if (!t) return acc;
-      if (!acc) return t;
-      return new Date(t).getTime() > new Date(acc).getTime() ? t : acc;
-    }, null);
-
-    const rightAccessory = (
-      <View style={styles.rowRight}>
-        {isUnread ? <View style={styles.unreadDot} /> : null}
-
-        <TouchableOpacity
-          style={styles.careTeamButton}
-          onPress={() => handleCareTeamChat(item)}
-        >
-          <Text style={styles.careTeamButtonText}>Care Team</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.messageButton}
-          onPress={() => handleMessagePatient(item)}
-        >
-          <Text style={styles.messageButtonText}>Message</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    const subtitle = `Provider: ${item.providerName || "Unknown Provider"}`;
+    const isUnread = computeUnreadForRow(item);
 
     return (
       <View style={{ marginBottom: 10 }}>
-        <ConversationListItem
-          title={item.patientName || "Patient"}
-          preview={preview}
-          timestamp={latestTs || item.createdAt}
+        <PatientListItem
+          name={item.patientName || "Patient"}
+          subtitle={subtitle}
           unread={isUnread}
           onPress={() => handleOpenPatient(item)}
-          maxPreviewLines={2}
-          rightAccessory={rightAccessory}
           testID={`patient-${item.patientId}-${item.providerId}`}
         />
       </View>
@@ -679,27 +531,15 @@ const AdvocateHomeScreen = () => {
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, paddingBottom: insets.bottom },
+        { paddingBottom: insets.bottom },
       ]}
     >
       <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View>
-            <View style={styles.greetingRow}>
-              <Text style={styles.greeting}>Hi, {displayName}</Text>
-              {(loadingReads || loadingConvos) && (
-                <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
-              )}
-            </View>
-            <Text style={styles.subGreeting}>{roleLabel}</Text>
-          </View>
-          <View style={styles.rolePill}>
-            <Text style={styles.rolePillText}>{roleLabel}</Text>
-          </View>
+        <View>
+          <Text style={styles.greeting}>Hi, {displayName}</Text>
         </View>
-        <Text style={styles.headerSubtitle}>
-          Your assigned patients and their providers
-        </Text>
+
+        <RolePill role="ADVOCATE" />
       </View>
 
       {error && (
@@ -729,6 +569,12 @@ const AdvocateHomeScreen = () => {
           />
         )}
       </View>
+
+      {loadingReads ? (
+        <View style={styles.readsSpinner}>
+          <ActivityIndicator size="small" />
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -741,47 +587,21 @@ const styles = StyleSheet.create({
     backgroundColor: "#F5F7FB",
     paddingHorizontal: 16,
   },
+
   header: {
     marginBottom: 16,
     marginTop: 8,
-  },
-  headerTopRow: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
   },
-  greetingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+
   greeting: {
     fontSize: 20,
     fontWeight: "700",
     color: "#111827",
   },
-  subGreeting: {
-    fontSize: 14,
-    color: "#6B7280",
-    marginTop: 2,
-  },
-  rolePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    backgroundColor: "#FFFFFF",
-  },
-  rolePillText: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: "#374151",
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: "#6B7280",
-  },
+
   errorBox: {
     backgroundColor: "#FEE2E2",
     padding: 10,
@@ -791,6 +611,7 @@ const styles = StyleSheet.create({
   errorText: {
     color: "#B91C1C",
   },
+
   section: {
     flex: 1,
   },
@@ -809,40 +630,15 @@ const styles = StyleSheet.create({
     color: "#6B7280",
   },
 
-  rowRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-
-  unreadDot: {
-    width: 10,
-    height: 10,
+  readsSpinner: {
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E5E7EB",
     borderRadius: 999,
-    backgroundColor: "#2563EB",
-    marginRight: 2,
-  },
-
-  careTeamButton: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#1D4ED8",
-  },
-  careTeamButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
-  messageButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#2563EB",
-  },
-  messageButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#FFFFFF",
+    paddingVertical: 8,
   },
 });
