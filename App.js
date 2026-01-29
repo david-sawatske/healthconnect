@@ -22,6 +22,7 @@ import ChatScreen from "./src/screens/ChatScreen";
 import InviteScreen from "./src/screens/InviteScreen";
 import InviteApprovalScreen from "./src/screens/InviteApprovalScreen";
 import CallScreen from "./src/screens/CallScreen";
+import AdminHomeScreen from "./src/screens/AdminHomeScreen";
 
 import { CallProvider, useCall } from "./src/context/CallContext";
 import IncomingCallModal from "./src/components/IncomingCallModal";
@@ -41,17 +42,6 @@ const CreateCallSignal = /* GraphQL */ `
   mutation CreateCallSignal($input: CreateCallSignalInput!) {
     createCallSignal(input: $input) {
       id
-    }
-  }
-`;
-
-const UpdateCallSession = /* GraphQL */ `
-  mutation UpdateCallSession($input: UpdateCallSessionInput!) {
-    updateCallSession(input: $input) {
-      id
-      status
-      endedAt
-      updatedAt
     }
   }
 `;
@@ -207,6 +197,8 @@ function Root() {
           />
           <Stack.Screen name="AdvocateHome" component={AdvocateHomeScreen} />
           <Stack.Screen name="PatientHome" component={PatientHomeScreen} />
+
+          <Stack.Screen name="AdminHome" component={AdminHomeScreen} />
         </Stack.Navigator>
 
         <StatusBar style="auto" />
