@@ -1,4 +1,3 @@
-
 export const theme = {
   colors: {
     bg: "#F7F8FA",
@@ -25,6 +24,15 @@ export const theme = {
 
     advocateBg: "#ECFDF5",
     advocateText: "#15803D",
+
+    pillPatientBg: "#E0F2FE",
+    pillPatientText: "#0369A1",
+
+    pillProviderBg: "#DBEAFE",
+    pillProviderText: "#1D4ED8",
+
+    pillAdvocateBg: "#ECFDF5",
+    pillAdvocateText: "#15803D",
   },
 
   radius: {

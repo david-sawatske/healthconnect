@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import { useNavigation } from "@react-navigation/native";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
 import PatientListItem from "../components/PatientListItem";
+import RolePill from "../components/RolePill";
 
 const client = generateClient();
 
@@ -41,19 +42,7 @@ const ProviderHomeScreen = () => {
   const [loadingPatients, setLoadingPatients] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const roleLabelMap = useMemo(
-    () => ({
-      PATIENT: "Patient",
-      PROVIDER: "Provider",
-      ADVOCATE: "Advocate",
-      ADMIN: "Admin",
-    }),
-    [],
-  );
-
   const displayName = currentUser?.displayName || "Provider";
-  const roleLabel =
-    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Provider";
 
   const loadPatients = useCallback(async () => {
     if (!currentUser?.id) return;
@@ -139,10 +128,7 @@ const ProviderHomeScreen = () => {
             Patients{patients?.length ? ` • ${patients.length}` : ""}
           </Text>
         </View>
-
-        <View style={styles.rolePill}>
-          <Text style={styles.rolePillText}>{roleLabel}</Text>
-        </View>
+        <RolePill role={currentUser.role} />
       </View>
 
       {showGlobalLoader ? (
@@ -203,18 +189,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#6B7280",
     letterSpacing: 0.25,
-  },
-
-  rolePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#E0F2FE",
-  },
-  rolePillText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0369A1",
   },
 
   listContent: {

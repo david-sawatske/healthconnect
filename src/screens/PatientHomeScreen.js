@@ -1,10 +1,4 @@
-import React, {
-  useEffect,
-  useState,
-  useCallback,
-  useMemo,
-  useRef,
-} from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -20,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
 import ConversationListItem from "../components/ConversationListItem";
+import RolePill from "../components/RolePill";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
@@ -160,19 +155,7 @@ const PatientHomeScreen = () => {
     lastReadAtRef.current = lastReadAtByConvoId;
   }, [lastReadAtByConvoId]);
 
-  const roleLabelMap = useMemo(
-    () => ({
-      PATIENT: "Patient",
-      PROVIDER: "Provider",
-      ADVOCATE: "Advocate",
-      ADMIN: "Admin",
-    }),
-    [],
-  );
-
   const username = currentUser?.displayName || "Patient";
-  const roleLabel =
-    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Patient";
 
   const getLastActivityTs = useCallback((c) => {
     return c?.lastMessageAt || c?.updatedAt || c?.createdAt || 0;
@@ -561,13 +544,10 @@ const PatientHomeScreen = () => {
     <>
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Welcome back,</Text>
           <Text style={styles.username}>{username}</Text>
         </View>
 
-        <View style={styles.rolePill}>
-          <Text style={styles.rolePillText}>{roleLabel}</Text>
-        </View>
+        <RolePill role={currentUser?.role} />
       </View>
 
       {error ? (
@@ -854,27 +834,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: theme.space.md,
-    marginTop: 0,
+    marginTop: 12,
   },
-  greeting: {
-    fontSize: 16,
-    color: theme.colors.subtext,
-  },
+
   username: {
     fontSize: theme.type.h1,
     fontWeight: "700",
     color: theme.colors.text,
-  },
-  rolePill: {
-    paddingHorizontal: theme.space.md,
-    paddingVertical: theme.space.xs,
-    borderRadius: theme.radius.pill,
-    backgroundColor: theme.colors.pillInfoBg,
-  },
-  rolePillText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.colors.pillInfoText,
   },
 
   errorBanner: {
