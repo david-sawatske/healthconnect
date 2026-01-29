@@ -13,7 +13,6 @@ import { useRoute, useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
-import RolePill from "../components/RolePill";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
@@ -106,6 +105,32 @@ async function safeGql({ query, variables = {}, label }) {
   }
 }
 
+const HeroActionButton = ({ variant, title, subtitle, onPress, disabled }) => {
+  const base = [styles.heroBtn];
+  if (variant === "primary") base.push(styles.heroBtnPrimary);
+  if (variant === "secondary") base.push(styles.heroBtnSecondary);
+  if (variant === "ghost") base.push(styles.heroBtnGhost);
+  if (disabled) base.push(styles.heroBtnDisabled);
+
+  const titleStyle = [styles.heroBtnTitle];
+  const subStyle = [styles.heroBtnSub];
+  if (variant === "primary") {
+    titleStyle.push(styles.heroBtnTitleOnPrimary);
+    subStyle.push(styles.heroBtnSubOnPrimary);
+  }
+
+  return (
+    <TouchableOpacity style={base} onPress={onPress} disabled={disabled}>
+      <Text style={titleStyle} numberOfLines={1}>
+        {title}
+      </Text>
+      <Text style={subStyle} numberOfLines={1}>
+        {subtitle}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
 const PatientDetailScreen = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -130,6 +155,8 @@ const PatientDetailScreen = () => {
   const [assigning, setAssigning] = useState(false);
 
   const [providerUser, setProviderUser] = useState(null);
+
+  const [manageExpanded, setManageExpanded] = useState(false);
 
   const viewerId = currentUser?.id ?? null;
 
@@ -243,6 +270,10 @@ const PatientDetailScreen = () => {
     );
   }, [advocateAssignments, effectiveProviderId]);
 
+  const activeAssignmentsForManagePanel = useMemo(() => {
+    return (providerScopedAssignments || []).filter((a) => a.active);
+  }, [providerScopedAssignments]);
+
   const activeAdvocatesForSummary = useMemo(() => {
     return (providerScopedAssignments || [])
       .filter((a) => a.active)
@@ -354,6 +385,14 @@ const PatientDetailScreen = () => {
       return;
     }
 
+    if (!effectiveProviderId) {
+      Alert.alert(
+        "Missing provider context",
+        "Open this patient from a specific provider relationship to manage advocates.",
+      );
+      return;
+    }
+
     setAdvocatePickerVisible(true);
     if (advocates.length > 0) return;
 
@@ -372,7 +411,7 @@ const PatientDetailScreen = () => {
     } finally {
       setAdvocatesLoading(false);
     }
-  }, [advocates.length, isProviderView, viewerId]);
+  }, [advocates.length, isProviderView, viewerId, effectiveProviderId]);
 
   const handleAssignAdvocate = useCallback(
     async (selectedAdvocate) => {
@@ -388,11 +427,18 @@ const PatientDetailScreen = () => {
         Alert.alert("Error", "Missing patient info.");
         return;
       }
+      if (!effectiveProviderId) {
+        Alert.alert(
+          "Missing provider context",
+          "Open this patient from a specific provider relationship to manage advocates.",
+        );
+        return;
+      }
 
       const matchingAssignments = advocateAssignments.filter(
         (a) =>
           a.patientId === patientId &&
-          a.providerId === viewerId &&
+          a.providerId === effectiveProviderId &&
           a.advocateId === selectedAdvocate.id,
       );
 
@@ -427,7 +473,7 @@ const PatientDetailScreen = () => {
             variables: {
               input: {
                 patientId,
-                providerId: viewerId,
+                providerId: effectiveProviderId,
                 advocateId: selectedAdvocate.id,
                 active: true,
               },
@@ -466,6 +512,7 @@ const PatientDetailScreen = () => {
         }));
 
         setAdvocatePickerVisible(false);
+        setManageExpanded(true);
       } catch (e) {
         log("Assign advocate ERR", e);
         Alert.alert("Error", "Failed to assign advocate.");
@@ -473,7 +520,13 @@ const PatientDetailScreen = () => {
         setAssigning(false);
       }
     },
-    [patientId, viewerId, advocateAssignments, isProviderView],
+    [
+      patientId,
+      viewerId,
+      advocateAssignments,
+      isProviderView,
+      effectiveProviderId,
+    ],
   );
 
   const handleRemoveAssignment = useCallback(
@@ -509,7 +562,7 @@ const PatientDetailScreen = () => {
 
                 setAdvocateAssignments((prev) =>
                   prev.map((a) =>
-                    a.id === assignment.id ? { ...a, active: false } : a,
+                    a.id === assignment.id ? { ...a, ...updated } : a,
                   ),
                 );
               } catch (e) {
@@ -531,88 +584,125 @@ const PatientDetailScreen = () => {
   const canOpenGroupChat =
     !!effectiveProviderId && activeAdvocatesForSummary.length > 0;
 
-  const renderAdvocateRow = (assignment) => {
-    const user = advocateUsersById[assignment.advocateId] || {};
-    const statusLabel = assignment.active ? "Active" : "Inactive";
-
-    return (
-      <View key={assignment.id} style={styles.advocateListRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.advocateListName}>
-            {user.displayName || user.email || "Assigned advocate"}
-          </Text>
-          <Text style={styles.advocateStatusText}>{statusLabel}</Text>
-        </View>
-
-        {isProviderView ? (
-          <View style={styles.inlineActions}>
-            <TouchableOpacity
-              style={styles.smallButton}
-              onPress={() => openDirectChat(user)}
-              disabled={!user?.id}
-            >
-              <Text style={styles.smallButtonText}>Message</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.removeChip}
-              onPress={() => handleRemoveAssignment(assignment)}
-            >
-              <Text style={styles.removeChipText}>Remove</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-      </View>
-    );
+  const handleToggleManage = () => {
+    if (!isProviderView) return;
+    setManageExpanded((prev) => !prev);
   };
 
-  const renderAdvocateSection = () => {
+  const renderManageAdvocatesPanel = () => {
     if (!isProviderView) return null;
+    if (!manageExpanded) return null;
 
-    if (loadingAssignments) {
+    if (!effectiveProviderId) {
       return (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Advocate support</Text>
-          <ActivityIndicator />
+        <View style={styles.managePanel}>
+          <Text style={styles.manageTitle}>Advocates</Text>
+          <Text style={styles.manageHint}>
+            This patient can have multiple providers. Open this screen from a
+            specific provider relationship to manage advocates for that
+            provider.
+          </Text>
         </View>
       );
     }
 
-    const activeAssignments = providerScopedAssignments.filter((a) => a.active);
-    const hasAnyAssignments = activeAssignments.length > 0;
+    if (loadingAssignments) {
+      return (
+        <View style={styles.managePanel}>
+          <View style={styles.manageHeaderRow}>
+            <Text style={styles.manageTitle}>Advocates</Text>
+            <View style={styles.heroLoadingPill}>
+              <ActivityIndicator size="small" />
+              <Text style={styles.heroLoadingText}>Loading</Text>
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    const hasActive = activeAssignmentsForManagePanel.length > 0;
 
     return (
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Advocate support</Text>
+      <View style={styles.managePanel}>
+        <View style={styles.manageHeaderRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.manageTitle}>Advocates</Text>
+            <Text style={styles.manageHint} numberOfLines={2}>
+              Active advocates for {providerDisplayName}. Message them directly
+              or assign new support.
+            </Text>
+          </View>
+        </View>
 
-        {hasAnyAssignments ? (
+        {hasActive ? (
           <>
-            <Text style={styles.sectionLabel}>Active advocates</Text>
-            {activeAssignments.map(renderAdvocateRow)}
+            {activeAssignmentsForManagePanel.map((assignment) => {
+              const user = advocateUsersById[assignment.advocateId] || {};
+              const name = user.displayName || user.email || "Advocate";
+
+              return (
+                <View key={assignment.id} style={styles.manageRow}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.manageRowTop}>
+                      <Text style={styles.manageName} numberOfLines={1}>
+                        {name}
+                      </Text>
+                    </View>
+                    <Text style={styles.manageSub} numberOfLines={1}>
+                      Active advocate
+                    </Text>
+                  </View>
+
+                  <View style={styles.manageActions}>
+                    <TouchableOpacity
+                      style={styles.manageMsgBtn}
+                      onPress={() => openDirectChat(user)}
+                      disabled={!user?.id || !viewerId || loadingCurrentUser}
+                    >
+                      <Text style={styles.manageMsgBtnText}>Message</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.manageRemoveBtn}
+                      onPress={() => handleRemoveAssignment(assignment)}
+                    >
+                      <Text style={styles.manageRemoveBtnText}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
 
             <TouchableOpacity
-              style={styles.secondaryButton}
+              style={[
+                styles.manageAssignBtnBelow,
+                assigning && styles.heroBtnDisabled,
+              ]}
               onPress={openAdvocatePicker}
               disabled={assigning}
             >
-              <Text style={styles.secondaryButtonText}>
-                {assigning ? "Saving..." : "Add / Update Advocates"}
+              <Text style={styles.manageAssignBtnBelowText}>
+                {assigning ? "Saving..." : "Assign New Advocate"}
               </Text>
             </TouchableOpacity>
           </>
         ) : (
-          <>
-            <Text style={styles.cardText}>No advocates assigned.</Text>
+          <View style={styles.manageEmptyBox}>
+            <Text style={styles.manageEmptyTitle}>No advocates assigned</Text>
+            <Text style={styles.manageEmptyBody}>
+              Assign an advocate to enable group care team chat and add support
+              for this patient.
+            </Text>
             <TouchableOpacity
-              style={styles.primaryButton}
+              style={styles.managePrimaryCta}
               onPress={openAdvocatePicker}
               disabled={assigning}
             >
-              <Text style={styles.primaryButtonText}>
-                {assigning ? "Assigning..." : "Assign Advocate"}
+              <Text style={styles.managePrimaryCtaText}>
+                {assigning ? "Saving..." : "Assign Advocate"}
               </Text>
             </TouchableOpacity>
-          </>
+          </View>
         )}
       </View>
     );
@@ -620,161 +710,102 @@ const PatientDetailScreen = () => {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+        >
+          <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {patientName || "Patient Detail"}
-        </Text>
+
+        <View style={styles.topBarTitleWrap}>
+          <Text style={styles.topBarTitle} numberOfLines={1}>
+            {patientDisplayName}
+          </Text>
+        </View>
+
+        <View style={{ width: 40 }} />
       </View>
 
       <View style={styles.content}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Care Team</Text>
-          {loadingAssignments ? (
-            <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
-          ) : null}
-        </View>
+        <View style={styles.heroCard}>
+          <View style={styles.heroHeaderRow}>
+            <Text style={styles.heroTitle}>Care Team</Text>
 
-        <View style={styles.careCard}>
-          <View style={styles.careCardHeader}>
-            <Text style={styles.careName} numberOfLines={1}>
-              {patientDisplayName}
-            </Text>
-            <RolePill role="PATIENT" />
+            {loadingAssignments ? (
+              <View style={styles.heroLoadingPill}>
+                <ActivityIndicator size="small" />
+                <Text style={styles.heroLoadingText}>Loading</Text>
+              </View>
+            ) : null}
           </View>
-
-          <Text style={styles.careSubtitle}>
-            This is the patient this care team supports.
-          </Text>
-
-          <TouchableOpacity
-            style={styles.careButton}
-            onPress={() =>
-              openDirectChat({
-                id: patientId,
-                displayName: patientDisplayName,
-                email: null,
-              })
-            }
-            disabled={!viewerId || !patientId || loadingCurrentUser}
-          >
-            <Text style={styles.careButtonText}>Message Patient</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.careCard}>
-          <View style={styles.careCardHeader}>
-            <Text style={styles.careName} numberOfLines={1}>
-              {effectiveProviderId ? providerDisplayName : "Provider"}
-            </Text>
-            <RolePill role={providerUser?.role || "PROVIDER"} />
-          </View>
-
-          {!effectiveProviderId ? (
-            <Text style={styles.careSubtitle}>
-              This patient can have multiple providers. Open this screen from a
-              specific provider relationship to see the correct care team.
-            </Text>
-          ) : (
-            <Text style={styles.careSubtitle}>
-              The provider relationship this view is scoped to.
-            </Text>
-          )}
-
-          {isAdvocateView && effectiveProviderId ? (
-            <TouchableOpacity
-              style={styles.careButton}
-              onPress={() =>
-                openDirectChat({
-                  id: effectiveProviderId,
-                  displayName: providerDisplayName,
-                  email: providerUser?.email,
-                })
+          <View style={styles.heroActionsGrid}>
+            <HeroActionButton
+              variant="primary"
+              title={
+                canOpenGroupChat ? "Open Care Team Chat" : "Open Patient Chat"
               }
-              disabled={!viewerId || loadingCurrentUser}
-            >
-              <Text style={styles.careButtonText}>Message Provider</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <View style={styles.teamButtonsRow}>
-            <TouchableOpacity
-              style={styles.primaryActionButton}
+              subtitle={
+                canOpenGroupChat
+                  ? "Patient • Provider • Advocates"
+                  : "Direct message"
+              }
               onPress={openCareTeamChat}
               disabled={!viewerId || loadingCurrentUser}
-            >
-              <Text style={styles.primaryActionButtonText}>
-                {canOpenGroupChat ? "Open Care Team Chat" : "Open Patient Chat"}
-              </Text>
-            </TouchableOpacity>
+            />
 
-            {canOpenGroupChat ? (
-              <Text style={styles.teamHintText}>
-                Includes patient + provider + active advocates
-              </Text>
-            ) : (
-              <Text style={styles.teamHintText}>
-                Add an advocate to enable a care team group chat.
-              </Text>
-            )}
+            <HeroActionButton
+              variant="secondary"
+              title={
+                patientName && patientName.trim()
+                  ? `Message ${patientName.trim()}`
+                  : "Message Patient"
+              }
+              subtitle="Direct chat"
+              onPress={() =>
+                openDirectChat({
+                  id: patientId,
+                  displayName: patientDisplayName,
+                  email: null,
+                })
+              }
+              disabled={!viewerId || !patientId || loadingCurrentUser}
+            />
+            {isAdvocateView && effectiveProviderId ? (
+              <HeroActionButton
+                variant="secondary"
+                title={
+                  providerDisplayName && providerDisplayName !== "Provider"
+                    ? `Message ${providerDisplayName}`
+                    : "Message Provider"
+                }
+                subtitle="Direct chat"
+                onPress={() =>
+                  openDirectChat({
+                    id: effectiveProviderId,
+                    displayName: providerDisplayName,
+                    email: providerUser?.email,
+                  })
+                }
+                disabled={!viewerId || loadingCurrentUser}
+              />
+            ) : null}
+
+            {isProviderView ? (
+              <HeroActionButton
+                variant="ghost"
+                title={
+                  manageExpanded ? "Hide Manage Advocates" : "Manage Advocates"
+                }
+                subtitle="View advocates + message + assign"
+                onPress={handleToggleManage}
+                disabled={!viewerId || loadingCurrentUser}
+              />
+            ) : null}
           </View>
+
+          {renderManageAdvocatesPanel()}
         </View>
-
-        <View style={styles.careSubsection}>
-          <Text style={styles.careSubsectionTitle}>
-            Advocates{" "}
-            {effectiveProviderId ? `(for ${providerDisplayName})` : ""}
-          </Text>
-
-          {effectiveProviderId ? (
-            activeAdvocatesForSummary.length > 0 ? (
-              activeAdvocatesForSummary.map((adv) => (
-                <View key={adv.id} style={styles.careCard}>
-                  <View style={styles.careCardHeader}>
-                    <Text style={styles.careName} numberOfLines={1}>
-                      {adv.displayName || adv.email || "Advocate"}
-                    </Text>
-                    <RolePill role={adv?.role || "ADVOCATE"} />
-                  </View>
-
-                  <Text style={styles.careSubtitle}>
-                    Supports communication and coordination.
-                  </Text>
-
-                  {isProviderView ? (
-                    <TouchableOpacity
-                      style={styles.careButton}
-                      onPress={() => openDirectChat(adv)}
-                    >
-                      <Text style={styles.careButtonText}>
-                        Message Advocate
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-              ))
-            ) : (
-              <View style={styles.emptyCareTeam}>
-                <Text style={styles.emptyCareTitle}>No advocates assigned</Text>
-                <Text style={styles.emptyCareBody}>
-                  Providers can assign advocates to enable group care team chat.
-                </Text>
-              </View>
-            )
-          ) : (
-            <View style={styles.emptyCareTeam}>
-              <Text style={styles.emptyCareTitle}>No provider selected</Text>
-              <Text style={styles.emptyCareBody}>
-                Open this patient from a specific provider relationship to view
-                advocates for that provider.
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {renderAdvocateSection()}
       </View>
 
       {isProviderView && (
@@ -895,154 +926,174 @@ const AdvocatePickerModal = ({
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F4F5F7",
-  },
-  header: {
+  container: { flex: 1, backgroundColor: "#F4F5F7" },
+
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingBottom: 8,
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    gap: 10,
   },
-  backText: {
-    fontSize: 16,
-    marginRight: 8,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-  },
-
-  sectionHeaderRow: {
-    flexDirection: "row",
+  backBtn: {
+    width: 40,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#FFFFFF",
     alignItems: "center",
-    marginBottom: 4,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 4,
-    color: "#111827",
-  },
-
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  cardText: {
-    fontSize: 14,
-    marginBottom: 4,
-  },
-
-  careCard: {
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-    marginBottom: 10,
+    justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "#E5E7EB",
   },
+  backText: { fontSize: 18, fontWeight: "700", color: "#111827" },
 
-  careCardHeader: {
+  topBarTitleWrap: { flex: 1 },
+  topBarTitle: { fontSize: 18, fontWeight: "800", color: "#111827" },
+
+  content: { flex: 1, paddingHorizontal: 16, paddingTop: 6 },
+
+  heroCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E5E7EB",
+    marginBottom: 12,
+  },
+  heroHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    marginBottom: 4,
   },
-  careName: {
-    fontSize: 16,
-    fontWeight: "600",
+  heroTitle: { fontSize: 16, fontWeight: "800", color: "#111827" },
+
+  heroLoadingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#F1F5F9",
+  },
+  heroLoadingText: { fontSize: 12, color: "#334155", fontWeight: "600" },
+
+  heroActionsGrid: { marginTop: 12, gap: 10 },
+
+  heroBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  heroBtnPrimary: { backgroundColor: "#1D4ED8", borderColor: "#1D4ED8" },
+  heroBtnSecondary: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1" },
+  heroBtnGhost: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0" },
+  heroBtnDisabled: { opacity: 0.6 },
+
+  heroBtnTitle: { fontSize: 14, fontWeight: "800", color: "#111827" },
+  heroBtnSub: { marginTop: 3, fontSize: 12, color: "#64748B" },
+  heroBtnTitleOnPrimary: { color: "#FFFFFF" },
+  heroBtnSubOnPrimary: { color: "#DBEAFE" },
+
+  managePanel: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E5E7EB",
+  },
+  manageHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  manageTitle: { fontSize: 14, fontWeight: "800", color: "#0F172A" },
+  manageHint: { marginTop: 4, fontSize: 12, color: "#64748B" },
+
+  manageRow: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E5E7EB",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  manageRowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  manageName: {
+    fontSize: 14,
+    fontWeight: "800",
     color: "#111827",
     flex: 1,
-    flexShrink: 1,
     paddingRight: 6,
   },
+  manageSub: { marginTop: 4, fontSize: 12, color: "#64748B" },
 
-  careSubtitle: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginBottom: 8,
+  manageActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  manageMsgBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#EFF6FF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#BFDBFE",
   },
-  careButton: {
+  manageMsgBtnText: { fontSize: 12, fontWeight: "800", color: "#1D4ED8" },
+
+  manageRemoveBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#FECACA",
+    backgroundColor: "#FEF2F2",
+  },
+  manageRemoveBtnText: { fontSize: 12, fontWeight: "800", color: "#B91C1C" },
+
+  manageEmptyBox: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "#F8FAFC",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E2E8F0",
+  },
+  manageEmptyTitle: { fontSize: 13, fontWeight: "800", color: "#0F172A" },
+  manageEmptyBody: { marginTop: 4, fontSize: 12, color: "#64748B" },
+  managePrimaryCta: {
+    marginTop: 10,
     alignSelf: "flex-start",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: "#2563EB",
+    backgroundColor: "#1D4ED8",
   },
-  careButtonText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
+  managePrimaryCtaText: { fontSize: 12, fontWeight: "800", color: "#FFFFFF" },
 
-  careSubsection: {
-    marginTop: 6,
-    marginBottom: 6,
-  },
-  careSubsectionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
-    marginBottom: 6,
-  },
-
-  emptyCareTeam: {
-    marginTop: 4,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#EFF6FF",
-  },
-  emptyCareTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#1D4ED8",
-    marginBottom: 2,
-  },
-  emptyCareBody: {
-    fontSize: 13,
-    color: "#4B5563",
-  },
-
-  teamButtonsRow: {
-    gap: 10,
-    marginTop: 8,
-  },
-  primaryActionButton: {
-    paddingVertical: 10,
+  manageAssignBtnBelow: {
+    marginTop: 10,
     paddingHorizontal: 12,
-    borderRadius: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
     backgroundColor: "#1D4ED8",
     alignItems: "center",
   },
-  primaryActionButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-  },
-  teamHintText: {
-    marginTop: 6,
+  manageAssignBtnBelowText: {
     fontSize: 12,
-    color: "#475569",
+    fontWeight: "800",
+    color: "#FFFFFF",
   },
+
+  cardText: { fontSize: 14, marginBottom: 4 },
 
   primaryButton: {
     marginTop: 8,
@@ -1053,10 +1104,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#2563EB",
   },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "600",
-  },
+  primaryButtonText: { color: "#FFFFFF", fontWeight: "600" },
   secondaryButton: {
     marginTop: 8,
     paddingVertical: 10,
@@ -1068,63 +1116,7 @@ const styles = StyleSheet.create({
     borderColor: "#CBD5E1",
     backgroundColor: "#FFFFFF",
   },
-  secondaryButtonText: {
-    fontWeight: "500",
-  },
-
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    marginTop: 6,
-    marginBottom: 2,
-    color: "#475569",
-  },
-
-  advocateListRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 6,
-    gap: 10,
-  },
-  advocateListName: {
-    fontSize: 14,
-  },
-  advocateStatusText: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
-  },
-
-  inlineActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  smallButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#2563EB",
-  },
-  smallButtonText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-
-  removeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#F97373",
-    backgroundColor: "#FEF2F2",
-  },
-  removeChipText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#B91C1C",
-  },
+  secondaryButtonText: { fontWeight: "500" },
 
   modalOverlay: {
     flex: 1,
@@ -1139,17 +1131,14 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
   },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
+  modalTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
   modalButtons: {
     flexDirection: "row",
     justifyContent: "flex-end",
     marginTop: 12,
     gap: 10,
   },
+
   advocateRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1157,20 +1146,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 8,
   },
-  advocateRowSelected: {
-    backgroundColor: "#DBEAFE",
-  },
-  advocateRowDisabled: {
-    opacity: 0.4,
-  },
-  advocateName: {
-    flex: 1,
-    fontSize: 14,
-  },
-  advocateSelectedMark: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
+  advocateRowSelected: { backgroundColor: "#DBEAFE" },
+  advocateRowDisabled: { opacity: 0.4 },
+  advocateName: { flex: 1, fontSize: 14 },
+  advocateStatusText: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  advocateSelectedMark: { fontSize: 16, fontWeight: "700" },
 });
 
 export default PatientDetailScreen;
