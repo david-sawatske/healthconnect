@@ -17,12 +17,30 @@
         "userPoolGroups": {}
       },
       "api": {
-        "healthconnect": {}
+        "healthconnect": {},
+        "seeding": {}
       },
       "function": {
         "approveInvite": {
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
           "s3Key": "amplify-builds/approveInvite-534f51503631544a4d62-build.zip"
+        },
+        "adminSeedData": {
+          "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
+          "s3Key": "amplify-builds/adminSeedData-33656b73464149617675-build.zip",
+          "demoPatientEmail": "patient@example.com",
+          "demoProviderEmail": "provider@example.com",
+          "demoAdvocateEmail": "advocate@example.com",
+          "tableUser": "User-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableConversation": "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableMessage": "Message-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableConversationParticipant": "ConversationParticipant-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableProviderPatient": "ProviderPatient-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableAdvocateAssignment": "AdvocateAssignment-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableAdvocateInvite": "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableCallSession": "CallSession-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableCallSignal": "CallSignal-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "forceRedeploy": "1"
         }
       },
       "storage": {

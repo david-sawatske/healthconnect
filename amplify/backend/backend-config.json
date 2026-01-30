@@ -23,6 +23,34 @@
       },
       "providerPlugin": "awscloudformation",
       "service": "AppSync"
+    },
+    "seeding": {
+      "dependsOn": [
+        {
+          "attributes": [
+            "Name",
+            "Arn"
+          ],
+          "category": "function",
+          "resourceName": "adminSeedData"
+        },
+        {
+          "attributes": [
+            "UserPoolId"
+          ],
+          "category": "auth",
+          "resourceName": "healthconnect97a44150"
+        },
+        {
+          "attributes": [
+            "AdminGroupRole"
+          ],
+          "category": "auth",
+          "resourceName": "userPoolGroups"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "API Gateway"
     }
   },
   "auth": {
@@ -70,6 +98,20 @@
     }
   },
   "function": {
+    "adminSeedData": {
+      "build": true,
+      "dependsOn": [
+        {
+          "attributes": [
+            "UserPoolId"
+          ],
+          "category": "auth",
+          "resourceName": "healthconnect97a44150"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
+    },
     "approveInvite": {
       "build": true,
       "dependsOn": [
@@ -87,6 +129,126 @@
     }
   },
   "parameters": {
+    "AMPLIFY_function_adminSeedData_demoAdvocateEmail": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_demoPatientEmail": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_demoProviderEmail": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_forceRedeploy": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableCallSession": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableCallSignal": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableConversationParticipant": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableMessage": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableProviderPatient": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableUser": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
     "AMPLIFY_function_approveInvite_deploymentBucketName": {
       "usedBy": [
         {

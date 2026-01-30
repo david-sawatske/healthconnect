@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "paths": {
+    "/admin": {
+      "name": "/admin",
+      "lambdaFunction": "adminSeedData",
+      "permissions": {
+        "groups": {
+          "Admin": [
+            "create"
+          ]
+        },
+        "setting": "private"
+      }
+    }
+  }
+}

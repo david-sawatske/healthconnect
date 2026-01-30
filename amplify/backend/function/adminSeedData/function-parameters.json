@@ -1,0 +1,64 @@
+{
+  "permissions": {
+    "auth": {
+      "healthconnect97a44150": [
+        "read"
+      ]
+    }
+  },
+  "lambdaLayers": [],
+  "environmentVariableList": [
+    {
+      "cloudFormationParameterName": "demoPatientEmail",
+      "environmentVariableName": "DEMO_PATIENT_EMAIL"
+    },
+    {
+      "cloudFormationParameterName": "demoProviderEmail",
+      "environmentVariableName": "DEMO_PROVIDER_EMAIL"
+    },
+    {
+      "cloudFormationParameterName": "demoAdvocateEmail",
+      "environmentVariableName": "DEMO_ADVOCATE_EMAIL"
+    },
+    {
+      "cloudFormationParameterName": "tableUser",
+      "environmentVariableName": "TABLE_USER"
+    },
+    {
+      "cloudFormationParameterName": "tableConversation",
+      "environmentVariableName": "TABLE_CONVERSATION"
+    },
+    {
+      "cloudFormationParameterName": "tableMessage",
+      "environmentVariableName": "TABLE_MESSAGE"
+    },
+    {
+      "cloudFormationParameterName": "tableConversationParticipant",
+      "environmentVariableName": "TABLE_CONVERSATION_PARTICIPANT"
+    },
+    {
+      "cloudFormationParameterName": "tableProviderPatient",
+      "environmentVariableName": "TABLE_PROVIDER_PATIENT"
+    },
+    {
+      "cloudFormationParameterName": "tableAdvocateAssignment",
+      "environmentVariableName": "TABLE_ADVOCATE_ASSIGNMENT"
+    },
+    {
+      "cloudFormationParameterName": "tableAdvocateInvite",
+      "environmentVariableName": "TABLE_ADVOCATE_INVITE"
+    },
+    {
+      "cloudFormationParameterName": "tableCallSession",
+      "environmentVariableName": "TABLE_CALL_SESSION"
+    },
+    {
+      "cloudFormationParameterName": "tableCallSignal",
+      "environmentVariableName": "TABLE_CALL_SIGNAL"
+    },
+    {
+      "cloudFormationParameterName": "forceRedeploy",
+      "environmentVariableName": "FORCE_REDEPLOY"
+    }
+  ]
+}

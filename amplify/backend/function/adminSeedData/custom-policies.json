@@ -1,0 +1,72 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CognitoReadAdmin",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:ListUsers",
+        "cognito-idp:AdminGetUser"
+      ],
+      "Resource": [
+        {
+          "Fn::Join": [
+            "",
+            [
+              "arn:aws:cognito-idp:",
+              { "Ref": "AWS::Region" },
+              ":",
+              { "Ref": "AWS::AccountId" },
+              ":userpool/",
+              { "Ref": "authhealthconnect97a44150UserPoolId" }
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "Sid": "DynamoDBReadWriteSeedTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:Scan",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:DescribeTable",
+
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:BatchWriteItem"
+      ],
+      "Resource": [
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableUser}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableUser}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableConversation}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableConversation}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableMessage}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableMessage}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableConversationParticipant}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableConversationParticipant}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableProviderPatient}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableProviderPatient}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableAdvocateAssignment}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableAdvocateAssignment}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableAdvocateInvite}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableAdvocateInvite}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableCallSession}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableCallSession}/index/*" },
+
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableCallSignal}" },
+        { "Fn::Sub": "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${tableCallSignal}/index/*" }
+      ]
+    }
+  ]
+}

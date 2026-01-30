@@ -3,6 +3,11 @@ export type AmplifyDependentResourcesAttributes = {
     "healthconnect": {
       "GraphQLAPIEndpointOutput": "string",
       "GraphQLAPIIdOutput": "string"
+    },
+    "seeding": {
+      "ApiId": "string",
+      "ApiName": "string",
+      "RootUrl": "string"
     }
   },
   "auth": {
@@ -20,6 +25,13 @@ export type AmplifyDependentResourcesAttributes = {
     }
   },
   "function": {
+    "adminSeedData": {
+      "Arn": "string",
+      "LambdaExecutionRole": "string",
+      "LambdaExecutionRoleArn": "string",
+      "Name": "string",
+      "Region": "string"
+    },
     "approveInvite": {
       "Arn": "string",
       "LambdaExecutionRole": "string",
