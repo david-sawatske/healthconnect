@@ -39,7 +39,7 @@ const ProviderHomeScreen = () => {
   const { currentUser, loadingCurrentUser } = useCurrentUser();
 
   const [patients, setPatients] = useState([]);
-  const [loadingPatients, setLoadingPatients] = useState(true);
+  const [loadingPatients, setLoadingPatients] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const displayName = currentUser?.displayName || "Provider";
@@ -69,7 +69,9 @@ const ProviderHomeScreen = () => {
   }, [currentUser?.id]);
 
   useEffect(() => {
-    if (currentUser?.id) loadPatients();
+    if (currentUser?.id) {
+      loadPatients();
+    }
   }, [currentUser?.id, loadPatients]);
 
   const onRefresh = useCallback(async () => {
@@ -128,7 +130,8 @@ const ProviderHomeScreen = () => {
             Patients{patients?.length ? ` • ${patients.length}` : ""}
           </Text>
         </View>
-        <RolePill role={currentUser.role} />
+
+        <RolePill role={currentUser?.role || "PROVIDER"} />
       </View>
 
       {showGlobalLoader ? (
@@ -227,4 +230,3 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
-
