@@ -66,7 +66,10 @@ exports.handler = async (event) => {
       return json(500, { ok: false, error: `Missing: ${missing.join(", ")}` });
     }
 
-    const now = new Date().toISOString();
+    const iso = (ms) => new Date(ms).toISOString();
+    const nowMs = Date.now();
+    const now = iso(nowMs);
+    const minutesAgo = (m) => iso(nowMs - m * 60 * 1000);
 
     const scanAllIds = async (tableName) => {
       const ids = [];
@@ -90,6 +93,12 @@ exports.handler = async (event) => {
         await ddb.send(
           new DeleteCommand({ TableName: tableName, Key: { id } }),
         );
+      }
+    };
+
+    const putMany = async (tableName, items) => {
+      for (const item of items) {
+        await ddb.send(new PutCommand({ TableName: tableName, Item: item }));
       }
     };
 
@@ -133,10 +142,12 @@ exports.handler = async (event) => {
 
       for (const u of res.Items || []) {
         if (!u?.id) continue;
+
         if (!u.role || !u.email) {
           usersToDelete.push(u.id);
           continue;
         }
+
         if (u.role !== "ADMIN") usersToDelete.push(u.id);
       }
 
@@ -144,6 +155,22 @@ exports.handler = async (event) => {
     } while (userScanKey);
 
     await deleteByIds(TABLE_USER, usersToDelete);
+
+    await deleteByIds(TABLE_MESSAGE, await scanAllIds(TABLE_MESSAGE));
+    await deleteByIds(
+      TABLE_CONVERSATION_PARTICIPANT,
+      await scanAllIds(TABLE_CONVERSATION_PARTICIPANT),
+    );
+    await deleteByIds(TABLE_CONVERSATION, await scanAllIds(TABLE_CONVERSATION));
+
+    await deleteByIds(
+      TABLE_PROVIDER_PATIENT,
+      await scanAllIds(TABLE_PROVIDER_PATIENT),
+    );
+    await deleteByIds(
+      TABLE_ADVOCATE_ASSIGNMENT,
+      await scanAllIds(TABLE_ADVOCATE_ASSIGNMENT),
+    );
 
     const seededUsers = [
       {
@@ -172,12 +199,7 @@ exports.handler = async (event) => {
       },
     ];
 
-    for (const u of seededUsers) {
-      await ddb.send(new PutCommand({ TableName: TABLE_USER, Item: u }));
-    }
-
-    const ppIds = await scanAllIds(TABLE_PROVIDER_PATIENT);
-    await deleteByIds(TABLE_PROVIDER_PATIENT, ppIds);
+    await putMany(TABLE_USER, seededUsers);
 
     const providerPatient = {
       id: "demo-provider-patient",
@@ -186,16 +208,6 @@ exports.handler = async (event) => {
       createdAt: now,
       updatedAt: now,
     };
-
-    await ddb.send(
-      new PutCommand({
-        TableName: TABLE_PROVIDER_PATIENT,
-        Item: providerPatient,
-      }),
-    );
-
-    const aaIds = await scanAllIds(TABLE_ADVOCATE_ASSIGNMENT);
-    await deleteByIds(TABLE_ADVOCATE_ASSIGNMENT, aaIds);
 
     const advocateAssignment = {
       id: "demo-advocate-assignment",
@@ -209,68 +221,254 @@ exports.handler = async (event) => {
 
     await ddb.send(
       new PutCommand({
+        TableName: TABLE_PROVIDER_PATIENT,
+        Item: providerPatient,
+      }),
+    );
+
+    await ddb.send(
+      new PutCommand({
         TableName: TABLE_ADVOCATE_ASSIGNMENT,
         Item: advocateAssignment,
       }),
     );
 
-    await deleteByIds(TABLE_MESSAGE, await scanAllIds(TABLE_MESSAGE));
-    await deleteByIds(
-      TABLE_CONVERSATION_PARTICIPANT,
-      await scanAllIds(TABLE_CONVERSATION_PARTICIPANT),
-    );
-    await deleteByIds(TABLE_CONVERSATION, await scanAllIds(TABLE_CONVERSATION));
-
-    const conversation = {
+    const convCareTeam = {
       id: "demo-care-team-conv",
       title: "Care Team Chat",
       isGroup: true,
       createdBy: providerId,
       memberIds: [patientId, providerId, advocateId],
-      updatedAt: now,
-      createdAt: now,
-      lastMessageAt: now,
+      createdAt: minutesAgo(120),
+      lastMessageAt: minutesAgo(5),
+      updatedAt: minutesAgo(5),
     };
 
-    await ddb.send(
-      new PutCommand({ TableName: TABLE_CONVERSATION, Item: conversation }),
-    );
+    const convPatientProvider = {
+      id: "demo-patient-provider-conv",
+      title: null,
+      isGroup: false,
+      createdBy: patientId,
+      memberIds: [patientId, providerId],
+      createdAt: minutesAgo(240),
+      lastMessageAt: minutesAgo(55),
+      updatedAt: minutesAgo(55),
+    };
+
+    const convPatientAdvocate = {
+      id: "demo-patient-advocate-conv",
+      title: null,
+      isGroup: false,
+      createdBy: advocateId,
+      memberIds: [patientId, advocateId],
+      createdAt: minutesAgo(180),
+      lastMessageAt: minutesAgo(12),
+      updatedAt: minutesAgo(12),
+    };
+
+    const conversations = [
+      convCareTeam,
+      convPatientProvider,
+      convPatientAdvocate,
+    ];
+    await putMany(TABLE_CONVERSATION, conversations);
 
     const participants = [
       {
-        id: "demo-cp-patient",
-        conversationId: conversation.id,
+        id: "demo-cp-care-patient",
+        conversationId: convCareTeam.id,
         userId: patientId,
-        role: "PATIENT",
-        createdAt: now,
+        lastReadAt: minutesAgo(20),
+        createdAt: convCareTeam.createdAt,
         updatedAt: now,
       },
       {
-        id: "demo-cp-provider",
-        conversationId: conversation.id,
+        id: "demo-cp-care-provider",
+        conversationId: convCareTeam.id,
         userId: providerId,
-        role: "PROVIDER",
-        createdAt: now,
+        lastReadAt: minutesAgo(5),
+        createdAt: convCareTeam.createdAt,
         updatedAt: now,
       },
       {
-        id: "demo-cp-advocate",
-        conversationId: conversation.id,
+        id: "demo-cp-care-advocate",
+        conversationId: convCareTeam.id,
         userId: advocateId,
-        role: "ADVOCATE",
-        createdAt: now,
+        lastReadAt: minutesAgo(10),
+        createdAt: convCareTeam.createdAt,
+        updatedAt: now,
+      },
+
+      {
+        id: "demo-cp-pp-patient",
+        conversationId: convPatientProvider.id,
+        userId: patientId,
+        lastReadAt: minutesAgo(55),
+        createdAt: convPatientProvider.createdAt,
+        updatedAt: now,
+      },
+      {
+        id: "demo-cp-pp-provider",
+        conversationId: convPatientProvider.id,
+        userId: providerId,
+        lastReadAt: minutesAgo(55),
+        createdAt: convPatientProvider.createdAt,
+        updatedAt: now,
+      },
+
+      {
+        id: "demo-cp-pa-patient",
+        conversationId: convPatientAdvocate.id,
+        userId: patientId,
+        lastReadAt: minutesAgo(12),
+        createdAt: convPatientAdvocate.createdAt,
+        updatedAt: now,
+      },
+      {
+        id: "demo-cp-pa-advocate",
+        conversationId: convPatientAdvocate.id,
+        userId: advocateId,
+        lastReadAt: minutesAgo(30),
+        createdAt: convPatientAdvocate.createdAt,
         updatedAt: now,
       },
     ];
 
-    for (const p of participants) {
-      await ddb.send(
-        new PutCommand({
-          TableName: TABLE_CONVERSATION_PARTICIPANT,
-          Item: p,
-        }),
-      );
-    }
+    await putMany(TABLE_CONVERSATION_PARTICIPANT, participants);
+
+    const msg = (
+      id,
+      conversationId,
+      senderId,
+      memberIds,
+      type,
+      body,
+      createdAt,
+    ) => ({
+      id,
+      conversationId,
+      senderId,
+      memberIds,
+      type,
+      body,
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const messages = [
+      msg(
+        "demo-msg-care-001",
+        convCareTeam.id,
+        providerId,
+        convCareTeam.memberIds,
+        "SYSTEM",
+        "Care team chat created.",
+        minutesAgo(119),
+      ),
+      msg(
+        "demo-msg-care-002",
+        convCareTeam.id,
+        providerId,
+        convCareTeam.memberIds,
+        "TEXT",
+        "Hi Jordan — checking in. How are symptoms today?",
+        minutesAgo(115),
+      ),
+      msg(
+        "demo-msg-care-003",
+        convCareTeam.id,
+        patientId,
+        convCareTeam.memberIds,
+        "TEXT",
+        "Still some pain, but it’s better than yesterday.",
+        minutesAgo(112),
+      ),
+      msg(
+        "demo-msg-care-004",
+        convCareTeam.id,
+        advocateId,
+        convCareTeam.memberIds,
+        "TEXT",
+        "Thanks for the update. I can help coordinate follow-up if needed.",
+        minutesAgo(95),
+      ),
+      msg(
+        "demo-msg-care-005",
+        convCareTeam.id,
+        providerId,
+        convCareTeam.memberIds,
+        "TEXT",
+        "Let’s adjust the plan: hydration + rest, and we’ll reassess tomorrow.",
+        minutesAgo(60),
+      ),
+      msg(
+        "demo-msg-care-006",
+        convCareTeam.id,
+        patientId,
+        convCareTeam.memberIds,
+        "TEXT",
+        "Sounds good. I can do that.",
+        minutesAgo(25),
+      ),
+      msg(
+        "demo-msg-care-007",
+        convCareTeam.id,
+        providerId,
+        convCareTeam.memberIds,
+        "TEXT",
+        "If anything worsens, message here and we’ll respond ASAP.",
+        minutesAgo(5),
+      ),
+
+      msg(
+        "demo-msg-pp-001",
+        convPatientProvider.id,
+        patientId,
+        convPatientProvider.memberIds,
+        "TEXT",
+        "Quick question: should I take the medication with food?",
+        minutesAgo(80),
+      ),
+      msg(
+        "demo-msg-pp-002",
+        convPatientProvider.id,
+        providerId,
+        convPatientProvider.memberIds,
+        "TEXT",
+        "Yes — with a small meal is best.",
+        minutesAgo(70),
+      ),
+      msg(
+        "demo-msg-pp-003",
+        convPatientProvider.id,
+        patientId,
+        convPatientProvider.memberIds,
+        "TEXT",
+        "Got it. Thanks!",
+        minutesAgo(55),
+      ),
+
+      msg(
+        "demo-msg-pa-001",
+        convPatientAdvocate.id,
+        patientId,
+        convPatientAdvocate.memberIds,
+        "TEXT",
+        "Can you help me understand the next steps after the appointment?",
+        minutesAgo(25),
+      ),
+      msg(
+        "demo-msg-pa-002",
+        convPatientAdvocate.id,
+        advocateId,
+        convPatientAdvocate.memberIds,
+        "TEXT",
+        "Absolutely — I’ll summarize what to expect and what to watch for.",
+        minutesAgo(12),
+      ),
+    ];
+
+    await putMany(TABLE_MESSAGE, messages);
 
     return json(200, {
       ok: true,
@@ -278,11 +476,20 @@ exports.handler = async (event) => {
       scenario,
       resolvedIds: { patientId, providerId, advocateId },
       deletedUsersCount: usersToDelete.length,
-      seededUserIds: seededUsers.map((u) => u.id),
-      seededProviderPatientId: providerPatient.id,
-      seededAdvocateAssignmentId: advocateAssignment.id,
-      seededConversationId: conversation.id,
-      seededParticipantIds: participants.map((p) => p.id),
+      seeded: {
+        users: seededUsers.length,
+        providerPatients: 1,
+        advocateAssignments: 1,
+        conversations: conversations.length,
+        conversationParticipants: participants.length,
+        messages: messages.length,
+      },
+      ids: {
+        userIds: seededUsers.map((u) => u.id),
+        providerPatientId: providerPatient.id,
+        advocateAssignmentId: advocateAssignment.id,
+        conversationIds: conversations.map((c) => c.id),
+      },
     });
   } catch (e) {
     console.error("[SEED_BASIC] ERROR", e);
