@@ -36,9 +36,7 @@ const {
 } = process.env;
 
 exports.handler = async (event) => {
-  console.log("[SEED_BASIC] event.raw =", JSON.stringify(event));
-  console.log("[SEED_BASIC] env.REGION =", process.env.REGION);
-  console.log("[SEED_BASIC] USERPOOL =", AUTH_HEALTHCONNECT97A44150_USERPOOLID);
+  console.log("[ADMIN_SEED] event.raw =", JSON.stringify(event));
 
   try {
     const body =
@@ -52,7 +50,7 @@ exports.handler = async (event) => {
     if (scenario !== "basic")
       return json(400, { ok: false, error: "Only scenario=basic" });
 
-    const missing = [
+    const missingEnv = [
       !AUTH_HEALTHCONNECT97A44150_USERPOOLID && "AUTH_*_USERPOOLID",
       !TABLE_USER && "TABLE_USER",
       !TABLE_PROVIDER_PATIENT && "TABLE_PROVIDER_PATIENT",
@@ -62,8 +60,11 @@ exports.handler = async (event) => {
       !TABLE_MESSAGE && "TABLE_MESSAGE",
     ].filter(Boolean);
 
-    if (missing.length) {
-      return json(500, { ok: false, error: `Missing: ${missing.join(", ")}` });
+    if (missingEnv.length) {
+      return json(500, {
+        ok: false,
+        error: `Missing: ${missingEnv.join(", ")}`,
+      });
     }
 
     const iso = (ms) => new Date(ms).toISOString();
@@ -91,15 +92,42 @@ exports.handler = async (event) => {
     const deleteByIds = async (tableName, ids) => {
       for (const id of ids) {
         await ddb.send(
-          new DeleteCommand({ TableName: tableName, Key: { id } }),
+          new DeleteCommand({
+            TableName: tableName,
+            Key: { id },
+          }),
         );
       }
+      return ids.length;
     };
 
-    const putMany = async (tableName, items) => {
-      for (const item of items) {
-        await ddb.send(new PutCommand({ TableName: tableName, Item: item }));
+    const clearTable = async (tableName) => {
+      const ids = await scanAllIds(tableName);
+      const deleted = await deleteByIds(tableName, ids);
+      return deleted;
+    };
+
+    const withModelTimestamps = (item, defaultCreatedAt = now) => {
+      const createdAt = item.createdAt ?? defaultCreatedAt;
+      const updatedAt = item.updatedAt ?? createdAt;
+      return { ...item, createdAt, updatedAt };
+    };
+
+    const seedMany = async (
+      tableName,
+      items,
+      { requireTimestamps = true } = {},
+    ) => {
+      for (const raw of items) {
+        const item = requireTimestamps ? withModelTimestamps(raw) : raw;
+        await ddb.send(
+          new PutCommand({
+            TableName: tableName,
+            Item: item,
+          }),
+        );
       }
+      return items.length;
     };
 
     const findCognitoUserIdByEmail = async (email) => {
@@ -121,11 +149,20 @@ exports.handler = async (event) => {
     const providerId = await findCognitoUserIdByEmail("provider@example.com");
     const advocateId = await findCognitoUserIdByEmail("advocate@example.com");
 
-    console.log("[SEED_BASIC] resolved ids", {
+    console.log("[ADMIN_SEED] resolved ids", {
       patientId,
       providerId,
       advocateId,
     });
+
+    const deleteSummary = {
+      usersDeleted: 0,
+      Message: 0,
+      ConversationParticipant: 0,
+      Conversation: 0,
+      ProviderPatient: 0,
+      AdvocateAssignment: 0,
+    };
 
     const usersToDelete = [];
     let userScanKey = undefined;
@@ -154,187 +191,159 @@ exports.handler = async (event) => {
       userScanKey = res.LastEvaluatedKey;
     } while (userScanKey);
 
-    await deleteByIds(TABLE_USER, usersToDelete);
+    deleteSummary.usersDeleted = await deleteByIds(TABLE_USER, usersToDelete);
 
-    await deleteByIds(TABLE_MESSAGE, await scanAllIds(TABLE_MESSAGE));
-    await deleteByIds(
+    deleteSummary.Message = await clearTable(TABLE_MESSAGE);
+    deleteSummary.ConversationParticipant = await clearTable(
       TABLE_CONVERSATION_PARTICIPANT,
-      await scanAllIds(TABLE_CONVERSATION_PARTICIPANT),
     );
-    await deleteByIds(TABLE_CONVERSATION, await scanAllIds(TABLE_CONVERSATION));
-
-    await deleteByIds(
-      TABLE_PROVIDER_PATIENT,
-      await scanAllIds(TABLE_PROVIDER_PATIENT),
-    );
-    await deleteByIds(
+    deleteSummary.Conversation = await clearTable(TABLE_CONVERSATION);
+    deleteSummary.ProviderPatient = await clearTable(TABLE_PROVIDER_PATIENT);
+    deleteSummary.AdvocateAssignment = await clearTable(
       TABLE_ADVOCATE_ASSIGNMENT,
-      await scanAllIds(TABLE_ADVOCATE_ASSIGNMENT),
     );
 
-    const seededUsers = [
-      {
-        id: patientId,
-        email: "patient@example.com",
-        displayName: "Jordan Patient",
-        role: "PATIENT",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: providerId,
-        email: "provider@example.com",
-        displayName: "Dr. Avery Provider",
-        role: "PROVIDER",
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: advocateId,
-        email: "advocate@example.com",
-        displayName: "Casey Advocate",
-        role: "ADVOCATE",
-        createdAt: now,
-        updatedAt: now,
-      },
-    ];
+    const seedPlan = {
+      users: [
+        withModelTimestamps({
+          id: patientId,
+          email: "patient@example.com",
+          displayName: "Jordan Patient",
+          role: "PATIENT",
+        }),
+        withModelTimestamps({
+          id: providerId,
+          email: "provider@example.com",
+          displayName: "Dr. Avery Provider",
+          role: "PROVIDER",
+        }),
+        withModelTimestamps({
+          id: advocateId,
+          email: "advocate@example.com",
+          displayName: "Casey Advocate",
+          role: "ADVOCATE",
+        }),
+      ],
 
-    await putMany(TABLE_USER, seededUsers);
+      providerPatients: [
+        withModelTimestamps({
+          id: "demo-provider-patient",
+          providerId,
+          patientId,
+        }),
+      ],
 
-    const providerPatient = {
-      id: "demo-provider-patient",
-      providerId,
-      patientId,
-      createdAt: now,
-      updatedAt: now,
+      advocateAssignments: [
+        withModelTimestamps({
+          id: "demo-advocate-assignment",
+          providerId,
+          patientId,
+          advocateId,
+          active: true,
+        }),
+      ],
+
+      conversations: (() => {
+        const careTeamMemberIds = [patientId, providerId, advocateId];
+        const ppMemberIds = [patientId, providerId];
+        const paMemberIds = [patientId, advocateId];
+
+        const convCareTeam = withModelTimestamps({
+          id: "demo-care-team-conv",
+          title: "Care Team Chat",
+          isGroup: true,
+          createdBy: providerId,
+          memberIds: careTeamMemberIds,
+          createdAt: minutesAgo(120),
+          lastMessageAt: minutesAgo(5),
+          updatedAt: minutesAgo(5),
+        });
+
+        const convPatientProvider = withModelTimestamps({
+          id: "demo-patient-provider-conv",
+          title: "Patient Provider",
+          isGroup: false,
+          createdBy: patientId,
+          memberIds: ppMemberIds,
+          createdAt: minutesAgo(240),
+          lastMessageAt: minutesAgo(55),
+          updatedAt: minutesAgo(55),
+        });
+
+        const convPatientAdvocate = withModelTimestamps({
+          id: "demo-patient-advocate-conv",
+          title: "Patient Advocate",
+          isGroup: false,
+          createdBy: advocateId,
+          memberIds: paMemberIds,
+          createdAt: minutesAgo(180),
+          lastMessageAt: minutesAgo(12),
+          updatedAt: minutesAgo(12),
+        });
+
+        return { convCareTeam, convPatientProvider, convPatientAdvocate };
+      })(),
+
+      participants: null,
+      messages: null,
     };
 
-    const advocateAssignment = {
-      id: "demo-advocate-assignment",
-      providerId,
-      patientId,
-      advocateId,
-      active: true,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const { convCareTeam, convPatientProvider, convPatientAdvocate } =
+      seedPlan.conversations;
 
-    await ddb.send(
-      new PutCommand({
-        TableName: TABLE_PROVIDER_PATIENT,
-        Item: providerPatient,
-      }),
-    );
-
-    await ddb.send(
-      new PutCommand({
-        TableName: TABLE_ADVOCATE_ASSIGNMENT,
-        Item: advocateAssignment,
-      }),
-    );
-
-    const convCareTeam = {
-      id: "demo-care-team-conv",
-      title: "Care Team Chat",
-      isGroup: true,
-      createdBy: providerId,
-      memberIds: [patientId, providerId, advocateId],
-      createdAt: minutesAgo(120),
-      lastMessageAt: minutesAgo(5),
-      updatedAt: minutesAgo(5),
-    };
-
-    const convPatientProvider = {
-      id: "demo-patient-provider-conv",
-      title: null,
-      isGroup: false,
-      createdBy: patientId,
-      memberIds: [patientId, providerId],
-      createdAt: minutesAgo(240),
-      lastMessageAt: minutesAgo(55),
-      updatedAt: minutesAgo(55),
-    };
-
-    const convPatientAdvocate = {
-      id: "demo-patient-advocate-conv",
-      title: null,
-      isGroup: false,
-      createdBy: advocateId,
-      memberIds: [patientId, advocateId],
-      createdAt: minutesAgo(180),
-      lastMessageAt: minutesAgo(12),
-      updatedAt: minutesAgo(12),
-    };
-
-    const conversations = [
-      convCareTeam,
-      convPatientProvider,
-      convPatientAdvocate,
-    ];
-    await putMany(TABLE_CONVERSATION, conversations);
-
-    const participants = [
-      {
+    seedPlan.participants = [
+      withModelTimestamps({
         id: "demo-cp-care-patient",
         conversationId: convCareTeam.id,
         userId: patientId,
         lastReadAt: minutesAgo(20),
         createdAt: convCareTeam.createdAt,
-        updatedAt: now,
-      },
-      {
+      }),
+      withModelTimestamps({
         id: "demo-cp-care-provider",
         conversationId: convCareTeam.id,
         userId: providerId,
         lastReadAt: minutesAgo(5),
         createdAt: convCareTeam.createdAt,
-        updatedAt: now,
-      },
-      {
+      }),
+      withModelTimestamps({
         id: "demo-cp-care-advocate",
         conversationId: convCareTeam.id,
         userId: advocateId,
         lastReadAt: minutesAgo(10),
         createdAt: convCareTeam.createdAt,
-        updatedAt: now,
-      },
+      }),
 
-      {
+      withModelTimestamps({
         id: "demo-cp-pp-patient",
         conversationId: convPatientProvider.id,
         userId: patientId,
         lastReadAt: minutesAgo(55),
         createdAt: convPatientProvider.createdAt,
-        updatedAt: now,
-      },
-      {
+      }),
+      withModelTimestamps({
         id: "demo-cp-pp-provider",
         conversationId: convPatientProvider.id,
         userId: providerId,
         lastReadAt: minutesAgo(55),
         createdAt: convPatientProvider.createdAt,
-        updatedAt: now,
-      },
+      }),
 
-      {
+      withModelTimestamps({
         id: "demo-cp-pa-patient",
         conversationId: convPatientAdvocate.id,
         userId: patientId,
         lastReadAt: minutesAgo(12),
         createdAt: convPatientAdvocate.createdAt,
-        updatedAt: now,
-      },
-      {
+      }),
+      withModelTimestamps({
         id: "demo-cp-pa-advocate",
         conversationId: convPatientAdvocate.id,
         userId: advocateId,
         lastReadAt: minutesAgo(30),
         createdAt: convPatientAdvocate.createdAt,
-        updatedAt: now,
-      },
+      }),
     ];
-
-    await putMany(TABLE_CONVERSATION_PARTICIPANT, participants);
 
     const msg = (
       id,
@@ -344,18 +353,19 @@ exports.handler = async (event) => {
       type,
       body,
       createdAt,
-    ) => ({
-      id,
-      conversationId,
-      senderId,
-      memberIds,
-      type,
-      body,
-      createdAt,
-      updatedAt: createdAt,
-    });
+    ) =>
+      withModelTimestamps({
+        id,
+        conversationId,
+        senderId,
+        memberIds,
+        type,
+        body,
+        createdAt,
+        updatedAt: createdAt,
+      });
 
-    const messages = [
+    seedPlan.messages = [
       msg(
         "demo-msg-care-001",
         convCareTeam.id,
@@ -468,31 +478,61 @@ exports.handler = async (event) => {
       ),
     ];
 
-    await putMany(TABLE_MESSAGE, messages);
+    const seedSummary = {
+      users: 0,
+      providerPatients: 0,
+      advocateAssignments: 0,
+      conversations: 0,
+      conversationParticipants: 0,
+      messages: 0,
+    };
+
+    seedSummary.users = await seedMany(TABLE_USER, seedPlan.users);
+    seedSummary.providerPatients = await seedMany(
+      TABLE_PROVIDER_PATIENT,
+      seedPlan.providerPatients,
+    );
+    seedSummary.advocateAssignments = await seedMany(
+      TABLE_ADVOCATE_ASSIGNMENT,
+      seedPlan.advocateAssignments,
+    );
+
+    seedSummary.conversations = await seedMany(TABLE_CONVERSATION, [
+      convCareTeam,
+      convPatientProvider,
+      convPatientAdvocate,
+    ]);
+
+    seedSummary.conversationParticipants = await seedMany(
+      TABLE_CONVERSATION_PARTICIPANT,
+      seedPlan.participants,
+    );
+
+    seedSummary.messages = await seedMany(TABLE_MESSAGE, seedPlan.messages);
 
     return json(200, {
       ok: true,
       mode,
       scenario,
       resolvedIds: { patientId, providerId, advocateId },
-      deletedUsersCount: usersToDelete.length,
-      seeded: {
-        users: seededUsers.length,
-        providerPatients: 1,
-        advocateAssignments: 1,
-        conversations: conversations.length,
-        conversationParticipants: participants.length,
-        messages: messages.length,
-      },
+      deleted: deleteSummary,
+      seeded: seedSummary,
       ids: {
-        userIds: seededUsers.map((u) => u.id),
-        providerPatientId: providerPatient.id,
-        advocateAssignmentId: advocateAssignment.id,
-        conversationIds: conversations.map((c) => c.id),
+        providerPatientId: seedPlan.providerPatients[0].id,
+        advocateAssignmentId: seedPlan.advocateAssignments[0].id,
+        conversationIds: [
+          convCareTeam.id,
+          convPatientProvider.id,
+          convPatientAdvocate.id,
+        ],
+      },
+      notes: {
+        modelTimestamps: "All @model seed items include createdAt + updatedAt",
+        schemaDrift: "No ConversationParticipant.role written",
       },
     });
   } catch (e) {
-    console.error("[SEED_BASIC] ERROR", e);
+    console.error("[ADMIN_SEED] ERROR", e);
     return json(500, { ok: false, error: e?.message ?? String(e) });
   }
 };
