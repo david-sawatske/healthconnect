@@ -1,458 +1,303 @@
 /* Amplify Params - DO NOT EDIT
-	AUTH_HEALTHCONNECT97A44150_USERPOOLID
-	ENV
-	REGION
+  AUTH_HEALTHCONNECT97A44150_USERPOOLID
+  ENV
+  REGION
 Amplify Params - DO NOT EDIT */
 
-const crypto = require("crypto");
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const {
-  DynamoDBClient,
+  DynamoDBDocumentClient,
   ScanCommand,
-  BatchWriteItemCommand,
-  PutItemCommand,
-} = require("@aws-sdk/client-dynamodb");
+  DeleteCommand,
+  PutCommand,
+} = require("@aws-sdk/lib-dynamodb");
 const {
   CognitoIdentityProviderClient,
   ListUsersCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
-const { marshall, unmarshall } = require("@aws-sdk/util-dynamodb");
 
-const ddb = new DynamoDBClient({ region: process.env.REGION });
+const ddb = DynamoDBDocumentClient.from(
+  new DynamoDBClient({ region: process.env.REGION }),
+  { marshallOptions: { removeUndefinedValues: true } },
+);
+
 const cognito = new CognitoIdentityProviderClient({
   region: process.env.REGION,
 });
-const USER_POOL_ID = process.env.AUTH_HEALTHCONNECT97A44150_USERPOOLID;
 
-const TABLES = {
-  User: process.env.TABLE_USER,
-  Conversation: process.env.TABLE_CONVERSATION,
-  Message: process.env.TABLE_MESSAGE,
-
-  ConversationParticipant: process.env.TABLE_CONVERSATION_PARTICIPANT,
-  ProviderPatient: process.env.TABLE_PROVIDER_PATIENT,
-  AdvocateAssignment: process.env.TABLE_ADVOCATE_ASSIGNMENT,
-  AdvocateInvite: process.env.TABLE_ADVOCATE_INVITE,
-  CallSession: process.env.TABLE_CALL_SESSION,
-  CallSignal: process.env.TABLE_CALL_SIGNAL,
-};
-
-const DEMO = {
-  patientEmail: process.env.DEMO_PATIENT_EMAIL,
-  providerEmail: process.env.DEMO_PROVIDER_EMAIL,
-  advocateEmail: process.env.DEMO_ADVOCATE_EMAIL,
-};
-
-const json = (statusCode, body) => ({
-  statusCode,
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify(body),
-});
-
-function getClaims(event) {
-  const claims =
-    event?.requestContext?.authorizer?.claims ||
-    event?.requestContext?.authorizer?.jwt?.claims ||
-    {};
-  return claims;
-}
-
-function requireAdmin(event) {
-  const claims = getClaims(event);
-
-  const groupsRaw = claims["cognito:groups"];
-  const groups = Array.isArray(groupsRaw)
-    ? groupsRaw
-    : typeof groupsRaw === "string"
-      ? groupsRaw.split(",").map((s) => s.trim())
-      : [];
-
-  const isAdmin = groups.includes("Admin");
-
-  if (!isAdmin) {
-    const sub = claims.sub || "unknown";
-    const err = new Error(`Forbidden: user ${sub} is not in Admin group`);
-    err.statusCode = 403;
-    throw err;
-  }
-}
-
-function uuid() {
-  return crypto.randomUUID();
-}
-function nowIso() {
-  return new Date().toISOString();
-}
-function minutesAgo(min) {
-  return new Date(Date.now() - min * 60 * 1000).toISOString();
-}
-
-async function scanAllIds(tableName) {
-  if (!tableName) return [];
-  const ids = [];
-  let ExclusiveStartKey = undefined;
-
-  do {
-    const res = await ddb.send(
-      new ScanCommand({
-        TableName: tableName,
-        ProjectionExpression: "id",
-        ExclusiveStartKey,
-      }),
-    );
-
-    const items = res.Items || [];
-    for (const it of items) {
-      const obj = unmarshall(it);
-      if (obj?.id) ids.push({ id: obj.id });
-    }
-
-    ExclusiveStartKey = res.LastEvaluatedKey;
-  } while (ExclusiveStartKey);
-
-  return ids;
-}
-
-async function batchDelete(tableName, keys) {
-  if (!tableName || !keys?.length) return 0;
-
-  let deleted = 0;
-  for (let i = 0; i < keys.length; i += 25) {
-    const chunk = keys.slice(i, i + 25);
-
-    await ddb.send(
-      new BatchWriteItemCommand({
-        RequestItems: {
-          [tableName]: chunk.map((k) => ({
-            DeleteRequest: { Key: marshall(k) },
-          })),
-        },
-      }),
-    );
-
-    deleted += chunk.length;
-  }
-  return deleted;
-}
-
-async function put(tableName, item) {
-  if (!tableName) throw new Error("Missing tableName for put()");
-  await ddb.send(
-    new PutItemCommand({
-      TableName: tableName,
-      Item: marshall(item, { removeUndefinedValues: true }),
-    }),
-  );
-}
-
-async function findSubByEmail(email) {
-  const res = await cognito.send(
-    new ListUsersCommand({
-      UserPoolId: USER_POOL_ID,
-      Filter: `email = "${email}"`,
-      Limit: 1,
-    }),
-  );
-
-  const user = res.Users?.[0];
-  if (!user) throw new Error(`Cognito user not found for email: ${email}`);
-
-  const sub = user.Attributes?.find((a) => a.Name === "sub")?.Value;
-  if (!sub) throw new Error(`Missing sub attribute for email: ${email}`);
-
-  return sub;
-}
-
-function requireCoreEnv() {
-  if (!USER_POOL_ID) throw new Error("Missing env AUTH_*_USERPOOLID");
-  if (!DEMO.patientEmail || !DEMO.providerEmail || !DEMO.advocateEmail) {
-    throw new Error("Missing one or more DEMO_*_EMAIL env vars");
-  }
-  if (!TABLES.User || !TABLES.Conversation || !TABLES.Message) {
-    throw new Error(
-      "Missing one or more core TABLE_* env vars (User/Conversation/Message)",
-    );
-  }
-}
-
-function requireExtraTablesForFullExperience() {
-  const needed = [
-    "ConversationParticipant",
-    "ProviderPatient",
-    "AdvocateAssignment",
-  ];
-
-  const missing = needed.filter((k) => !TABLES[k]);
-  if (missing.length) {
-    const err = new Error(
-      `Missing env table(s): ${missing
-        .map((k) => `TABLE_${k.toUpperCase()}`)
-        .join(", ")}. Add these env vars to enable full reset/seed.`,
-    );
-    err.statusCode = 500;
-    throw err;
-  }
-}
-
-async function resetAll() {
-  const order = [
-    "CallSignal",
-    "CallSession",
-    "Message",
-    "ConversationParticipant",
-    "AdvocateInvite",
-    "AdvocateAssignment",
-    "ProviderPatient",
-    "Conversation",
-  ];
-
-  const results = {};
-
-  for (const model of order) {
-    const table = TABLES[model];
-    if (!table) {
-      results[model] = { skipped: true, reason: "table env not set" };
-      continue;
-    }
-
-    const keys = await scanAllIds(table);
-    const deleted = await batchDelete(table, keys);
-    results[model] = { deleted };
-  }
-
-  return results;
-}
-
-async function seedDemoWorld() {
-  requireCoreEnv();
-  requireExtraTablesForFullExperience();
-
-  const [patientSub, providerSub, advocateSub] = await Promise.all([
-    findSubByEmail(DEMO.patientEmail),
-    findSubByEmail(DEMO.providerEmail),
-    findSubByEmail(DEMO.advocateEmail),
-  ]);
-
-  await put(TABLES.User, {
-    id: patientSub,
-    email: DEMO.patientEmail,
-    displayName: "Jordan Lee",
-    role: "PATIENT",
-  });
-
-  await put(TABLES.User, {
-    id: providerSub,
-    email: DEMO.providerEmail,
-    displayName: "Dr. Maya Patel",
-    role: "PROVIDER",
-  });
-
-  await put(TABLES.User, {
-    id: advocateSub,
-    email: DEMO.advocateEmail,
-    displayName: "Casey Morgan",
-    role: "ADVOCATE",
-  });
-
-  const providerPatientId = uuid();
-  await put(TABLES.ProviderPatient, {
-    id: providerPatientId,
-    providerId: providerSub,
-    patientId: patientSub,
-  });
-
-  const assignmentId = uuid();
-  await put(TABLES.AdvocateAssignment, {
-    id: assignmentId,
-    patientId: patientSub,
-    providerId: providerSub,
-    advocateId: advocateSub,
-    active: true,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  });
-
-  const careTeamConversationId = uuid();
-  const pvConversationId = uuid();
-  const apConversationId = uuid();
-
-  await put(TABLES.Conversation, {
-    id: careTeamConversationId,
-    title: "Jordan Lee • Care Team",
-    isGroup: true,
-    memberIds: [patientSub, providerSub, advocateSub],
-    createdBy: providerSub,
-    lastMessageAt: minutesAgo(30),
-    createdAt: minutesAgo(240),
-  });
-
-  await put(TABLES.Conversation, {
-    id: pvConversationId,
-    title: "Jordan Lee ↔ Dr. Maya Patel",
-    isGroup: false,
-    memberIds: [patientSub, providerSub],
-    createdBy: patientSub,
-    lastMessageAt: minutesAgo(175),
-    createdAt: minutesAgo(200),
-  });
-
-  await put(TABLES.Conversation, {
-    id: apConversationId,
-    title: "Casey Morgan ↔ Jordan Lee",
-    isGroup: false,
-    memberIds: [patientSub, advocateSub],
-    createdBy: advocateSub,
-    lastMessageAt: minutesAgo(30),
-    createdAt: minutesAgo(60),
-  });
-
-  const mkCP = (userId, conversationId, lastReadAt) => ({
-    id: uuid(),
-    userId,
-    conversationId,
-    lastReadAt,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
-  });
-
-  const cps = [
-    mkCP(patientSub, careTeamConversationId, minutesAgo(40)),
-    mkCP(providerSub, careTeamConversationId, minutesAgo(35)),
-    mkCP(advocateSub, careTeamConversationId, minutesAgo(33)),
-
-    mkCP(patientSub, pvConversationId, minutesAgo(170)),
-    mkCP(providerSub, pvConversationId, minutesAgo(172)),
-
-    mkCP(advocateSub, apConversationId, minutesAgo(25)),
-    mkCP(patientSub, apConversationId, minutesAgo(90)),
-  ];
-
-  for (const cp of cps) await put(TABLES.ConversationParticipant, cp);
-
-  const mkMsg = (
-    conversationId,
-    senderId,
-    memberIds,
-    type,
-    body,
-    createdAt,
-  ) => ({
-    id: uuid(),
-    conversationId,
-    senderId,
-    memberIds,
-    type,
-    body,
-    createdAt,
-  });
-
-  const msgs = [
-    mkMsg(
-      careTeamConversationId,
-      providerSub,
-      [patientSub, providerSub, advocateSub],
-      "TEXT",
-      "Hi Jordan — checking in after your last appointment. How are symptoms today?",
-      minutesAgo(240),
-    ),
-    mkMsg(
-      careTeamConversationId,
-      patientSub,
-      [patientSub, providerSub, advocateSub],
-      "TEXT",
-      "A bit better overall, but still getting headaches in the evening.",
-      minutesAgo(235),
-    ),
-    mkMsg(
-      careTeamConversationId,
-      advocateSub,
-      [patientSub, providerSub, advocateSub],
-      "TEXT",
-      "Thanks — can you keep a quick symptom log this week? Even 1–2 notes per day helps.",
-      minutesAgo(230),
-    ),
-
-    mkMsg(
-      pvConversationId,
-      patientSub,
-      [patientSub, providerSub],
-      "TEXT",
-      "Quick question: should I take the meds with food?",
-      minutesAgo(180),
-    ),
-    mkMsg(
-      pvConversationId,
-      providerSub,
-      [patientSub, providerSub],
-      "TEXT",
-      "Yes — with food is ideal. If nausea continues, message me here and we can adjust.",
-      minutesAgo(175),
-    ),
-
-    mkMsg(
-      apConversationId,
-      advocateSub,
-      [patientSub, advocateSub],
-      "TEXT",
-      "I can help schedule your follow-up. Do mornings or afternoons usually work better?",
-      minutesAgo(30),
-    ),
-  ];
-
-  for (const msg of msgs) await put(TABLES.Message, msg);
-
-  return {
-    demoSubs: { patientSub, providerSub, advocateSub },
-    created: {
-      users: 3,
-      providerPatients: 1,
-      advocateAssignments: 1,
-      conversations: 3,
-      conversationParticipants: cps.length,
-      messages: msgs.length,
-    },
-    ids: {
-      providerPatientId,
-      assignmentId,
-      careTeamConversationId,
-      pvConversationId,
-      apConversationId,
-    },
-  };
-}
+const {
+  AUTH_HEALTHCONNECT97A44150_USERPOOLID,
+  TABLE_USER,
+  TABLE_PROVIDER_PATIENT,
+  TABLE_ADVOCATE_ASSIGNMENT,
+  TABLE_CONVERSATION,
+  TABLE_CONVERSATION_PARTICIPANT,
+  TABLE_MESSAGE,
+} = process.env;
 
 exports.handler = async (event) => {
+  console.log("[SEED_BASIC] event.raw =", JSON.stringify(event));
+  console.log("[SEED_BASIC] env.REGION =", process.env.REGION);
+  console.log("[SEED_BASIC] USERPOOL =", AUTH_HEALTHCONNECT97A44150_USERPOOLID);
+
   try {
-    requireAdmin(event);
+    const body =
+      typeof event.body === "string"
+        ? JSON.parse(event.body)
+        : event.body || {};
+    const { mode, scenario } = body;
 
-    console.log("[adminSeedData] EVENT:", JSON.stringify(event));
+    if (mode !== "seed")
+      return json(400, { ok: false, error: "Only mode=seed" });
+    if (scenario !== "basic")
+      return json(400, { ok: false, error: "Only scenario=basic" });
 
-    const body = event?.body ? JSON.parse(event.body) : {};
-    const mode = body?.mode || "resetAndReseed";
+    const missing = [
+      !AUTH_HEALTHCONNECT97A44150_USERPOOLID && "AUTH_*_USERPOOLID",
+      !TABLE_USER && "TABLE_USER",
+      !TABLE_PROVIDER_PATIENT && "TABLE_PROVIDER_PATIENT",
+      !TABLE_ADVOCATE_ASSIGNMENT && "TABLE_ADVOCATE_ASSIGNMENT",
+      !TABLE_CONVERSATION && "TABLE_CONVERSATION",
+      !TABLE_CONVERSATION_PARTICIPANT && "TABLE_CONVERSATION_PARTICIPANT",
+      !TABLE_MESSAGE && "TABLE_MESSAGE",
+    ].filter(Boolean);
 
-    if (mode === "reset") {
-      const resetCounts = await resetAll();
-      return json(200, { ok: true, mode, resetCounts });
+    if (missing.length) {
+      return json(500, { ok: false, error: `Missing: ${missing.join(", ")}` });
     }
 
-    if (mode === "seed") {
-      const seeded = await seedDemoWorld();
-      return json(200, { ok: true, mode, seeded });
-    }
+    const now = new Date().toISOString();
 
-    if (mode === "resetAndReseed") {
-      const resetCounts = await resetAll();
-      const seeded = await seedDemoWorld();
-      return json(200, { ok: true, mode, resetCounts, seeded });
-    }
+    const scanAllIds = async (tableName) => {
+      const ids = [];
+      let ExclusiveStartKey = undefined;
+      do {
+        const res = await ddb.send(
+          new ScanCommand({
+            TableName: tableName,
+            ProjectionExpression: "id",
+            ExclusiveStartKey,
+          }),
+        );
+        for (const it of res.Items || []) if (it?.id) ids.push(it.id);
+        ExclusiveStartKey = res.LastEvaluatedKey;
+      } while (ExclusiveStartKey);
+      return ids;
+    };
 
-    return json(400, { ok: false, error: `Unknown mode: ${mode}` });
-  } catch (e) {
-    console.log("[adminSeedData] ERROR:", e);
-    return json(e.statusCode || 500, {
-      ok: false,
-      error: e.message || "Error",
+    const deleteByIds = async (tableName, ids) => {
+      for (const id of ids) {
+        await ddb.send(
+          new DeleteCommand({ TableName: tableName, Key: { id } }),
+        );
+      }
+    };
+
+    const findCognitoUserIdByEmail = async (email) => {
+      const res = await cognito.send(
+        new ListUsersCommand({
+          UserPoolId: AUTH_HEALTHCONNECT97A44150_USERPOOLID,
+          Filter: `email = "${email}"`,
+          Limit: 1,
+        }),
+      );
+
+      const user = (res.Users || [])[0];
+      if (!user) throw new Error(`Cognito user not found for email: ${email}`);
+
+      return user.Username;
+    };
+
+    const patientId = await findCognitoUserIdByEmail("patient@example.com");
+    const providerId = await findCognitoUserIdByEmail("provider@example.com");
+    const advocateId = await findCognitoUserIdByEmail("advocate@example.com");
+
+    console.log("[SEED_BASIC] resolved ids", {
+      patientId,
+      providerId,
+      advocateId,
     });
+
+    const usersToDelete = [];
+    let userScanKey = undefined;
+
+    do {
+      const res = await ddb.send(
+        new ScanCommand({
+          TableName: TABLE_USER,
+          ProjectionExpression: "id, #role, email",
+          ExpressionAttributeNames: { "#role": "role" },
+          ExclusiveStartKey: userScanKey,
+        }),
+      );
+
+      for (const u of res.Items || []) {
+        if (!u?.id) continue;
+        if (!u.role || !u.email) {
+          usersToDelete.push(u.id);
+          continue;
+        }
+        if (u.role !== "ADMIN") usersToDelete.push(u.id);
+      }
+
+      userScanKey = res.LastEvaluatedKey;
+    } while (userScanKey);
+
+    await deleteByIds(TABLE_USER, usersToDelete);
+
+    const seededUsers = [
+      {
+        id: patientId,
+        email: "patient@example.com",
+        displayName: "Jordan Patient",
+        role: "PATIENT",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: providerId,
+        email: "provider@example.com",
+        displayName: "Dr. Avery Provider",
+        role: "PROVIDER",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: advocateId,
+        email: "advocate@example.com",
+        displayName: "Casey Advocate",
+        role: "ADVOCATE",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
+    for (const u of seededUsers) {
+      await ddb.send(new PutCommand({ TableName: TABLE_USER, Item: u }));
+    }
+
+    const ppIds = await scanAllIds(TABLE_PROVIDER_PATIENT);
+    await deleteByIds(TABLE_PROVIDER_PATIENT, ppIds);
+
+    const providerPatient = {
+      id: "demo-provider-patient",
+      providerId,
+      patientId,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE_PROVIDER_PATIENT,
+        Item: providerPatient,
+      }),
+    );
+
+    const aaIds = await scanAllIds(TABLE_ADVOCATE_ASSIGNMENT);
+    await deleteByIds(TABLE_ADVOCATE_ASSIGNMENT, aaIds);
+
+    const advocateAssignment = {
+      id: "demo-advocate-assignment",
+      providerId,
+      patientId,
+      advocateId,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE_ADVOCATE_ASSIGNMENT,
+        Item: advocateAssignment,
+      }),
+    );
+
+    await deleteByIds(TABLE_MESSAGE, await scanAllIds(TABLE_MESSAGE));
+    await deleteByIds(
+      TABLE_CONVERSATION_PARTICIPANT,
+      await scanAllIds(TABLE_CONVERSATION_PARTICIPANT),
+    );
+    await deleteByIds(TABLE_CONVERSATION, await scanAllIds(TABLE_CONVERSATION));
+
+    const conversation = {
+      id: "demo-care-team-conv",
+      title: "Care Team Chat",
+      isGroup: true,
+      createdBy: providerId,
+      memberIds: [patientId, providerId, advocateId],
+      updatedAt: now,
+      createdAt: now,
+      lastMessageAt: now,
+    };
+
+    await ddb.send(
+      new PutCommand({ TableName: TABLE_CONVERSATION, Item: conversation }),
+    );
+
+    const participants = [
+      {
+        id: "demo-cp-patient",
+        conversationId: conversation.id,
+        userId: patientId,
+        role: "PATIENT",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: "demo-cp-provider",
+        conversationId: conversation.id,
+        userId: providerId,
+        role: "PROVIDER",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: "demo-cp-advocate",
+        conversationId: conversation.id,
+        userId: advocateId,
+        role: "ADVOCATE",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
+    for (const p of participants) {
+      await ddb.send(
+        new PutCommand({
+          TableName: TABLE_CONVERSATION_PARTICIPANT,
+          Item: p,
+        }),
+      );
+    }
+
+    return json(200, {
+      ok: true,
+      mode,
+      scenario,
+      resolvedIds: { patientId, providerId, advocateId },
+      deletedUsersCount: usersToDelete.length,
+      seededUserIds: seededUsers.map((u) => u.id),
+      seededProviderPatientId: providerPatient.id,
+      seededAdvocateAssignmentId: advocateAssignment.id,
+      seededConversationId: conversation.id,
+      seededParticipantIds: participants.map((p) => p.id),
+    });
+  } catch (e) {
+    console.error("[SEED_BASIC] ERROR", e);
+    return json(500, { ok: false, error: e?.message ?? String(e) });
   }
 };
+
+function json(statusCode, obj) {
+  return {
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "*",
+    },
+    body: JSON.stringify(obj),
+  };
+}
