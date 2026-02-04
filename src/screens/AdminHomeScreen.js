@@ -1,32 +1,58 @@
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { theme } from "../ui/theme";
+import React, { useState } from "react";
+import { View, Button, Alert, ActivityIndicator } from "react-native";
+import { post } from "aws-amplify/api";
 
 export default function AdminHomeScreen() {
+  const [loading, setLoading] = useState(false);
+  
+  const seedBasic = async () => {
+    setLoading(true);
+    try {
+      const op = await post({
+        apiName: "seeding",
+        path: "/admin",
+        options: { body: { mode: "seed", scenario: "basic" } },
+      });
+
+      const response = await op.response;
+
+      console.log("[ADMIN_SEED] status =", response.statusCode);
+      console.log("[ADMIN_SEED] headers =", response.headers);
+
+      const body = response.body;
+
+      let json;
+      if (body && typeof body.json === "function") {
+        json = await body.json();
+      } else if (body && typeof body.text === "function") {
+        const txt = await body.text();
+        json = JSON.parse(txt);
+      } else {
+        json = { note: "No body or unknown body shape", response };
+      }
+
+      Alert.alert("Seed complete", JSON.stringify(json, null, 2));
+    } catch (e) {
+      console.log("[ADMIN_SEED] error =", e);
+
+      try {
+        const resp = await e?.response;
+        if (resp?.body?.text) {
+          const txt = await resp.body.text();
+          console.log("[ADMIN_SEED] error body =", txt);
+        }
+      } catch {}
+
+      Alert.alert("Seed failed", e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Admin Home</Text>
-      <Text style={styles.subtitle}>Admin dashboard coming soon.</Text>
+    <View style={{ padding: 16 }}>
+      <Button title="Seed (basic)" onPress={seedBasic} disabled={loading} />
+      {loading ? <ActivityIndicator style={{ marginTop: 12 }} /> : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.bg,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: theme.space.lg,
-  },
-  title: {
-    fontSize: theme.type.h1,
-    fontWeight: "700",
-    color: theme.colors.text,
-    marginBottom: theme.space.sm,
-  },
-  subtitle: {
-    fontSize: theme.type.body,
-    color: theme.colors.subtext,
-  },
-});
