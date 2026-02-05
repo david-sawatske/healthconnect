@@ -27,7 +27,7 @@
         },
         "adminSeedData": {
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
-          "s3Key": "amplify-builds/adminSeedData-52776969473739542b4c-build.zip",
+          "s3Key": "amplify-builds/adminSeedData-2f5668436c56466b4d76-build.zip",
           "demoPatientEmail": "patient@example.com",
           "demoProviderEmail": "provider@example.com",
           "demoAdvocateEmail": "advocate@example.com",

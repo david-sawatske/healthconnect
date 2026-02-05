@@ -264,6 +264,13 @@ exports.handler = async (event) => {
           providerId,
           patientId,
         }),
+
+        withModelTimestamps({
+          id: "demo-pp-jordan-2",
+          providerId: provider2Id,
+          patientId,
+        }),
+
         withModelTimestamps({
           id: "demo-pp-2",
           providerId,
@@ -289,6 +296,15 @@ exports.handler = async (event) => {
           advocateId,
           active: true,
         }),
+
+        withModelTimestamps({
+          id: "demo-aa-jordan-2",
+          providerId: provider2Id,
+          patientId,
+          advocateId: advocate2Id,
+          active: true,
+        }),
+
         withModelTimestamps({
           id: "demo-aa-2",
           providerId,
@@ -312,14 +328,14 @@ exports.handler = async (event) => {
 
     seedPlan.conversations = (() => {
       const conv = ({
-                      id,
-                      title,
-                      isGroup,
-                      createdBy,
-                      memberIds,
-                      createdAt,
-                      lastMessageAt,
-                    }) =>
+        id,
+        title,
+        isGroup,
+        createdBy,
+        memberIds,
+        createdAt,
+        lastMessageAt,
+      }) =>
         withModelTimestamps({
           id,
           title: title ?? null,
@@ -441,16 +457,6 @@ exports.handler = async (event) => {
         createdAt: minutesAgo(30),
       });
 
-      const convSystemOnly = conv({
-        id: "demo-system-only",
-        title: "System Updates",
-        isGroup: true,
-        createdBy: providerId,
-        memberIds: [patientId, providerId, advocateId],
-        createdAt: minutesAgo(2000),
-        lastMessageAt: minutesAgo(1400),
-      });
-
       const list = [
         convCareTeam,
         convPatientProvider,
@@ -463,7 +469,6 @@ exports.handler = async (event) => {
         convGroup4,
         convLongTitle,
         convEmpty,
-        convSystemOnly,
       ];
 
       const byId = Object.fromEntries(list.map((c) => [c.id, c]));
@@ -493,11 +498,14 @@ exports.handler = async (event) => {
       );
 
     seedPlan.participants = [
-      ...participantsForConversation(seedPlan.conversations.byId["demo-care-team-conv"], {
-        [patientId]: minutesAgo(20),
-        [providerId]: minutesAgo(5),
-        [advocateId]: minutesAgo(10),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-care-team-conv"],
+        {
+          [patientId]: minutesAgo(20),
+          [providerId]: minutesAgo(5),
+          [advocateId]: minutesAgo(10),
+        },
+      ),
 
       ...participantsForConversation(
         seedPlan.conversations.byId["demo-patient-provider-conv"],
@@ -515,52 +523,70 @@ exports.handler = async (event) => {
         },
       ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-care-team-2"], {
-        [providerId]: minutesAgo(40),
-        [advocate2Id]: minutesAgo(120),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-care-team-2"],
+        {
+          [providerId]: minutesAgo(40),
+          [advocate2Id]: minutesAgo(120),
+        },
+      ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-care-team-3"], {
-        [providerId]: minutesAgo(300),
-        [advocate2Id]: minutesAgo(90),
-        [patient3Id]: minutesAgo(95),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-care-team-3"],
+        {
+          [providerId]: minutesAgo(300),
+          [advocate2Id]: minutesAgo(90),
+          [patient3Id]: minutesAgo(95),
+        },
+      ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-p2-provider"], {
-        [patient2Id]: minutesAgo(65),
-        [providerId]: minutesAgo(200),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-p2-provider"],
+        {
+          [patient2Id]: minutesAgo(65),
+          [providerId]: minutesAgo(200),
+        },
+      ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-p3-provider"], {
-        [patient3Id]: minutesAgo(180),
-        [providerId]: minutesAgo(180),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-p3-provider"],
+        {
+          [patient3Id]: minutesAgo(180),
+          [providerId]: minutesAgo(180),
+        },
+      ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-p2-advocate1"], {
-        [patient2Id]: minutesAgo(22),
-        [advocateId]: minutesAgo(200),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-p2-advocate1"],
+        {
+          [patient2Id]: minutesAgo(22),
+          [advocateId]: minutesAgo(200),
+        },
+      ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-group-4"], {
-        [providerId]: minutesAgo(15),
-        [advocate2Id]: minutesAgo(60),
-        [provider2Id]: minutesAgo(500),
-        [patient2Id]: minutesAgo(300),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-group-4"],
+        {
+          [providerId]: minutesAgo(15),
+          [advocate2Id]: minutesAgo(60),
+          [provider2Id]: minutesAgo(500),
+          [patient2Id]: minutesAgo(300),
+        },
+      ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-long-title"], {
-        [patientId]: minutesAgo(120),
-        [providerId]: minutesAgo(8),
-        [advocateId]: minutesAgo(10),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-long-title"],
+        {
+          [patientId]: minutesAgo(120),
+          [providerId]: minutesAgo(8),
+          [advocateId]: minutesAgo(10),
+        },
+      ),
 
-      ...participantsForConversation(seedPlan.conversations.byId["demo-empty-thread"], {}),
-
-      ...participantsForConversation(seedPlan.conversations.byId["demo-system-only"], {
-        [patientId]: minutesAgo(1400),
-        [providerId]: minutesAgo(1400),
-        [advocateId]: minutesAgo(1400),
-      }),
+      ...participantsForConversation(
+        seedPlan.conversations.byId["demo-empty-thread"],
+        {},
+      ),
     ];
 
     const message = (
@@ -928,25 +954,6 @@ exports.handler = async (event) => {
         "Labs first this week, then follow-up next week. Advocate can help schedule.",
         minutesAgo(8),
       ),
-
-      message(
-        m("sys-001"),
-        "demo-system-only",
-        providerId,
-        seedPlan.conversations.byId["demo-system-only"].memberIds,
-        "SYSTEM",
-        "Appointment scheduled for next week.",
-        minutesAgo(1500),
-      ),
-      message(
-        m("sys-002"),
-        "demo-system-only",
-        providerId,
-        seedPlan.conversations.byId["demo-system-only"].memberIds,
-        "SYSTEM",
-        "Reminder: complete labs 48 hours before appointment.",
-        minutesAgo(1400),
-      ),
     ];
 
     const seedSummary = {
@@ -996,6 +1003,7 @@ exports.handler = async (event) => {
         modelTimestamps: "All @model seed items include createdAt + updatedAt",
         schemaDrift: "No ConversationParticipant.role written",
         emptyThread: "demo-empty-thread intentionally has 0 messages",
+        removedChat: '"System Updates" conversation fully removed',
       },
     });
   } catch (e) {
