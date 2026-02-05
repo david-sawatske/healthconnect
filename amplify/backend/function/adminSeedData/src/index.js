@@ -103,8 +103,7 @@ exports.handler = async (event) => {
 
     const clearTable = async (tableName) => {
       const ids = await scanAllIds(tableName);
-      const deleted = await deleteByIds(tableName, ids);
-      return deleted;
+      return deleteByIds(tableName, ids);
     };
 
     const withModelTimestamps = (item, defaultCreatedAt = now) => {
@@ -471,8 +470,7 @@ exports.handler = async (event) => {
       return { list, byId };
     })();
 
-    const cpId = (conversationId, userId) =>
-      `demo-cp-${conversationId}-${userId}`.replace(/[^a-zA-Z0-9-_]/g, "");
+    const cpId = (conversationId, userId) => `${conversationId}:${userId}`;
 
     const participant = ({ conversationId, userId, lastReadAt, createdAt }) =>
       withModelTimestamps({
