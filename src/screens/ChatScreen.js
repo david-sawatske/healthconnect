@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -168,10 +174,15 @@ export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const { currentUser } = useCurrentUser();
 
-  const conversation = route?.params?.conversation;
-  const conversationId = conversation?.id;
-  const memberIds = Array.isArray(conversation?.memberIds)
-    ? conversation.memberIds
+  const conversationParam = route?.params?.conversation || null;
+  const routeConversationId = route?.params?.conversationId || null;
+
+  const conversationId = conversationParam?.id || routeConversationId || null;
+
+  const myId = currentUser?.id || null;
+
+  const memberIdsFromConversation = Array.isArray(conversationParam?.memberIds)
+    ? conversationParam.memberIds
     : [];
 
   const [messages, setMessages] = useState([]);
@@ -180,7 +191,13 @@ export default function ChatScreen({ route, navigation }) {
   const [sending, setSending] = useState(false);
   const listRef = useRef(null);
 
-  const myId = currentUser?.id || null;
+  const memberIds = useMemo(() => {
+    if (memberIdsFromConversation.length) return memberIdsFromConversation;
+    const first = messages?.[0];
+    if (Array.isArray(first?.memberIds) && first.memberIds.length)
+      return first.memberIds;
+    return [];
+  }, [memberIdsFromConversation.join(","), messages]);
 
   useCallSignals({ conversationId, currentUserId: myId });
 
@@ -257,13 +274,8 @@ export default function ChatScreen({ route, navigation }) {
   useEffect(() => {
     if (!conversationId) return;
     console.log("[CHAT] user:", currentUser || null);
-    console.log(
-      "[CHAT] conversationId:",
-      conversationId,
-      "members:",
-      memberIds,
-    );
-  }, [conversationId]);
+    console.log("[CHAT] conversationId:", conversationId);
+  }, [conversationId, currentUser]);
 
   const fetchMessages = useCallback(async () => {
     if (!conversationId) return;
@@ -274,6 +286,14 @@ export default function ChatScreen({ route, navigation }) {
         authMode: "userPool",
       });
       const items = res?.data?.messagesByConversation?.items ?? [];
+
+      console.log(
+        "[CHAT] fetched",
+        items.length,
+        "messages for",
+        conversationId,
+      );
+
       setMessages(items);
 
       requestAnimationFrame(() =>
@@ -288,7 +308,9 @@ export default function ChatScreen({ route, navigation }) {
     let cancelled = false;
 
     (async () => {
+      if (!conversationId) return;
       if (!memberIds.length) return;
+
       try {
         const ids = [...new Set(memberIds)].filter(Boolean);
         const results = await Promise.allSettled(
@@ -301,6 +323,7 @@ export default function ChatScreen({ route, navigation }) {
           ),
         );
         if (cancelled) return;
+
         const map = {};
         results.forEach((r) => {
           if (r.status === "fulfilled") {
@@ -362,19 +385,34 @@ export default function ChatScreen({ route, navigation }) {
     }, [conversationId, fetchMessages, ensureParticipantAndMarkRead]),
   );
 
+  useEffect(() => {
+    fetchMessages();
+  }, [fetchMessages]);
+
+  useEffect(() => {
+    ensureParticipantAndMarkRead();
+  }, [ensureParticipantAndMarkRead]);
+
   const handleSend = async () => {
     const body = text.trim();
     if (!body || !conversationId || !myId) return;
 
     try {
       setSending(true);
+
+      const memberIdsToUse =
+        (Array.isArray(conversationParam?.memberIds) &&
+          conversationParam.memberIds.length &&
+          conversationParam.memberIds) ||
+        (memberIds.length ? memberIds : [myId]);
+
       const { data } = await client.graphql({
         query: CreateMessage,
         variables: {
           input: {
             conversationId,
             senderId: myId,
-            memberIds: conversation.memberIds ?? [myId],
+            memberIds: memberIdsToUse,
             type: "TEXT",
             body,
           },
@@ -395,7 +433,6 @@ export default function ChatScreen({ route, navigation }) {
       }
 
       setText("");
-
       ensureParticipantAndMarkRead();
     } catch (err) {
       console.log("[CHAT] send error:", err);
@@ -426,13 +463,19 @@ export default function ChatScreen({ route, navigation }) {
         options: { contentType: file.mimeType || undefined },
       }).result;
 
+      const memberIdsToUse =
+        (Array.isArray(conversationParam?.memberIds) &&
+          conversationParam.memberIds.length &&
+          conversationParam.memberIds) ||
+        (memberIds.length ? memberIds : [myId]);
+
       const { data } = await client.graphql({
         query: CreateMessage,
         variables: {
           input: {
             conversationId,
             senderId: myId,
-            memberIds: conversation.memberIds ?? [myId],
+            memberIds: memberIdsToUse,
             type: fileType,
             mediaKey: key,
           },
@@ -642,7 +685,14 @@ export default function ChatScreen({ route, navigation }) {
         <TouchableOpacity
           accessibilityLabel="Start a video call"
           style={styles.call}
-          onPress={() => navigation?.navigate?.("Call", { conversation })}
+          onPress={() =>
+            navigation?.navigate?.("Call", {
+              conversation: conversationParam || {
+                id: conversationId,
+                memberIds,
+              },
+            })
+          }
         >
           <Text style={styles.callIcon}>📞</Text>
         </TouchableOpacity>
