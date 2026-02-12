@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generateClient } from "aws-amplify/api";
-import { getCurrentUser } from "aws-amplify/auth";
 
 const client = generateClient();
 
@@ -20,6 +19,23 @@ const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
         conversationId
         userId
         lastReadAt
+        updatedAt
+      }
+      nextToken
+    }
+  }
+`;
+
+const LIST_MY_CONVERSATIONS = /* GraphQL */ `
+  query ListMyConversations($myId: String!, $limit: Int, $nextToken: String) {
+    listConversations(
+      filter: { memberIds: { contains: $myId } }
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        memberIds
         updatedAt
       }
       nextToken
@@ -85,13 +101,44 @@ async function listConversationIdsForUser(userId) {
   return Array.from(ids);
 }
 
+async function listConversationIdsByMemberContains(myId) {
+  const ids = new Set();
+  let nextToken = null;
+
+  do {
+    const { data, errors } = await client.graphql({
+      query: LIST_MY_CONVERSATIONS,
+      variables: { myId, limit: 200, nextToken },
+      authMode: "userPool",
+    });
+
+    if (errors?.length) {
+      log("listConversations errors", errors);
+      break;
+    }
+
+    const page = data?.listConversations;
+    const items = page?.items || [];
+    items.forEach((c) => {
+      if (c?.id) ids.add(c.id);
+    });
+
+    nextToken = page?.nextToken || null;
+  } while (nextToken);
+
+  return Array.from(ids);
+}
+
 export default function GlobalRealtimeListener({
   navRef,
   call,
+  currentUser,
   onIncomingMessage,
 }) {
   const [conversationIds, setConversationIds] = useState([]);
   const subsRef = useRef([]);
+
+  const myId = currentUser?.id || null;
 
   const conversationIdSet = useMemo(
     () => new Set(conversationIds),
@@ -102,19 +149,27 @@ export default function GlobalRealtimeListener({
     let cancelled = false;
 
     (async () => {
-      const u = await getCurrentUser().catch(() => null);
-      const myId = u?.userId;
-
       if (!myId) {
-        log("No current user; skipping conversationId fetch");
+        log("No currentUser.id yet; skipping conversationId fetch");
         return;
       }
 
-      log("Fetching conversationIds for user", myId);
-      const ids = await listConversationIdsForUser(myId).catch((e) => {
-        log("listConversationIdsForUser error", e?.message || e);
+      log("Fetching conversationIds for app user id", myId);
+
+      let ids = await listConversationIdsForUser(myId).catch((e) => {
+        log("conversationParticipantsByUser error", e?.message || e);
         return [];
       });
+
+      if (!ids.length) {
+        log(
+          "No ConversationParticipant rows found; falling back to listConversations contains(memberIds)",
+        );
+        ids = await listConversationIdsByMemberContains(myId).catch((e) => {
+          log("listConversations fallback error", e?.message || e);
+          return [];
+        });
+      }
 
       if (!cancelled) {
         log("conversationIds =", ids.length);
@@ -125,7 +180,7 @@ export default function GlobalRealtimeListener({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [myId]);
 
   useEffect(() => {
     subsRef.current.forEach((s) => {
@@ -138,8 +193,6 @@ export default function GlobalRealtimeListener({
     let cancelled = false;
 
     (async () => {
-      const u = await getCurrentUser().catch(() => null);
-      const myId = u?.userId;
       if (!myId) return;
 
       try {
@@ -162,11 +215,15 @@ export default function GlobalRealtimeListener({
                 ? navRef.getCurrentRoute?.()
                 : null;
 
+              const currentConversationId =
+                current?.params?.conversation?.id ||
+                current?.params?.conversationId ||
+                current?.params?.id ||
+                null;
+
               const isAlreadyInChat =
                 current?.name === "Chat" &&
-                (current?.params?.conversationId === m.conversationId ||
-                  current?.params?.id === m.conversationId ||
-                  current?.params?.conversation?.id === m.conversationId);
+                currentConversationId === m.conversationId;
 
               if (isAlreadyInChat) return;
 
@@ -180,6 +237,7 @@ export default function GlobalRealtimeListener({
                 id: m.id,
                 conversationId: m.conversationId,
                 senderId: m.senderId,
+                memberIds: Array.isArray(m.memberIds) ? m.memberIds : [],
                 preview,
                 createdAt: m.createdAt,
               });
@@ -217,12 +275,11 @@ export default function GlobalRealtimeListener({
                 let offer = null;
                 try {
                   const parsed =
-                    typeof s.payload === "string"
-                      ? JSON.parse(s.payload)
-                      : s.payload;
+                    typeof s.payload === "string" ? JSON.parse(s.payload) : s.payload;
+
                   offer = parsed?.offer ?? parsed;
-                } catch {
-                  offer = null;
+                } catch (e) {
+
                 }
 
                 const incoming = {
@@ -232,11 +289,21 @@ export default function GlobalRealtimeListener({
                   offer,
                 };
 
-                const did =
-                  (call?.showIncoming?.(incoming), true) ||
-                  (call?.show?.(incoming), true) ||
-                  (call?.setIncoming?.(incoming), true) ||
-                  (call?.setIncomingCall?.(incoming), true);
+                let did = false;
+
+                if (call?.showIncoming) {
+                  call.showIncoming(incoming);
+                  did = true;
+                } else if (call?.show) {
+                  call.show(incoming);
+                  did = true;
+                } else if (call?.setIncoming) {
+                  call.setIncoming(incoming);
+                  did = true;
+                } else if (call?.setIncomingCall) {
+                  call.setIncomingCall(incoming);
+                  did = true;
+                }
 
                 if (!did) {
                   log(
@@ -276,7 +343,7 @@ export default function GlobalRealtimeListener({
       });
       subsRef.current = [];
     };
-  }, [conversationIds, navRef, call]);
+  }, [conversationIds, navRef, call, myId]);
 
   return null;
 }
