@@ -59,16 +59,23 @@ export function CallProvider({ children }) {
     [],
   );
 
+  const showIncoming = ring;
+  const dismissIncoming = hide;
+
   const value = useMemo(
     () => ({
       ...state,
+
       ring,
       hide,
       setConnecting,
       setInCall,
       setError,
+
+      showIncoming,
+      dismissIncoming,
     }),
-    [state, ring, hide, setConnecting, setInCall, setError],
+    [state, ring, hide, setConnecting, setInCall, setError, showIncoming, dismissIncoming],
   );
 
   return <CallContext.Provider value={value}>{children}</CallContext.Provider>;

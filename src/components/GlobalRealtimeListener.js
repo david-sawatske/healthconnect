@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateClient } from "aws-amplify/api";
+import { useCall } from "../context/CallContext";
 
 const client = generateClient();
 
@@ -131,10 +132,11 @@ async function listConversationIdsByMemberContains(myId) {
 
 export default function GlobalRealtimeListener({
   navRef,
-  call,
   currentUser,
   onIncomingMessage,
 }) {
+  const call = useCall();
+
   const [conversationIds, setConversationIds] = useState([]);
   const subsRef = useRef([]);
 
@@ -206,9 +208,7 @@ export default function GlobalRealtimeListener({
               if (!m?.id || !m?.conversationId) return;
 
               if (!conversationIdSet.has(m.conversationId)) return;
-
               if (m.senderId === myId) return;
-
               if (String(m.type).toUpperCase() === "SYSTEM") return;
 
               const current = navRef?.isReady?.()
@@ -272,49 +272,34 @@ export default function GlobalRealtimeListener({
 
                 if (String(s.type).toUpperCase() !== "OFFER") return;
 
-                let offer = null;
+                let parsed = null;
                 try {
-                  const parsed =
-                    typeof s.payload === "string" ? JSON.parse(s.payload) : s.payload;
+                  parsed =
+                    typeof s.payload === "string"
+                      ? JSON.parse(s.payload)
+                      : s.payload;
+                } catch {}
 
-                  offer = parsed?.offer ?? parsed;
-                } catch (e) {
-
-                }
+                const offer = parsed?.offer ?? parsed ?? null;
 
                 const incoming = {
                   conversationId: s.conversationId,
                   callSessionId: s.callSessionId,
                   senderId: s.senderId,
                   offer,
+                  callerName:
+                    parsed?.callerName ?? offer?.callerName ?? "Unknown caller",
                 };
-
-                let did = false;
 
                 if (call?.showIncoming) {
                   call.showIncoming(incoming);
-                  did = true;
-                } else if (call?.show) {
-                  call.show(incoming);
-                  did = true;
-                } else if (call?.setIncoming) {
-                  call.setIncoming(incoming);
-                  did = true;
-                } else if (call?.setIncomingCall) {
-                  call.setIncomingCall(incoming);
-                  did = true;
-                }
-
-                if (!did) {
+                } else if (call?.ring) {
+                  call.ring(incoming);
+                } else {
                   log(
-                    "Incoming OFFER received but CallContext has no showIncoming/show/setIncoming method.",
+                    "Incoming OFFER received but CallContext missing showIncoming/ring.",
                     incoming,
                   );
-                } else {
-                  log("Incoming call OFFER", {
-                    conversationId: incoming.conversationId,
-                    callSessionId: incoming.callSessionId,
-                  });
                 }
               },
               error: (err) =>
@@ -343,7 +328,14 @@ export default function GlobalRealtimeListener({
       });
       subsRef.current = [];
     };
-  }, [conversationIds, navRef, call, myId]);
+  }, [
+    conversationIds,
+    navRef,
+    myId,
+    call,
+    onIncomingMessage,
+    conversationIdSet,
+  ]);
 
   return null;
 }

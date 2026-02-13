@@ -231,7 +231,6 @@ function Root() {
 
       <GlobalRealtimeListener
         navRef={navRef}
-        call={call}
         currentUser={currentUser}
         onIncomingMessage={(payload) => setIncomingMsg(payload)}
       />
