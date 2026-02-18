@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getGraphqlClient } from "../services/amplify/client";
 import { useCall } from "../context/CallContext";
+import {
+  shouldNotifyForMessage,
+  toIncomingBannerPayload,
+} from "../features/chat/chatRealtimeHelpers";
 
 const client = getGraphqlClient();
 
@@ -205,42 +209,18 @@ export default function GlobalRealtimeListener({
               if (cancelled) return;
 
               const m = data?.onCreateMessage;
-              if (!m?.id || !m?.conversationId) return;
+              if (!m) return;
 
-              if (!conversationIdSet.has(m.conversationId)) return;
-              if (m.senderId === myId) return;
-              if (String(m.type).toUpperCase() === "SYSTEM") return;
-
-              const current = navRef?.isReady?.()
-                ? navRef.getCurrentRoute?.()
-                : null;
-
-              const currentConversationId =
-                current?.params?.conversation?.id ||
-                current?.params?.conversationId ||
-                current?.params?.id ||
-                null;
-
-              const isAlreadyInChat =
-                current?.name === "Chat" &&
-                currentConversationId === m.conversationId;
-
-              if (isAlreadyInChat) return;
-
-              const preview =
-                (m.body && String(m.body).trim()) ||
-                (String(m.type).toUpperCase() === "IMAGE" ? "📷 Image" : "") ||
-                (String(m.type).toUpperCase() === "VIDEO" ? "🎥 Video" : "") ||
-                "New message";
-
-              onIncomingMessage?.({
-                id: m.id,
-                conversationId: m.conversationId,
-                senderId: m.senderId,
-                memberIds: Array.isArray(m.memberIds) ? m.memberIds : [],
-                preview,
-                createdAt: m.createdAt,
+              const shouldNotify = shouldNotifyForMessage({
+                message: m,
+                myId,
+                conversationIdSet,
+                navRef,
               });
+
+              if (!shouldNotify) return;
+
+              onIncomingMessage?.(toIncomingBannerPayload(m));
             },
             error: (err) => log("onCreateMessage sub error", err),
           });
@@ -269,7 +249,6 @@ export default function GlobalRealtimeListener({
                 if (!s?.id) return;
 
                 if (s.senderId === myId) return;
-
                 if (String(s.type).toUpperCase() !== "OFFER") return;
 
                 let parsed = null;
