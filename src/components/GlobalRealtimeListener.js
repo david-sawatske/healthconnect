@@ -5,6 +5,7 @@ import {
   shouldNotifyForMessage,
   toIncomingBannerPayload,
 } from "../features/chat/chatRealtimeHelpers";
+import { handleIncomingOfferSignal } from "../features/calls/callRealtimeHelpers";
 
 const client = getGraphqlClient();
 
@@ -246,43 +247,11 @@ export default function GlobalRealtimeListener({
                 if (cancelled) return;
 
                 const s = data?.onSignal;
-                if (!s?.id) return;
+                if (!s) return;
 
-                if (s.senderId === myId) return;
-                if (String(s.type).toUpperCase() !== "OFFER") return;
-
-                let parsed = null;
-                try {
-                  parsed =
-                    typeof s.payload === "string"
-                      ? JSON.parse(s.payload)
-                      : s.payload;
-                } catch {}
-
-                const offer = parsed?.offer ?? parsed ?? null;
-
-                const incoming = {
-                  conversationId: s.conversationId,
-                  callSessionId: s.callSessionId,
-                  senderId: s.senderId,
-                  offer,
-                  callerName:
-                    parsed?.callerName ?? offer?.callerName ?? "Unknown caller",
-                };
-
-                if (call?.showIncoming) {
-                  call.showIncoming(incoming);
-                } else if (call?.ring) {
-                  call.ring(incoming);
-                } else {
-                  log(
-                    "Incoming OFFER received but CallContext missing showIncoming/ring.",
-                    incoming,
-                  );
-                }
+                handleIncomingOfferSignal({ signal: s, myId, call });
               },
-              error: (err) =>
-                log("onSignal sub error", { conversationId, err }),
+              error: (err) => log("onSignal sub error", { conversationId, err }),
             });
 
           subsRef.current.push(sigSub);
