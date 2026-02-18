@@ -35,6 +35,7 @@ import {
   CurrentUserProvider,
   useCurrentUser,
 } from "./src/context/CurrentUserContext";
+import { declineIncomingCall } from "./src/features/calls/callSignalsService";
 
 import IncomingCallModal from "./src/components/IncomingCallModal";
 import GlobalRealtimeListener from "./src/components/GlobalRealtimeListener";
@@ -144,44 +145,13 @@ function Root() {
   async function onDecline(incoming) {
     const u = await getCurrentUser().catch(() => null);
     const senderId = u?.userId;
-    const { conversationId, callSessionId } = incoming || {};
-
-    if (!conversationId || !callSessionId || !senderId) {
-      call?.hide?.();
-      return;
-    }
 
     try {
-      await client.graphql({
-        query: CreateCallSignal,
-        variables: {
-          input: {
-            conversationId,
-            callSessionId,
-            senderId,
-            type: "BYE",
-            payload: JSON.stringify({ reason: "declined", at: Date.now() }),
-          },
-        },
-        authMode: "userPool",
-      });
-
-      await client.graphql({
-        query: /* GraphQL */ `
-          mutation UpdateCallSession($input: UpdateCallSessionInput!) {
-            updateCallSession(input: $input) {
-              id
-            }
-          }
-        `,
-        variables: {
-          input: {
-            id: callSessionId,
-            status: "ENDED",
-            endedAt: new Date().toISOString(),
-          },
-        },
-        authMode: "userPool",
+      await declineIncomingCall({
+        conversationId: incoming?.conversationId,
+        callSessionId: incoming?.callSessionId,
+        senderId,
+        reason: "declined",
       });
     } catch (e) {
       console.log("Decline error:", e);
