@@ -12,7 +12,7 @@ import {
 } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/api";
+import { getGraphqlClient } from "./src/services/amplify/client";
 import { getCurrentUser, signOut } from "aws-amplify/auth";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
@@ -44,7 +44,7 @@ Amplify.configure(amplifyConfig);
 
 const Stack = createNativeStackNavigator();
 const navRef = createNavigationContainerRef();
-const client = generateClient();
+const client = getGraphqlClient();
 
 const CreateCallSignal = /* GraphQL */ `
   mutation CreateCallSignal($input: CreateCallSignalInput!) {
