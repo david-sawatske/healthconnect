@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getGraphqlClient } from "../services/amplify/client";
-import { useCall } from "../context/CallContext";
+import { getGraphqlClient } from "../amplify/client";
+import { useCall } from "../../context/CallContext";
 import {
   shouldNotifyForMessage,
   toIncomingBannerPayload,
-} from "../features/chat/chatRealtimeHelpers";
-import { handleIncomingOfferSignal } from "../features/calls/callRealtimeHelpers";
+} from "../../features/chat/chatRealtimeHelpers";
+import { handleIncomingOfferSignal } from "../../features/calls/callRealtimeHelpers";
 
 const client = getGraphqlClient();
 
@@ -251,7 +251,8 @@ export default function GlobalRealtimeListener({
 
                 handleIncomingOfferSignal({ signal: s, myId, call });
               },
-              error: (err) => log("onSignal sub error", { conversationId, err }),
+              error: (err) =>
+                log("onSignal sub error", { conversationId, err }),
             });
 
           subsRef.current.push(sigSub);

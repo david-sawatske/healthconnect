@@ -38,7 +38,7 @@ import {
 import { declineIncomingCall } from "./src/features/calls/callSignalsService";
 
 import IncomingCallModal from "./src/components/IncomingCallModal";
-import GlobalRealtimeListener from "./src/components/GlobalRealtimeListener";
+import GlobalRealtimeListener from "./src/services/realtime/GlobalRealtimeListener";
 import GlobalIncomingBanner from "./src/components/GlobalIncomingBanner";
 
 Amplify.configure(amplifyConfig);
