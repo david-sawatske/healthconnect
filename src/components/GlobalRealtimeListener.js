@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { generateClient } from "aws-amplify/api";
+import { getGraphqlClient } from "../services/amplify/client";
 import { useCall } from "../context/CallContext";
 
-const client = generateClient();
+const client = getGraphqlClient();
 
 const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
   query ConversationParticipantsByUser(
