@@ -16,7 +16,7 @@ import { useCurrentUser } from "../context/CurrentUserContext";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
-} from "../utils/conversations";
+} from "../features/chat/conversationService";
 
 const client = generateClient();
 

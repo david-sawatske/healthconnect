@@ -1,6 +1,5 @@
-import { generateClient } from "aws-amplify/api";
-
-const client = generateClient();
+import { getGraphqlClient } from "../../services/amplify/client";
+const client = getGraphqlClient();
 
 const LIST_MY_CONVERSATIONS = /* GraphQL */ `
   query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {

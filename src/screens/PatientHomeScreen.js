@@ -18,7 +18,8 @@ import RolePill from "../components/RolePill";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
-} from "../utils/conversations";
+} from "../features/chat/conversationService";
+
 import { theme } from "../ui/theme";
 
 const client = generateClient();
