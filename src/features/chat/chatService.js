@@ -266,19 +266,21 @@ export function buildParticipantId({ conversationId, userId }) {
 
 export async function ensureParticipantExists({ conversationId, userId }) {
   const participantId = buildParticipantId({ conversationId, userId });
-  if (!participantId) return;
-
-  const existing = await client.graphql({
-    query: GetConversationParticipant,
-    variables: { id: participantId },
-    authMode: "userPool",
-  });
-
-  const row = existing?.data?.getConversationParticipant;
-  if (row) return;
+  if (!participantId) return null;
 
   try {
-    await client.graphql({
+    const res = await client.graphql({
+      query: GetConversationParticipant,
+      variables: { id: participantId },
+      authMode: "userPool",
+    });
+
+    const existing = res?.data?.getConversationParticipant;
+    if (existing) return existing;
+  } catch {}
+
+  try {
+    const created = await client.graphql({
       query: CreateConversationParticipant,
       variables: {
         input: {
@@ -290,12 +292,17 @@ export async function ensureParticipantExists({ conversationId, userId }) {
       },
       authMode: "userPool",
     });
+
+    return created?.data?.createConversationParticipant ?? null;
   } catch (e) {
     const msg = e?.errors?.[0]?.message || String(e);
     const alreadyExists =
       msg.includes("ConditionalCheckFailed") ||
       msg.toLowerCase().includes("conditional request failed");
-    if (!alreadyExists) throw e;
+
+    if (alreadyExists) return { id: participantId, conversationId, userId };
+
+    throw e;
   }
 }
 
