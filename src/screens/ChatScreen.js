@@ -1,10 +1,4 @@
-import React, {
-  useEffect,
-  useState,
-  useCallback,
-  useRef,
-  useMemo,
-} from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -20,155 +14,11 @@ import {
   Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "@react-navigation/native";
-import * as DocumentPicker from "expo-document-picker";
-import { generateClient } from "aws-amplify/api";
-import { getUrl, uploadData } from "aws-amplify/storage";
 import { useCallSignals } from "../hooks/useCallSignals";
 import { useCurrentUser } from "../context/CurrentUserContext";
 
-const client = generateClient();
-
-const MessagesByConversation = /* GraphQL */ `
-  query MessagesByConversation(
-    $conversationId: ID!
-    $limit: Int
-    $nextToken: String
-  ) {
-    messagesByConversation(
-      conversationId: $conversationId
-      sortDirection: ASC
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        conversationId
-        senderId
-        memberIds
-        type
-        body
-        mediaKey
-        thumbnailKey
-        createdAt
-      }
-      nextToken
-    }
-  }
-`;
-
-const CreateMessage = /* GraphQL */ `
-  mutation CreateMessage($input: CreateMessageInput!) {
-    createMessage(input: $input) {
-      id
-      conversationId
-      senderId
-      memberIds
-      type
-      body
-      mediaKey
-      thumbnailKey
-      createdAt
-    }
-  }
-`;
-
-const OnCreateMessage = /* GraphQL */ `
-  subscription OnCreateMessage {
-    onCreateMessage {
-      id
-      conversationId
-      senderId
-      memberIds
-      body
-      mediaKey
-      thumbnailKey
-      type
-      createdAt
-    }
-  }
-`;
-
-const GetUser = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
-
-const GetConversationParticipant = /* GraphQL */ `
-  query GetConversationParticipant($id: ID!) {
-    getConversationParticipant(id: $id) {
-      id
-      conversationId
-      userId
-      lastReadAt
-      createdAt
-      updatedAt
-    }
-  }
-`;
-
-const CreateConversationParticipant = /* GraphQL */ `
-  mutation CreateConversationParticipant(
-    $input: CreateConversationParticipantInput!
-  ) {
-    createConversationParticipant(input: $input) {
-      id
-      conversationId
-      userId
-      lastReadAt
-      createdAt
-      updatedAt
-    }
-  }
-`;
-
-const UpdateConversationParticipant = /* GraphQL */ `
-  mutation UpdateConversationParticipant(
-    $input: UpdateConversationParticipantInput!
-  ) {
-    updateConversationParticipant(input: $input) {
-      id
-      lastReadAt
-      updatedAt
-    }
-  }
-`;
-
-const UpdateConversationLastMessageAt = /* GraphQL */ `
-  mutation UpdateConversationLastMessageAt($input: UpdateConversationInput!) {
-    updateConversation(input: $input) {
-      id
-      lastMessageAt
-      updatedAt
-    }
-  }
-`;
-
-function extFromName(name = "") {
-  const m = name.toLowerCase().match(/\.(\w+)$/);
-  return m ? m[1] : "";
-}
-
-function guessType({ mimeType, name }) {
-  const ext = extFromName(name);
-  if (
-    (mimeType || "").startsWith("image/") ||
-    ["png", "jpg", "jpeg", "gif", "webp", "heic"].includes(ext)
-  )
-    return "IMAGE";
-  if (
-    (mimeType || "").startsWith("video/") ||
-    ["mp4", "mov", "m4v", "webm"].includes(ext)
-  )
-    return "VIDEO";
-  return "FILE";
-}
+import { useChat } from "../features/chat/useChat";
+import { getMediaUrl } from "../features/chat/chatService";
 
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
@@ -180,96 +30,25 @@ export default function ChatScreen({ route, navigation }) {
   const conversationId = conversationParam?.id || routeConversationId || null;
 
   const myId = currentUser?.id || null;
-
-  const memberIdsFromConversation = Array.isArray(conversationParam?.memberIds)
-    ? conversationParam.memberIds
-    : [];
-
-  const [messages, setMessages] = useState([]);
-  const [text, setText] = useState("");
-  const [usersById, setUsersById] = useState({});
-  const [sending, setSending] = useState(false);
   const listRef = useRef(null);
 
-  const memberIds = useMemo(() => {
-    if (memberIdsFromConversation.length) return memberIdsFromConversation;
-    const first = messages?.[0];
-    if (Array.isArray(first?.memberIds) && first.memberIds.length)
-      return first.memberIds;
-    return [];
-  }, [memberIdsFromConversation.join(","), messages]);
+  const {
+    memberIds,
+    messages,
+    text,
+    setText,
+    sending,
+    send,
+    attach,
+    roleForSender,
+    nameForSender,
+  } = useChat({
+    conversationId,
+    conversation: conversationParam,
+    currentUser,
+  });
 
   useCallSignals({ conversationId, currentUserId: myId });
-
-  const participantId =
-    conversationId && myId ? `${conversationId}:${myId}` : null;
-
-  const ensureParticipantAndMarkRead = useCallback(async () => {
-    if (!conversationId || !myId || !participantId) return;
-
-    try {
-      const existing = await client.graphql({
-        query: GetConversationParticipant,
-        variables: { id: participantId },
-        authMode: "userPool",
-      });
-
-      const row = existing?.data?.getConversationParticipant;
-
-      if (!row) {
-        try {
-          await client.graphql({
-            query: CreateConversationParticipant,
-            variables: {
-              input: {
-                id: participantId,
-                conversationId,
-                userId: myId,
-                lastReadAt: null,
-              },
-            },
-            authMode: "userPool",
-          });
-        } catch (e) {
-          const msg = e?.errors?.[0]?.message || String(e);
-          const alreadyExists =
-            msg.includes("ConditionalCheckFailed") ||
-            msg.toLowerCase().includes("conditional request failed");
-          if (!alreadyExists) throw e;
-        }
-      }
-
-      const now = new Date().toISOString();
-      await client.graphql({
-        query: UpdateConversationParticipant,
-        variables: {
-          input: { id: participantId, lastReadAt: now },
-        },
-        authMode: "userPool",
-      });
-    } catch (e) {
-      console.log("[CHAT] ensure/markRead error:", e);
-    }
-  }, [conversationId, myId, participantId]);
-
-  const bumpConversationLastMessageAt = useCallback(async () => {
-    if (!conversationId) return;
-    try {
-      const now = new Date().toISOString();
-      await client.graphql({
-        query: UpdateConversationLastMessageAt,
-        variables: {
-          input: {
-            id: conversationId,
-            lastMessageAt: now,
-          },
-        },
-        authMode: "userPool",
-      });
-    } catch (e) {
-      console.log("[CHAT] updateConversation lastMessageAt error:", e);
-    }
-  }, [conversationId]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -277,242 +56,12 @@ export default function ChatScreen({ route, navigation }) {
     console.log("[CHAT] conversationId:", conversationId);
   }, [conversationId, currentUser]);
 
-  const fetchMessages = useCallback(async () => {
+  useEffect(() => {
     if (!conversationId) return;
-    try {
-      const res = await client.graphql({
-        query: MessagesByConversation,
-        variables: { conversationId, limit: 50 },
-        authMode: "userPool",
-      });
-      const items = res?.data?.messagesByConversation?.items ?? [];
-
-      console.log(
-        "[CHAT] fetched",
-        items.length,
-        "messages for",
-        conversationId,
-      );
-
-      setMessages(items);
-
-      requestAnimationFrame(() =>
-        listRef.current?.scrollToEnd?.({ animated: false }),
-      );
-    } catch (err) {
-      console.log("[CHAT] fetchMessages error:", err);
-    }
+    requestAnimationFrame(() =>
+      listRef.current?.scrollToEnd?.({ animated: false }),
+    );
   }, [conversationId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      if (!conversationId) return;
-      if (!memberIds.length) return;
-
-      try {
-        const ids = [...new Set(memberIds)].filter(Boolean);
-        const results = await Promise.allSettled(
-          ids.map((id) =>
-            client.graphql({
-              query: GetUser,
-              variables: { id },
-              authMode: "userPool",
-            }),
-          ),
-        );
-        if (cancelled) return;
-
-        const map = {};
-        results.forEach((r) => {
-          if (r.status === "fulfilled") {
-            const u = r.value?.data?.getUser;
-            if (u?.id) map[u.id] = u;
-          }
-        });
-        setUsersById(map);
-      } catch (e) {
-        console.log("[CHAT] participant load error:", e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId, memberIds.join(",")]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!conversationId) return;
-
-      let sub;
-      let retryTimer;
-
-      fetchMessages();
-      ensureParticipantAndMarkRead();
-
-      retryTimer = setTimeout(() => {
-        fetchMessages();
-      }, 500);
-
-      sub = client
-        .graphql({ query: OnCreateMessage, authMode: "userPool" })
-        .subscribe({
-          next: ({ data }) => {
-            const msg = data?.onCreateMessage;
-            if (msg?.conversationId !== conversationId) return;
-
-            setMessages((prev) =>
-              prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
-            );
-
-            ensureParticipantAndMarkRead();
-
-            requestAnimationFrame(() =>
-              listRef.current?.scrollToEnd?.({ animated: true }),
-            );
-          },
-          error: (err) => console.log("[CHAT] subscription error:", err),
-        });
-
-      return () => {
-        try {
-          sub?.unsubscribe?.();
-        } catch (e) {}
-        if (retryTimer) clearTimeout(retryTimer);
-      };
-    }, [conversationId, fetchMessages, ensureParticipantAndMarkRead]),
-  );
-
-  useEffect(() => {
-    fetchMessages();
-  }, [fetchMessages]);
-
-  useEffect(() => {
-    ensureParticipantAndMarkRead();
-  }, [ensureParticipantAndMarkRead]);
-
-  const handleSend = async () => {
-    const body = text.trim();
-    if (!body || !conversationId || !myId) return;
-
-    try {
-      setSending(true);
-
-      const memberIdsToUse =
-        (Array.isArray(conversationParam?.memberIds) &&
-          conversationParam.memberIds.length &&
-          conversationParam.memberIds) ||
-        (memberIds.length ? memberIds : [myId]);
-
-      const { data } = await client.graphql({
-        query: CreateMessage,
-        variables: {
-          input: {
-            conversationId,
-            senderId: myId,
-            memberIds: memberIdsToUse,
-            type: "TEXT",
-            body,
-          },
-        },
-        authMode: "userPool",
-      });
-
-      const created = data?.createMessage;
-      if (created) {
-        await bumpConversationLastMessageAt();
-
-        setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
-        );
-        requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true }),
-        );
-      }
-
-      setText("");
-      ensureParticipantAndMarkRead();
-    } catch (err) {
-      console.log("[CHAT] send error:", err);
-      Alert.alert("Error", "Failed to send message.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleAttach = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({ type: "*/*" });
-      if (result.canceled) return;
-
-      const file = result.assets?.[0];
-      if (!file?.uri || !myId || !conversationId) return;
-
-      const fileType = guessType({ mimeType: file.mimeType, name: file.name });
-      const key = `uploads/${conversationId}/${Date.now()}-${(
-        file.name || "file"
-      ).replace(/\s+/g, "_")}`;
-
-      const blob = await fetch(file.uri).then((r) => r.blob());
-
-      await uploadData({
-        key,
-        data: blob,
-        options: { contentType: file.mimeType || undefined },
-      }).result;
-
-      const memberIdsToUse =
-        (Array.isArray(conversationParam?.memberIds) &&
-          conversationParam.memberIds.length &&
-          conversationParam.memberIds) ||
-        (memberIds.length ? memberIds : [myId]);
-
-      const { data } = await client.graphql({
-        query: CreateMessage,
-        variables: {
-          input: {
-            conversationId,
-            senderId: myId,
-            memberIds: memberIdsToUse,
-            type: fileType,
-            mediaKey: key,
-          },
-        },
-        authMode: "userPool",
-      });
-
-      const created = data?.createMessage;
-      if (created) {
-        await bumpConversationLastMessageAt();
-
-        setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
-        );
-        requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true }),
-        );
-      }
-
-      ensureParticipantAndMarkRead();
-    } catch (e) {
-      console.log("[CHAT] attach error:", e);
-      Alert.alert("Upload failed", "Could not upload attachment.");
-    }
-  };
-
-  const roleForSender = (senderId, type) => {
-    if (type === "SYSTEM") return "SYSTEM";
-    const r = usersById?.[senderId]?.role;
-    return r || (senderId === myId ? "USER" : "USER");
-  };
-
-  const nameForSender = (senderId, type) => {
-    if (type === "SYSTEM") return "System";
-    const u = usersById?.[senderId];
-    return u?.displayName || u?.email || (senderId === myId ? "You" : "Member");
-  };
 
   const bubbleStyleForRole = (isMine, role, type) => {
     if (type === "SYSTEM") return [styles.bubble, styles.system];
@@ -550,11 +99,8 @@ export default function ChatScreen({ route, navigation }) {
       let mounted = true;
       (async () => {
         try {
-          const u = await getUrl({
-            key: mediaKey,
-            options: { expiresIn: 300 },
-          });
-          if (mounted) setUrl(u?.url?.toString?.() || null);
+          const u = await getMediaUrl(mediaKey, { expiresIn: 300 });
+          if (mounted) setUrl(u);
         } catch (e) {
           console.log("[CHAT] getUrl error:", e);
         }
@@ -697,7 +243,20 @@ export default function ChatScreen({ route, navigation }) {
           <Text style={styles.callIcon}>📞</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.attach} onPress={handleAttach}>
+        <TouchableOpacity
+          style={styles.attach}
+          onPress={async () => {
+            try {
+              await attach();
+              requestAnimationFrame(() =>
+                listRef.current?.scrollToEnd?.({ animated: true }),
+              );
+            } catch (e) {
+              console.log("[CHAT] attach error:", e);
+              Alert.alert("Upload failed", "Could not upload attachment.");
+            }
+          }}
+        >
           <Text style={styles.attachIcon}>+</Text>
         </TouchableOpacity>
 
@@ -706,12 +265,31 @@ export default function ChatScreen({ route, navigation }) {
           placeholder="Type a message…"
           value={text}
           onChangeText={setText}
-          onSubmitEditing={handleSend}
+          onSubmitEditing={async () => {
+            try {
+              await send();
+              requestAnimationFrame(() =>
+                listRef.current?.scrollToEnd?.({ animated: true }),
+              );
+            } catch {
+              Alert.alert("Error", "Failed to send message.");
+            }
+          }}
           returnKeyType="send"
         />
+
         <Button
           title={sending ? "Sending…" : "Send"}
-          onPress={handleSend}
+          onPress={async () => {
+            try {
+              await send();
+              requestAnimationFrame(() =>
+                listRef.current?.scrollToEnd?.({ animated: true }),
+              );
+            } catch {
+              Alert.alert("Error", "Failed to send message.");
+            }
+          }}
           disabled={!text.trim() || sending || !myId}
         />
       </View>
