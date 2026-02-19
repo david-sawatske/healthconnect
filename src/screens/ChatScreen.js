@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -8,17 +8,19 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  Image,
   TouchableOpacity,
   Alert,
-  Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallSignals } from "../hooks/useCallSignals";
 import { useCurrentUser } from "../context/CurrentUserContext";
 
+import MediaBubble from "../components/MediaBubble";
 import { useChat } from "../features/chat/useChat";
-import { getMediaUrl } from "../features/chat/chatService";
+import {
+  bubbleStyleForRole,
+  badgeStyleForRole,
+} from "../features/chat/chatUiHelpers";
 
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
@@ -63,84 +65,6 @@ export default function ChatScreen({ route, navigation }) {
     );
   }, [conversationId]);
 
-  const bubbleStyleForRole = (isMine, role, type) => {
-    if (type === "SYSTEM") return [styles.bubble, styles.system];
-    if (isMine) return [styles.bubble, styles.mine];
-    switch (role) {
-      case "PATIENT":
-        return [styles.bubble, styles.patient];
-      case "PROVIDER":
-        return [styles.bubble, styles.provider];
-      case "ADVOCATE":
-        return [styles.bubble, styles.advocate];
-      default:
-        return [styles.bubble, styles.theirs];
-    }
-  };
-
-  const badgeStyleForRole = (role, type) => {
-    if (type === "SYSTEM") return [styles.badge, styles.badgeSystem];
-    switch (role) {
-      case "PATIENT":
-        return [styles.badge, styles.badgePatient];
-      case "PROVIDER":
-        return [styles.badge, styles.badgeProvider];
-      case "ADVOCATE":
-        return [styles.badge, styles.badgeAdvocate];
-      default:
-        return [styles.badge, styles.badgeOther];
-    }
-  };
-
-  function MediaBubble({ mediaKey, type }) {
-    const [url, setUrl] = useState(null);
-
-    useEffect(() => {
-      let mounted = true;
-      (async () => {
-        try {
-          const u = await getMediaUrl(mediaKey, { expiresIn: 300 });
-          if (mounted) setUrl(u);
-        } catch (e) {
-          console.log("[CHAT] getUrl error:", e);
-        }
-      })();
-      return () => {
-        mounted = false;
-      };
-    }, [mediaKey]);
-
-    if (!url) {
-      return <Text style={{ opacity: 0.6 }}>Loading attachment…</Text>;
-    }
-
-    if (type === "IMAGE") {
-      return (
-        <Image
-          source={{ uri: url }}
-          style={{
-            width: 220,
-            height: 220,
-            borderRadius: 8,
-            backgroundColor: "#ddd",
-            marginTop: 6,
-          }}
-          resizeMode="cover"
-        />
-      );
-    }
-
-    const label = type === "VIDEO" ? "Open video" : "Open file";
-    return (
-      <TouchableOpacity
-        onPress={() => Linking.openURL(url)}
-        style={styles.attachBtn}
-      >
-        <Text style={styles.attachBtnText}>{label}</Text>
-      </TouchableOpacity>
-    );
-  }
-
   const renderItem = ({ item }) => {
     const isSystem = item.type === "SYSTEM";
     const mine = item.senderId === myId;
@@ -156,10 +80,23 @@ export default function ChatScreen({ route, navigation }) {
     }
 
     return (
-      <View style={bubbleStyleForRole(mine, role, item.type)}>
+      <View
+        style={bubbleStyleForRole(styles, {
+          isMine: mine,
+          role,
+          type: item.type,
+        })}
+      >
         <View style={styles.headerRow}>
           <Text style={styles.sender}>{name}</Text>
-          <Text style={badgeStyleForRole(role, item.type)}>{role}</Text>
+          <Text
+            style={badgeStyleForRole(styles, {
+              role,
+              type: item.type,
+            })}
+          >
+            {role}
+          </Text>
         </View>
 
         {item.type === "TEXT" && !!item.body && (
@@ -396,15 +333,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "700",
   },
-  attachBtn: {
-    marginTop: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: "#f2f2f2",
-    alignSelf: "flex-start",
-  },
-  attachBtnText: { fontSize: 13, fontWeight: "600" },
 
   call: {
     width: 36,
