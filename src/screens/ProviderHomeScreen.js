@@ -16,7 +16,9 @@ import RolePill from "../components/RolePill";
 
 const client = generateClient();
 
-const log = (...args) => console.log("[PROVIDER_HOME]", ...args);
+const devLog = (...args) => {
+  if (__DEV__) console.devLog("[PROVIDER_HOME]", ...args);
+};
 
 const LIST_PROVIDER_PATIENTS = /* GraphQL */ `
   query ListProviderPatients($providerId: ID!) {
@@ -60,7 +62,7 @@ const ProviderHomeScreen = () => {
 
       setPatients(items);
     } catch (err) {
-      log("loadPatients error:", err);
+      devLog("loadPatients error:", err);
       Alert.alert("Error", "Failed to load patients.");
       setPatients([]);
     } finally {

@@ -1,9 +1,4 @@
-import React, {
-  useEffect,
-  useState,
-  useCallback,
-  useRef,
-} from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -18,10 +13,13 @@ import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
 import PatientListItem from "../components/PatientListItem";
 import RolePill from "../components/RolePill";
+import { theme } from "../ui/theme";
 
 const client = generateClient();
 
-const log = (...args) => console.log("[ADVOCATE_HOME]", ...args);
+const devLog = (...args) => {
+  if (__DEV__) console.devLog("[ADVOCATE_HOME]", ...args);
+};
 
 const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
   query ListMyAdvocateAssignments(
@@ -115,7 +113,7 @@ const batchFetchUsers = async (ids) => {
       });
       if (data?.getUser) results[id] = data.getUser;
     } catch (err) {
-      log("Failed to fetch user:", id, err);
+      devLog("Failed to fetch user:", id, err);
     }
   }
 
@@ -210,7 +208,7 @@ const AdvocateHomeScreen = () => {
 
       setPatients(rows);
     } catch (err) {
-      log("Error processing assignments:", err);
+      devLog("Error processing assignments:", err);
     }
   }, []);
 
@@ -247,7 +245,7 @@ const AdvocateHomeScreen = () => {
 
         await processAssignments(merged);
       } catch (err) {
-        log("Error fetching assignments:", err);
+        devLog("Error fetching assignments:", err);
         setError("Unable to load your patients.");
       }
     },
@@ -290,7 +288,7 @@ const AdvocateHomeScreen = () => {
       lastReadAtRef.current = map;
       setLastReadAtByConvoId(map);
     } catch (err) {
-      log("fetchMyReadState error:", err);
+      devLog("fetchMyReadState error:", err);
       lastReadAtRef.current = {};
       setLastReadAtByConvoId({});
     } finally {
@@ -366,7 +364,7 @@ const AdvocateHomeScreen = () => {
       careTeamConvoRef.current = careTeamMap;
       setCareTeamConvoByPairKey(careTeamMap);
     } catch (err) {
-      log("fetchMyConversationsAndIndex error:", err);
+      devLog("fetchMyConversationsAndIndex error:", err);
       directConvoRef.current = {};
       careTeamConvoRef.current = {};
       setDirectConvoByPatientId({});
@@ -503,7 +501,7 @@ const AdvocateHomeScreen = () => {
     const isUnread = computeUnreadForRow(item);
 
     return (
-      <View style={{ marginBottom: 10 }}>
+      <View style={{ marginBottom: theme.space.xs }}>
         <PatientListItem
           name={item.patientName || "Patient"}
           subtitle={subtitle}
@@ -528,12 +526,7 @@ const AdvocateHomeScreen = () => {
   }
 
   return (
-    <View
-      style={[
-        styles.container,
-        { paddingBottom: insets.bottom },
-      ]}
-    >
+    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>Hi, {displayName}</Text>
@@ -565,7 +558,7 @@ const AdvocateHomeScreen = () => {
             }
             onEndReached={loadMore}
             onEndReachedThreshold={0.4}
-            contentContainerStyle={{ paddingBottom: 12 }}
+            contentContainerStyle={{ paddingBottom: theme.space.sm }}
           />
         )}
       </View>
@@ -584,61 +577,59 @@ export default AdvocateHomeScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F7FB",
-    paddingHorizontal: 16,
+    backgroundColor: theme.colors.bg,
+    paddingHorizontal: theme.space.sm,
   },
 
   header: {
-    marginBottom: 16,
-    marginTop: 8,
+    marginBottom: theme.space.sm,
+    marginTop: theme.space.xs,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
 
   greeting: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
+    ...theme.type.h2,
   },
 
   errorBox: {
-    backgroundColor: "#FEE2E2",
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 12,
+    backgroundColor: theme.colors.dangerBg,
+    padding: theme.space.sm,
+    borderRadius: theme.radius.md,
+    marginBottom: theme.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
   },
   errorText: {
-    color: "#B91C1C",
+    ...theme.type.subtext,
+    color: theme.colors.dangerText,
   },
 
   section: {
     flex: 1,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 8,
-    color: "#111827",
+    ...theme.type.h3,
+    marginBottom: theme.space.xs,
   },
   emptyText: {
-    fontSize: 14,
-    color: "#6B7280",
+    ...theme.type.subtext,
   },
   loadingText: {
-    marginTop: 8,
-    color: "#6B7280",
+    ...theme.type.subtext,
+    marginTop: theme.space.xs,
   },
 
   readsSpinner: {
     position: "absolute",
-    right: 12,
-    bottom: 12,
-    backgroundColor: "#FFFFFF",
+    right: theme.space.sm,
+    bottom: theme.space.sm,
+    backgroundColor: theme.colors.card,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
+    borderColor: theme.colors.border,
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
   },
 });

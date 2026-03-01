@@ -24,6 +24,10 @@ import { theme } from "../ui/theme";
 
 const client = generateClient();
 
+const devLog = (...args) => {
+  if (__DEV__) console.log("[PATIENT_HOME]", ...args);
+};
+
 const LIST_MY_CONVERSATIONS = /* GraphQL */ `
   query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
     listConversations(
@@ -489,7 +493,7 @@ const PatientHomeScreen = () => {
             "Care Team Conversation",
         });
       } catch (err) {
-        console.log("[PATIENT_HOME] handleOpenCareTeamChat error:", err);
+        devLog("handleOpenCareTeamChat error:", err);
         Alert.alert(
           "Unable to open chat",
           "Something went wrong while opening the conversation.",
@@ -526,7 +530,7 @@ const PatientHomeScreen = () => {
           title: conversation.title || "Care Team Chat",
         });
       } catch (err) {
-        console.log("[PATIENT_HOME] handleOpenCareTeamGroupChat error:", err);
+        devLog("handleOpenCareTeamGroupChat error:", err);
         Alert.alert(
           "Unable to open care team chat",
           "Something went wrong while opening the care team conversation.",
@@ -835,11 +839,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: theme.space.md,
-    marginTop: 12,
+    marginTop: theme.space.sm,
   },
 
   username: {
-    fontSize: theme.type.h1,
     fontWeight: "700",
     color: theme.colors.text,
   },
@@ -851,8 +854,8 @@ const styles = StyleSheet.create({
     marginBottom: theme.space.sm,
   },
   errorText: {
+    ...theme.type.subtext,
     color: theme.colors.dangerText,
-    fontSize: theme.type.small,
   },
 
   segmentWrap: {
@@ -866,7 +869,7 @@ const styles = StyleSheet.create({
   },
   segmentBtn: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: theme.space.xs,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -874,7 +877,6 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
   },
   segmentText: {
-    fontSize: 13,
     fontWeight: "700",
     color: theme.colors.text,
   },
@@ -885,62 +887,57 @@ const styles = StyleSheet.create({
   sectionHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 4,
+    marginBottom: theme.space.xs,
   },
   sectionTitle: {
-    fontSize: theme.type.h2,
-    fontWeight: "800",
-    color: theme.colors.text,
+    ...theme.type.h2,
   },
   sectionErrorText: {
-    fontSize: theme.type.small,
+    ...theme.type.subtext,
     color: theme.colors.dangerText,
-    marginBottom: 6,
+    marginBottom: theme.space.xs,
   },
 
   listContent: {
-    paddingBottom: 16,
+    paddingBottom: theme.space.sm,
   },
 
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingTop: 20,
+    paddingTop: theme.space.md,
   },
   loadingText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: theme.colors.subtext,
+    ...theme.type.subtext,
+    marginTop: theme.space.xs,
   },
 
   emptyInfo: {
-    marginTop: 12,
+    marginTop: theme.space.sm,
     padding: 16,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.infoBg,
   },
   emptyInfoTitle: {
-    fontSize: 16,
-    fontWeight: "700",
+    ...theme.type.h3,
     color: theme.colors.infoText,
-    marginBottom: 4,
+    marginBottom: theme.space.xs,
   },
   emptyInfoBody: {
-    fontSize: 13,
     color: "#4B5563",
   },
 
   readsSpinner: {
     position: "absolute",
-    right: 12,
-    bottom: 12,
+    right: theme.space.sm,
+    bottom: theme.space.sm,
     backgroundColor: theme.colors.card,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.pill,
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: theme.space.xs,
   },
 
   providerCard: {
@@ -984,39 +981,37 @@ const styles = StyleSheet.create({
 
   actionsRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: theme.space.xs,
     flexWrap: "wrap",
-    marginTop: 6,
+    marginTop: theme.space.xs,
   },
   primaryBtn: {
     alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.primary,
   },
   primaryBtnText: {
-    fontSize: 13,
     fontWeight: "800",
     color: theme.colors.primaryText,
   },
   secondaryBtn: {
     alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
     borderRadius: theme.radius.pill,
-    backgroundColor: "#1D4ED8",
+    backgroundColor: theme.colors.infoText,
   },
   secondaryBtnText: {
-    fontSize: 13,
     fontWeight: "800",
     color: theme.colors.primaryText,
   },
 
   disabledPill: {
     alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.border,
   },
@@ -1037,10 +1032,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.space.sm,
-    paddingVertical: 10,
+    paddingVertical: theme.space.xs,
     paddingHorizontal: 10,
     borderRadius: theme.radius.md,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: theme.colors.bg,
     marginBottom: 8,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
@@ -1069,7 +1064,6 @@ const styles = StyleSheet.create({
   },
 
   advocatesHeaderRowText: {
-    fontSize: 13,
     fontWeight: "800",
     color: theme.colors.text,
   },

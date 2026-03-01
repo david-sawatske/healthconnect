@@ -2,9 +2,13 @@ import React, { useState } from "react";
 import { View, Button, Alert, ActivityIndicator } from "react-native";
 import { post } from "aws-amplify/api";
 
+const devLog = (...args) => {
+  if (__DEV__) console.devLog("[ADMIN_HOME]", ...args);
+};
+
 export default function AdminHomeScreen() {
   const [loading, setLoading] = useState(false);
-  
+
   const seedBasic = async () => {
     setLoading(true);
     try {
@@ -16,8 +20,8 @@ export default function AdminHomeScreen() {
 
       const response = await op.response;
 
-      console.log("[ADMIN_SEED] status =", response.statusCode);
-      console.log("[ADMIN_SEED] headers =", response.headers);
+      devLog("status =", response.statusCode);
+      devLog("headers =", response.headers);
 
       const body = response.body;
 
@@ -33,13 +37,13 @@ export default function AdminHomeScreen() {
 
       Alert.alert("Seed complete", JSON.stringify(json, null, 2));
     } catch (e) {
-      console.log("[ADMIN_SEED] error =", e);
+      devLog("error =", e);
 
       try {
         const resp = await e?.response;
         if (resp?.body?.text) {
           const txt = await resp.body.text();
-          console.log("[ADMIN_SEED] error body =", txt);
+          devLog("error body =", txt);
         }
       } catch {}
 
