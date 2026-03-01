@@ -7,10 +7,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#F7F8FA"
     },
 
     "plugins": ["@config-plugins/react-native-webrtc"],
@@ -21,14 +22,22 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Video calls with your provider.",
         "NSMicrophoneUsageDescription": "Audio during video calls."
-      }
+      },
+      "bitcode": false
     },
 
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#2563EB"
       },
+
+      "splash": {
+        "image": "./assets/splash-icon.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#F7F8FA"
+      },
+
       "edgeToEdgeEnabled": true,
       "package": "com.anonymous.HealthConnect",
       "permissions": [
@@ -36,12 +45,22 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_CONNECT"
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.INTERNET",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK"
       ]
     },
 
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+
+    "extra": {
+      "eas": {
+        "projectId": "0921d27f-a9ff-453e-b512-5bb2d221d853"
+      }
     }
   }
 }
