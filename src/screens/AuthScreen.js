@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -6,6 +12,9 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  FlatList,
+  useWindowDimensions,
+  Image,
 } from "react-native";
 import { signIn, getCurrentUser } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/api";
@@ -53,6 +62,40 @@ const GET_USER = /* GraphQL */ `
 export default function AuthScreen({ navigation }) {
   const [checking, setChecking] = useState(true);
   const [loggingInRole, setLoggingInRole] = useState(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  const viewabilityConfig = useRef({
+    viewAreaCoveragePercentThreshold: 60,
+  }).current;
+
+  const onViewableItemsChanged = useRef(({ viewableItems }) => {
+    const i = viewableItems?.[0]?.index ?? 0;
+    setCurrentIndex(i);
+  }).current;
+
+  const { width: screenWidth } = useWindowDimensions();
+
+  const carouselCardWidth = useMemo(() => {
+    const maxW = 340;
+    const minW = 260;
+    const ideal = Math.round(screenWidth * 0.7);
+    return Math.max(minW, Math.min(maxW, ideal));
+  }, [screenWidth]);
+
+  const carouselGap = 10;
+  const snapInterval = carouselCardWidth + carouselGap;
+
+  const sidePadding = Math.max(0, (screenWidth - carouselCardWidth) / 2);
+
+  const roleAccent = useMemo(
+    () => ({
+      Patient: theme.colors.pillPatientText,
+      Provider: theme.colors.pillProviderText,
+      Advocate: theme.colors.pillAdvocateText,
+      Admin: theme.colors.primary,
+    }),
+    [],
+  );
 
   const availableDemoUsers = useMemo(() => {
     return DEMO_USERS.filter((u) => u.username && u.password);
@@ -79,17 +122,11 @@ export default function AuthScreen({ navigation }) {
 
       const role = (user.role || "").toUpperCase();
 
-      if (role === "PROVIDER") {
-        navigation.replace("ProviderHome");
-      } else if (role === "ADVOCATE") {
-        navigation.replace("AdvocateHome");
-      } else if (role === "PATIENT") {
-        navigation.replace("PatientHome");
-      } else if (role === "ADMIN") {
-        navigation.replace("AdminHome");
-      } else {
-        navigation.replace("Home");
-      }
+      if (role === "PROVIDER") navigation.replace("ProviderHome");
+      else if (role === "ADVOCATE") navigation.replace("AdvocateHome");
+      else if (role === "PATIENT") navigation.replace("PatientHome");
+      else if (role === "ADMIN") navigation.replace("AdminHome");
+      else navigation.replace("Home");
     } catch (err) {
       console.log("[AUTH] route error:", err);
       navigation.replace("Home");
@@ -147,12 +184,32 @@ export default function AuthScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>
-          {DEMO_LOGIN_ENABLED ? "Demo Login" : "Sign In"}
-        </Text>
+        <View style={styles.brandWrap}>
+          <Text style={styles.brandTitle}>HealthConnect</Text>
+          <Text style={styles.brandTagline}>
+            Coordinated care communication
+          </Text>
+        </View>
+
+        <View style={styles.logoWrap}>
+          <Image
+            source={require("../../assets/icon.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+        </View>
+
+        {DEMO_LOGIN_ENABLED ? (
+          <View style={styles.modePill}>
+            <Text style={styles.modePillText}>Demo Mode</Text>
+          </View>
+        ) : (
+          <Text style={styles.title}>Sign In</Text>
+        )}
+
         <Text style={styles.caption}>
           {DEMO_LOGIN_ENABLED
-            ? "Pre-seeded accounts for reviewer convenience."
+            ? "Choose a role to explore the app."
             : "Demo login is disabled."}
         </Text>
       </View>
@@ -171,44 +228,152 @@ export default function AuthScreen({ navigation }) {
               </Text>
             </View>
           ) : (
-            <View style={{ gap: theme.space.sm }}>
-              {availableDemoUsers.map((u) => {
-                const busy = loggingInRole === u.key;
-                const disabled = !!loggingInRole;
+            <View style={styles.carouselWrap}>
+              <FlatList
+                data={availableDemoUsers}
+                keyExtractor={(item) => item.key}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                ItemSeparatorComponent={() => (
+                  <View style={{ width: carouselGap }} />
+                )}
+                contentContainerStyle={{
+                  paddingHorizontal: sidePadding,
+                }}
+                snapToInterval={snapInterval}
+                snapToAlignment="start"
+                decelerationRate="fast"
+                bounces={false}
+                getItemLayout={(_, index) => ({
+                  length: snapInterval,
+                  offset: snapInterval * index,
+                  index,
+                })}
+                viewabilityConfig={viewabilityConfig}
+                onViewableItemsChanged={onViewableItemsChanged}
+                renderItem={({ item: u }) => {
+                  const busy = loggingInRole === u.key;
+                  const disabled = !!loggingInRole;
 
-                return (
-                  <TouchableOpacity
-                    key={u.key}
-                    style={[
-                      styles.roleCard,
-                      busy && { opacity: 0.65 },
-                      disabled && !busy && { opacity: 0.9 },
-                    ]}
-                    onPress={() => handleDemoLogin(u)}
-                    disabled={disabled}
-                    activeOpacity={0.85}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.roleName}>{u.key}</Text>
-                      <Text style={styles.roleMeta}>{String(u.username)}</Text>
-                    </View>
+                  return (
+                    <TouchableOpacity
+                      key={u.key}
+                      style={[
+                        styles.roleCard,
+                        { width: carouselCardWidth },
+                        busy && { opacity: 0.65 },
+                        disabled && !busy && { opacity: 0.9 },
+                      ]}
+                      onPress={() => handleDemoLogin(u)}
+                      disabled={disabled}
+                      activeOpacity={0.85}
+                    >
+                      <View
+                        style={[
+                          styles.roleAccent,
+                          {
+                            backgroundColor:
+                              roleAccent[u.key] || theme.colors.primary,
+                          },
+                        ]}
+                      />
 
-                    {busy ? (
-                      <ActivityIndicator />
-                    ) : (
-                      <Text style={styles.arrow}>›</Text>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+                      <View style={styles.cardContent}>
+                        <Text style={styles.roleName}>Explore as</Text>
+                        <View style={styles.rolePill}>
+                          <Text style={styles.rolePillText}>{u.key}</Text>
+                        </View>
+                        <Text style={styles.roleMeta}>
+                          {String(u.username)}
+                        </Text>
+
+                        <View style={{ marginTop: 10 }}>
+                          {u.key === "Patient" ? (
+                            <>
+                              <Text style={styles.bullet}>
+                                • Message your care team
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Share documents/photos
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Start video calls
+                              </Text>
+                            </>
+                          ) : null}
+
+                          {u.key === "Provider" ? (
+                            <>
+                              <Text style={styles.bullet}>
+                                • View patient list + details
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Chat + send attachments
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Join/host video calls
+                              </Text>
+                            </>
+                          ) : null}
+
+                          {u.key === "Advocate" ? (
+                            <>
+                              <Text style={styles.bullet}>
+                                • Coordinate across conversations
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Track updates in real time
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Support patients and providers
+                              </Text>
+                            </>
+                          ) : null}
+
+                          {u.key === "Admin" ? (
+                            <>
+                              <Text style={styles.bullet}>
+                                • Seed / reset demo data
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Validate role-based routing
+                              </Text>
+                              <Text style={styles.bullet}>
+                                • Inspect demo scenarios
+                              </Text>
+                            </>
+                          ) : null}
+                        </View>
+
+                        {busy ? (
+                          <View style={{ marginTop: theme.space.sm }}>
+                            <ActivityIndicator />
+                          </View>
+                        ) : null}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+
+              <View style={styles.dotsWrap}>
+                {availableDemoUsers.map((_, i) => (
+                  <View
+                    key={String(i)}
+                    style={[styles.dot, i === currentIndex && styles.dotActive]}
+                  />
+                ))}
+              </View>
             </View>
           )}
 
-          <Text style={styles.footerNote}>
-            {__DEV__
-              ? "Demo mode enabled (dev build)."
-              : "Demo mode enabled via EXPO_PUBLIC_DEMO_LOGIN=true."}
-          </Text>
+          <View style={styles.footerPill}>
+            <Text style={styles.footerNote}>
+              {__DEV__
+                ? "Demo mode enabled (dev build)."
+                : "Demo mode enabled via EXPO_PUBLIC_DEMO_LOGIN=true."}
+            </Text>
+          </View>
         </>
       ) : (
         <View style={styles.emptyCard}>
@@ -226,61 +391,159 @@ export default function AuthScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: theme.space.lg,
-    justifyContent: "center",
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
     backgroundColor: theme.colors.bg,
   },
-  center: { alignItems: "center" },
+  center: { alignItems: "center", justifyContent: "center" },
 
   header: {
+    paddingTop: theme.space.md,
     alignItems: "center",
     marginBottom: theme.space.lg,
-    gap: theme.space.xs,
   },
-  title: {
-    fontSize: theme.type.h1,
-    fontWeight: "700",
-    color: theme.colors.text,
+
+  brandWrap: {
+    alignItems: "center",
+    marginBottom: theme.space.sm,
+  },
+  brandTitle: {
+    ...theme.type.h1,
     textAlign: "center",
+  },
+  brandTagline: {
+    ...theme.type.subtext,
+    textAlign: "center",
+    marginTop: 4,
+  },
+
+  logoWrap: {
+    alignSelf: "center",
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    padding: theme.space.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadow.floating,
+    marginBottom: theme.space.md,
+  },
+  logo: {
+    width: 96,
+    height: 96,
+  },
+
+  modePill: {
+    alignSelf: "center",
+    backgroundColor: theme.colors.infoBg,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: theme.space.xs,
+  },
+  modePillText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.colors.infoText,
+    letterSpacing: 0.2,
+  },
+
+  title: {
+    ...theme.type.h2,
+    marginBottom: theme.space.xs,
   },
   caption: {
-    fontSize: theme.type.small,
-    color: theme.colors.subtext,
+    ...theme.type.subtext,
     textAlign: "center",
+  },
+
+  carouselWrap: {
+    marginTop: theme.space.sm,
+    marginBottom: theme.space.sm,
   },
 
   roleCard: {
-    borderRadius: theme.radius.md,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
+    position: "relative",
+    backgroundColor: theme.colors.card,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.space.sm,
+    borderRadius: theme.radius.lg,
+    padding: theme.space.md,
     ...theme.shadow.card,
+    overflow: "hidden",
   },
+
+  roleAccent: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+  },
+
+  rolePill: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    backgroundColor: theme.colors.pillInfoBg,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  rolePillText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.colors.pillInfoText,
+  },
+
+  cardContent: {
+    paddingTop: 18,
+  },
+
   roleName: {
-    fontSize: theme.type.body,
-    fontWeight: "700",
-    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.colors.muted,
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
   },
   roleMeta: {
-    marginTop: 2,
-    fontSize: theme.type.small,
-    color: theme.colors.subtext,
+    ...theme.type.small,
+    marginTop: 4,
+    marginBottom: 10,
   },
-  arrow: {
-    fontSize: 24,
+
+  bullet: {
+    ...theme.type.small,
     color: theme.colors.muted,
-    paddingHorizontal: 6,
+    lineHeight: 18,
+    marginTop: 6,
+  },
+
+  dotsWrap: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: theme.space.sm,
+    marginBottom: theme.space.md,
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: theme.colors.border,
+    marginHorizontal: 4,
+  },
+  dotActive: {
+    width: 18,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: theme.colors.primary,
   },
 
   subtle: {
     marginTop: theme.space.xs,
     color: theme.colors.subtext,
-    fontSize: theme.type.small,
+    fontSize: theme.type.small.fontSize,
   },
 
   emptyCard: {
@@ -288,18 +551,18 @@ const styles = StyleSheet.create({
     padding: theme.space.md,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.bg,
     ...theme.shadow.card,
   },
   emptyTitle: {
-    fontSize: theme.type.body,
+    fontSize: theme.type.body.fontSize,
     fontWeight: "700",
     color: theme.colors.text,
     marginBottom: theme.space.xs,
     textAlign: "center",
   },
   emptyText: {
-    fontSize: theme.type.small,
+    fontSize: theme.type.small.fontSize,
     color: theme.colors.subtext,
     textAlign: "center",
     lineHeight: 18,
@@ -309,10 +572,19 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
   },
 
-  footerNote: {
+  footerPill: {
+    alignSelf: "center",
     marginTop: theme.space.lg,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  footerNote: {
     textAlign: "center",
-    fontSize: theme.type.small,
+    fontSize: theme.type.small.fontSize,
     color: theme.colors.subtext,
   },
 });
