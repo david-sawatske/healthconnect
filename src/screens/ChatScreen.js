@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -21,6 +21,7 @@ import {
   bubbleStyleForRole,
   badgeStyleForRole,
 } from "../features/chat/chatUiHelpers";
+import { theme } from "../ui/theme";
 
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
@@ -28,7 +29,6 @@ export default function ChatScreen({ route, navigation }) {
 
   const conversationParam = route?.params?.conversation || null;
   const routeConversationId = route?.params?.conversationId || null;
-
   const conversationId = conversationParam?.id || routeConversationId || null;
 
   const myId = currentUser?.id || null;
@@ -54,84 +54,135 @@ export default function ChatScreen({ route, navigation }) {
 
   useEffect(() => {
     if (!conversationId) return;
-    console.log("[CHAT] user:", currentUser || null);
-    console.log("[CHAT] conversationId:", conversationId);
-  }, [conversationId, currentUser]);
-
-  useEffect(() => {
-    if (!conversationId) return;
     requestAnimationFrame(() =>
       listRef.current?.scrollToEnd?.({ animated: false }),
     );
   }, [conversationId]);
 
-  const renderItem = ({ item }) => {
-    const isSystem = item.type === "SYSTEM";
-    const mine = item.senderId === myId;
-    const role = roleForSender(item.senderId, item.type);
-    const name = nameForSender(item.senderId, item.type);
-
-    if (isSystem) {
-      return (
-        <View style={styles.systemRow}>
-          <Text style={styles.systemText}>{item.body}</Text>
-        </View>
-      );
-    }
-
-    return (
-      <View
-        style={bubbleStyleForRole(styles, {
-          isMine: mine,
-          role,
-          type: item.type,
-        })}
-      >
-        <View style={styles.headerRow}>
-          <Text style={styles.sender}>{name}</Text>
-          <Text
-            style={badgeStyleForRole(styles, {
-              role,
-              type: item.type,
-            })}
-          >
-            {role}
-          </Text>
-        </View>
-
-        {item.type === "TEXT" && !!item.body && (
-          <Text style={styles.body}>{item.body}</Text>
-        )}
-
-        {(item.type === "IMAGE" ||
-          item.type === "VIDEO" ||
-          item.type === "FILE") &&
-          !!item.mediaKey && (
-            <MediaBubble mediaKey={item.mediaKey} type={item.type} />
-          )}
-
-        <Text style={styles.meta}>
-          {new Date(item.createdAt ?? Date.now()).toLocaleTimeString()}
-        </Text>
-      </View>
-    );
-  };
-
-  const roleLabelMap = {
-    PATIENT: "Patient",
-    PROVIDER: "Provider",
-    ADVOCATE: "Advocate",
-    ADMIN: "Admin",
-  };
+  const roleLabelMap = useMemo(
+    () => ({
+      PATIENT: "Patient",
+      PROVIDER: "Provider",
+      ADVOCATE: "Advocate",
+      ADMIN: "Admin",
+    }),
+    [],
+  );
 
   const myDisplayName = currentUser?.displayName || "You";
   const myRoleLabel =
     roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Member";
 
+  const formatTime = useCallback((ts) => {
+    const d = new Date(ts ?? Date.now());
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }, []);
+
+  const formatDayLabel = useCallback((ts) => {
+    const date = new Date(ts ?? Date.now());
+
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    const sameDay = (a, b) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+
+    if (sameDay(date, today)) return "Today";
+    if (sameDay(date, yesterday)) return "Yesterday";
+
+    return date.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }, []);
+
+  const dayKey = (ts) => {
+    const d = new Date(ts ?? 0);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  };
+
+  const scrollToBottom = (animated = true) => {
+    requestAnimationFrame(() => listRef.current?.scrollToEnd?.({ animated }));
+  };
+
+  const renderItem = ({ item, index }) => {
+    const isSystem = item.type === "SYSTEM";
+    const mine = item.senderId === myId;
+    const role = roleForSender(item.senderId, item.type);
+    const name = nameForSender(item.senderId, item.type);
+
+    const prev = messages?.[index - 1] ?? null;
+
+    const itemDay = dayKey(item.createdAt);
+    const prevDay = prev ? dayKey(prev.createdAt) : null;
+
+    const showDateSeparator = !prev || prevDay !== itemDay;
+
+    return (
+      <>
+        {showDateSeparator && (
+          <View style={styles.dateSeparatorRow}>
+            <View style={styles.dateSeparator}>
+              <Text style={styles.dateSeparatorText}>
+                {formatDayLabel(item.createdAt)}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {isSystem ? (
+          <View style={styles.systemRow}>
+            <View style={styles.systemPill}>
+              <Text style={styles.systemText}>{item.body}</Text>
+            </View>
+          </View>
+        ) : (
+          <View
+            style={bubbleStyleForRole(styles, {
+              isMine: mine,
+              role,
+              type: item.type,
+            })}
+          >
+            <View style={styles.headerRow}>
+              <Text style={styles.sender}>{name}</Text>
+              <Text
+                style={badgeStyleForRole(styles, {
+                  role,
+                  type: item.type,
+                })}
+              >
+                {role}
+              </Text>
+            </View>
+
+            {item.type === "TEXT" && !!item.body && (
+              <Text style={styles.body}>{item.body}</Text>
+            )}
+
+            {(item.type === "IMAGE" ||
+              item.type === "VIDEO" ||
+              item.type === "FILE") &&
+              !!item.mediaKey && (
+                <MediaBubble mediaKey={item.mediaKey} type={item.type} />
+              )}
+
+            <Text style={styles.meta}>{formatTime(item.createdAt)}</Text>
+          </View>
+        )}
+      </>
+    );
+  };
+
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: "#fff" }}
+      style={styles.screen}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
       <View
         style={[
@@ -145,205 +196,322 @@ export default function ChatScreen({ route, navigation }) {
         </View>
       </View>
 
+      <View style={styles.divider} />
+
       <FlatList
         ref={listRef}
         data={messages}
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
-        contentContainerStyle={{ padding: 12, paddingTop: 4 }}
-        onContentSizeChange={() =>
-          listRef.current?.scrollToEnd?.({ animated: true })
-        }
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        onContentSizeChange={() => scrollToBottom(true)}
       />
 
       <View
         style={[
-          styles.inputRow,
+          styles.inputWrap,
           {
-            paddingBottom: Math.max(12, insets.bottom || 0),
-            backgroundColor: "#fff",
+            paddingBottom: Math.max(theme.space.sm, insets.bottom || 0),
           },
         ]}
       >
-        <TouchableOpacity
-          accessibilityLabel="Start a video call"
-          style={styles.call}
-          onPress={() =>
-            navigation?.navigate?.("Call", {
-              conversation: conversationParam || {
-                id: conversationId,
-                memberIds,
-              },
-            })
-          }
-        >
-          <Text style={styles.callIcon}>📞</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.attach}
-          onPress={async () => {
-            try {
-              await attach();
-              requestAnimationFrame(() =>
-                listRef.current?.scrollToEnd?.({ animated: true }),
-              );
-            } catch (e) {
-              console.log("[CHAT] attach error:", e);
-              Alert.alert("Upload failed", "Could not upload attachment.");
+        <View style={styles.inputRow}>
+          <TouchableOpacity
+            accessibilityLabel="Start a video call"
+            style={[
+              styles.iconBtnCall,
+              (!conversationId || !myId) && styles.iconBtnDisabled,
+            ]}
+            disabled={!conversationId || !myId}
+            onPress={() =>
+              navigation?.navigate?.("Call", {
+                conversation: conversationParam || {
+                  id: conversationId,
+                  memberIds,
+                },
+              })
             }
-          }}
-        >
-          <Text style={styles.attachIcon}>+</Text>
-        </TouchableOpacity>
+          >
+            <Text style={styles.iconBtnText}>📞</Text>
+          </TouchableOpacity>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Type a message…"
-          value={text}
-          onChangeText={setText}
-          onSubmitEditing={async () => {
-            try {
-              await send();
-              requestAnimationFrame(() =>
-                listRef.current?.scrollToEnd?.({ animated: true }),
-              );
-            } catch {
-              Alert.alert("Error", "Failed to send message.");
-            }
-          }}
-          returnKeyType="send"
-        />
+          <TouchableOpacity
+            accessibilityLabel="Attach media"
+            style={styles.iconBtn}
+            onPress={async () => {
+              try {
+                await attach();
+                scrollToBottom(true);
+              } catch (e) {
+                console.log("[CHAT] attach error:", e);
+                Alert.alert("Upload failed", "Could not upload attachment.");
+              }
+            }}
+          >
+            <Text style={styles.iconBtnText}>＋</Text>
+          </TouchableOpacity>
 
-        <Button
-          title={sending ? "Sending…" : "Send"}
-          onPress={async () => {
-            try {
-              await send();
-              requestAnimationFrame(() =>
-                listRef.current?.scrollToEnd?.({ animated: true }),
-              );
-            } catch {
-              Alert.alert("Error", "Failed to send message.");
-            }
-          }}
-          disabled={!text.trim() || sending || !myId}
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Type a message…"
+            placeholderTextColor={theme.colors.subtext}
+            value={text}
+            onChangeText={setText}
+            onSubmitEditing={async () => {
+              try {
+                await send();
+                scrollToBottom(true);
+              } catch {
+                Alert.alert("Error", "Failed to send message.");
+              }
+            }}
+            returnKeyType="send"
+          />
+
+          <View style={styles.sendBtnWrap}>
+            <Button
+              title={sending ? "Sending…" : "Send"}
+              onPress={async () => {
+                try {
+                  await send();
+                  scrollToBottom(true);
+                } catch {
+                  Alert.alert("Error", "Failed to send message.");
+                }
+              }}
+              disabled={!text.trim() || sending || !myId}
+              color={theme.colors.primary}
+            />
+          </View>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: theme.colors.bg },
+
+  divider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+
+  listContent: {
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+    paddingBottom: theme.space.sm,
+  },
+
+  dateSeparatorRow: {
+    alignItems: "center",
+    marginTop: theme.space.sm,
+    marginBottom: theme.space.xs,
+  },
+  dateSeparator: {
+    backgroundColor: theme.colors.disabledBg,
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: theme.radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+  dateSeparatorText: {
+    ...theme.type.small,
+    color: theme.colors.muted,
+    fontWeight: "600",
+  },
+
   bubble: {
     maxWidth: "85%",
-    padding: 10,
-    borderRadius: 12,
+    padding: theme.space.xs + 2,
+    borderRadius: theme.radius.md,
     marginVertical: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
-  mine: { alignSelf: "flex-end", backgroundColor: "#e8e8e8" },
-  theirs: { alignSelf: "flex-start", backgroundColor: "#EEE" },
-  patient: { alignSelf: "flex-start", backgroundColor: "#ffe6e6" },
-  provider: { alignSelf: "flex-start", backgroundColor: "#e6f0ff" },
-  advocate: { alignSelf: "flex-start", backgroundColor: "#e6ffef" },
+
+  mine: {
+    alignSelf: "flex-end",
+    backgroundColor: theme.colors.infoBg,
+    borderColor: theme.colors.border,
+  },
+  theirs: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.card,
+    borderColor: theme.colors.border,
+  },
+  patient: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.pillPatientBg,
+    borderColor: theme.colors.border,
+  },
+  provider: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.providerBg,
+    borderColor: theme.colors.border,
+  },
+  advocate: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.advocateBg,
+    borderColor: theme.colors.border,
+  },
 
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginBottom: 2,
+    marginBottom: 4,
   },
-  sender: { fontSize: 12, fontWeight: "600", opacity: 0.9 },
+  sender: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.colors.muted,
+  },
+
   badge: {
     fontSize: 10,
     paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 999,
+    borderRadius: theme.radius.pill,
     overflow: "hidden",
+    color: theme.colors.text,
   },
-  badgePatient: { backgroundColor: "#ffb3b3" },
-  badgeProvider: { backgroundColor: "#b3ccff" },
-  badgeAdvocate: { backgroundColor: "#bff5ce" },
-  badgeOther: { backgroundColor: "#ddd" },
+  badgePatient: {
+    backgroundColor: theme.colors.pillPatientBg,
+    color: theme.colors.pillPatientText,
+  },
+  badgeProvider: {
+    backgroundColor: theme.colors.pillProviderBg,
+    color: theme.colors.pillProviderText,
+  },
+  badgeAdvocate: {
+    backgroundColor: theme.colors.pillAdvocateBg,
+    color: theme.colors.pillAdvocateText,
+  },
+  badgeOther: {
+    backgroundColor: theme.colors.disabledBg,
+    color: theme.colors.disabledText,
+  },
 
-  body: { fontSize: 16 },
-  meta: { fontSize: 11, opacity: 0.7, marginTop: 4, textAlign: "right" },
+  body: {
+    ...theme.type.body,
+    color: theme.colors.text,
+  },
+  meta: {
+    ...theme.type.small,
+    color: theme.colors.subtext,
+    marginTop: 6,
+    textAlign: "right",
+  },
 
-  systemRow: { alignSelf: "center", marginVertical: 6, maxWidth: "90%" },
-  system: {
+  systemRow: {
     alignSelf: "center",
-    backgroundColor: "transparent",
-    paddingVertical: 2,
+    marginVertical: 8,
+    maxWidth: "92%",
   },
-  badgeSystem: { backgroundColor: "#eee" },
-  systemText: { fontSize: 12, opacity: 0.7, textAlign: "center" },
+  systemPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.infoBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+  systemText: {
+    ...theme.type.small,
+    color: theme.colors.infoText,
+    textAlign: "center",
+  },
 
   mePillRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
-    paddingBottom: 4,
+    paddingHorizontal: theme.space.sm,
+    paddingBottom: theme.space.xs,
     gap: 8,
-    backgroundColor: "#fff",
+    backgroundColor: theme.colors.bg,
   },
   mePillName: {
-    fontSize: 14,
+    ...theme.type.subtext,
     fontWeight: "600",
-    color: "#111827",
+    color: theme.colors.text,
   },
   mePillRole: {
     paddingHorizontal: 10,
     paddingVertical: 2,
-    borderRadius: 999,
-    backgroundColor: "#E5E7EB",
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.disabledBg,
   },
   mePillRoleText: {
     fontSize: 11,
-    fontWeight: "500",
-    color: "#374151",
+    fontWeight: "600",
+    color: theme.colors.muted,
   },
 
+  inputWrap: {
+    backgroundColor: theme.colors.bg,
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    padding: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ddd",
-  },
-  input: {
-    flex: 1,
-    padding: 10,
+    gap: 10,
+    padding: theme.space.xs,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.card,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ccc",
-    borderRadius: 10,
-  },
-  attach: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ccc",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fafafa",
-    marginRight: 8,
-  },
-  attachIcon: {
-    fontSize: 20,
-    fontWeight: "700",
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
   },
 
-  call: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.radius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ccc",
+    borderColor: theme.colors.border,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#e8fff0",
-    marginRight: 6,
+    backgroundColor: theme.colors.bg,
   },
-  callIcon: { fontSize: 18, fontWeight: "700" },
+  iconBtnCall: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.successBg,
+  },
+  iconBtnDisabled: {
+    opacity: 0.45,
+  },
+  iconBtnText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+
+  input: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.bg,
+    color: theme.colors.text,
+  },
+
+  sendBtnWrap: {
+    borderRadius: theme.radius.md,
+    overflow: "hidden",
+  },
 });
