@@ -24,71 +24,71 @@ const client = generateClient();
 const log = (...args) => console.log("[PATIENT_DETAIL]", ...args);
 
 const LIST_ADVOCATE_USERS = /* GraphQL */ `
-    query ListAdvocateUsers {
-        listUsers(filter: { role: { eq: ADVOCATE } }) {
-            items {
-                id
-                displayName
-                email
-                role
-            }
-        }
+  query ListAdvocateUsers {
+    listUsers(filter: { role: { eq: ADVOCATE } }) {
+      items {
+        id
+        displayName
+        email
+        role
+      }
     }
+  }
 `;
 
 const LIST_ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
-    query ListAdvocateAssignmentsForPatient($patientId: ID!) {
-        listAdvocateAssignments(filter: { patientId: { eq: $patientId } }) {
-            items {
-                id
-                patientId
-                providerId
-                advocateId
-                active
-                createdAt
-                updatedAt
-            }
-        }
+  query ListAdvocateAssignmentsForPatient($patientId: ID!) {
+    listAdvocateAssignments(filter: { patientId: { eq: $patientId } }) {
+      items {
+        id
+        patientId
+        providerId
+        advocateId
+        active
+        createdAt
+        updatedAt
+      }
     }
+  }
 `;
 
 const CREATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
-    mutation CreateAdvocateAssignment($input: CreateAdvocateAssignmentInput!) {
-        createAdvocateAssignment(input: $input) {
-            id
-            patientId
-            providerId
-            advocateId
-            active
-            createdAt
-            updatedAt
-        }
+  mutation CreateAdvocateAssignment($input: CreateAdvocateAssignmentInput!) {
+    createAdvocateAssignment(input: $input) {
+      id
+      patientId
+      providerId
+      advocateId
+      active
+      createdAt
+      updatedAt
     }
+  }
 `;
 
 const UPDATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
-    mutation UpdateAdvocateAssignment($input: UpdateAdvocateAssignmentInput!) {
-        updateAdvocateAssignment(input: $input) {
-            id
-            patientId
-            providerId
-            advocateId
-            active
-            createdAt
-            updatedAt
-        }
+  mutation UpdateAdvocateAssignment($input: UpdateAdvocateAssignmentInput!) {
+    updateAdvocateAssignment(input: $input) {
+      id
+      patientId
+      providerId
+      advocateId
+      active
+      createdAt
+      updatedAt
     }
+  }
 `;
 
 const GET_USER = /* GraphQL */ `
-    query GetUser($id: ID!) {
-        getUser(id: $id) {
-            id
-            displayName
-            role
-            email
-        }
+  query GetUser($id: ID!) {
+    getUser(id: $id) {
+      id
+      displayName
+      role
+      email
     }
+  }
 `;
 
 async function safeGql({ query, variables = {}, label }) {
@@ -831,13 +831,13 @@ const PatientDetailScreen = () => {
 };
 
 const AdvocatePickerModal = ({
-                               visible,
-                               onClose,
-                               advocates,
-                               loading,
-                               onSelect,
-                               existingAssignments = [],
-                             }) => {
+  visible,
+  onClose,
+  advocates,
+  loading,
+  onSelect,
+  existingAssignments = [],
+}) => {
   const [selectedAdvocateId, setSelectedAdvocateId] = useState(null);
 
   useEffect(() => {
@@ -988,7 +988,11 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.disabledBg,
   },
-  heroLoadingText: { fontSize: 12, color: theme.colors.muted, fontWeight: "700" },
+  heroLoadingText: {
+    fontSize: 12,
+    color: theme.colors.muted,
+    fontWeight: "700",
+  },
 
   heroActionsGrid: { marginTop: theme.space.sm, gap: 10 },
 
@@ -1067,7 +1071,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
-  manageMsgBtnText: { fontSize: 12, fontWeight: "800", color: theme.colors.infoText },
+  manageMsgBtnText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.infoText,
+  },
 
   manageRemoveBtn: {
     paddingHorizontal: 12,
@@ -1091,7 +1099,11 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
-  manageEmptyTitle: { fontSize: 13, fontWeight: "800", color: theme.colors.text },
+  manageEmptyTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
   manageEmptyBody: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
   managePrimaryCta: {
     marginTop: 10,
@@ -1186,9 +1198,22 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
   },
   advocateRowDisabled: { opacity: 0.45 },
-  advocateName: { flex: 1, fontSize: 14, color: theme.colors.text, fontWeight: "700" },
-  advocateStatusText: { fontSize: 12, color: theme.colors.subtext, marginTop: 2 },
-  advocateSelectedMark: { fontSize: 16, fontWeight: "800", color: theme.colors.primary },
+  advocateName: {
+    flex: 1,
+    fontSize: 14,
+    color: theme.colors.text,
+    fontWeight: "700",
+  },
+  advocateStatusText: {
+    fontSize: 12,
+    color: theme.colors.subtext,
+    marginTop: 2,
+  },
+  advocateSelectedMark: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: theme.colors.primary,
+  },
 });
 
 export default PatientDetailScreen;
