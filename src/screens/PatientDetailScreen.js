@@ -17,77 +17,78 @@ import {
   ensureDirectConversation,
   ensureCareTeamConversation,
 } from "../features/chat/conversationService";
+import { theme } from "../ui/theme";
 
 const client = generateClient();
 
 const log = (...args) => console.log("[PATIENT_DETAIL]", ...args);
 
 const LIST_ADVOCATE_USERS = /* GraphQL */ `
-  query ListAdvocateUsers {
-    listUsers(filter: { role: { eq: ADVOCATE } }) {
-      items {
-        id
-        displayName
-        email
-        role
-      }
+    query ListAdvocateUsers {
+        listUsers(filter: { role: { eq: ADVOCATE } }) {
+            items {
+                id
+                displayName
+                email
+                role
+            }
+        }
     }
-  }
 `;
 
 const LIST_ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
-  query ListAdvocateAssignmentsForPatient($patientId: ID!) {
-    listAdvocateAssignments(filter: { patientId: { eq: $patientId } }) {
-      items {
-        id
-        patientId
-        providerId
-        advocateId
-        active
-        createdAt
-        updatedAt
-      }
+    query ListAdvocateAssignmentsForPatient($patientId: ID!) {
+        listAdvocateAssignments(filter: { patientId: { eq: $patientId } }) {
+            items {
+                id
+                patientId
+                providerId
+                advocateId
+                active
+                createdAt
+                updatedAt
+            }
+        }
     }
-  }
 `;
 
 const CREATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
-  mutation CreateAdvocateAssignment($input: CreateAdvocateAssignmentInput!) {
-    createAdvocateAssignment(input: $input) {
-      id
-      patientId
-      providerId
-      advocateId
-      active
-      createdAt
-      updatedAt
+    mutation CreateAdvocateAssignment($input: CreateAdvocateAssignmentInput!) {
+        createAdvocateAssignment(input: $input) {
+            id
+            patientId
+            providerId
+            advocateId
+            active
+            createdAt
+            updatedAt
+        }
     }
-  }
 `;
 
 const UPDATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
-  mutation UpdateAdvocateAssignment($input: UpdateAdvocateAssignmentInput!) {
-    updateAdvocateAssignment(input: $input) {
-      id
-      patientId
-      providerId
-      advocateId
-      active
-      createdAt
-      updatedAt
+    mutation UpdateAdvocateAssignment($input: UpdateAdvocateAssignmentInput!) {
+        updateAdvocateAssignment(input: $input) {
+            id
+            patientId
+            providerId
+            advocateId
+            active
+            createdAt
+            updatedAt
+        }
     }
-  }
 `;
 
 const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
+    query GetUser($id: ID!) {
+        getUser(id: $id) {
+            id
+            displayName
+            role
+            email
+        }
     }
-  }
 `;
 
 async function safeGql({ query, variables = {}, label }) {
@@ -709,7 +710,12 @@ const PatientDetailScreen = () => {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View
+      style={[
+        styles.container,
+        { paddingTop: insets.top, paddingBottom: insets.bottom || 0 },
+      ]}
+    >
       <View style={styles.topBar}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -739,6 +745,7 @@ const PatientDetailScreen = () => {
               </View>
             ) : null}
           </View>
+
           <View style={styles.heroActionsGrid}>
             <HeroActionButton
               variant="primary"
@@ -771,6 +778,7 @@ const PatientDetailScreen = () => {
               }
               disabled={!viewerId || !patientId || loadingCurrentUser}
             />
+
             {isAdvocateView && effectiveProviderId ? (
               <HeroActionButton
                 variant="secondary"
@@ -823,13 +831,13 @@ const PatientDetailScreen = () => {
 };
 
 const AdvocatePickerModal = ({
-  visible,
-  onClose,
-  advocates,
-  loading,
-  onSelect,
-  existingAssignments = [],
-}) => {
+                               visible,
+                               onClose,
+                               advocates,
+                               loading,
+                               onSelect,
+                               existingAssignments = [],
+                             }) => {
   const [selectedAdvocateId, setSelectedAdvocateId] = useState(null);
 
   useEffect(() => {
@@ -874,7 +882,7 @@ const AdvocatePickerModal = ({
         }}
       >
         <View style={{ flex: 1 }}>
-          <Text style={styles.advocateName}>
+          <Text style={styles.advocateName} numberOfLines={1}>
             {item.displayName || item.email || "Unnamed Advocate"}
           </Text>
           {isAssigned && (
@@ -904,7 +912,8 @@ const AdvocatePickerModal = ({
               data={advocates}
               keyExtractor={(item) => item.id}
               renderItem={renderItem}
-              style={{ maxHeight: 260, width: "100%" }}
+              style={{ maxHeight: 320, width: "100%" }}
+              keyboardShouldPersistTaps="handled"
             />
           )}
 
@@ -926,39 +935,41 @@ const AdvocatePickerModal = ({
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F4F5F7" },
+  container: { flex: 1, backgroundColor: theme.colors.bg },
 
   topBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
-    paddingBottom: 10,
+    paddingHorizontal: theme.space.sm,
+    paddingBottom: theme.space.xs,
     gap: 10,
   },
   backBtn: {
     width: 40,
     height: 36,
-    borderRadius: 10,
-    backgroundColor: "#FFFFFF",
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.card,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
   },
-  backText: { fontSize: 18, fontWeight: "700", color: "#111827" },
+  backText: { fontSize: 18, fontWeight: "800", color: theme.colors.text },
 
   topBarTitleWrap: { flex: 1 },
-  topBarTitle: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  topBarTitle: { ...theme.type.h2, fontSize: 18 },
 
-  content: { flex: 1, paddingHorizontal: 16, paddingTop: 6 },
+  content: { flex: 1, paddingHorizontal: theme.space.sm, paddingTop: 6 },
 
   heroCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 14,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    padding: theme.space.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-    marginBottom: 12,
+    borderColor: theme.colors.border,
+    marginBottom: theme.space.sm,
+    ...theme.shadow.card,
   },
   heroHeaderRow: {
     flexDirection: "row",
@@ -966,7 +977,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
   },
-  heroTitle: { fontSize: 16, fontWeight: "800", color: "#111827" },
+  heroTitle: { ...theme.type.h3, fontSize: 16, fontWeight: "800" },
 
   heroLoadingPill: {
     flexDirection: "row",
@@ -974,34 +985,43 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#F1F5F9",
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.disabledBg,
   },
-  heroLoadingText: { fontSize: 12, color: "#334155", fontWeight: "600" },
+  heroLoadingText: { fontSize: 12, color: theme.colors.muted, fontWeight: "700" },
 
-  heroActionsGrid: { marginTop: 12, gap: 10 },
+  heroActionsGrid: { marginTop: theme.space.sm, gap: 10 },
 
   heroBtn: {
     paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 14,
+    borderRadius: theme.radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  heroBtnPrimary: { backgroundColor: "#1D4ED8", borderColor: "#1D4ED8" },
-  heroBtnSecondary: { backgroundColor: "#FFFFFF", borderColor: "#CBD5E1" },
-  heroBtnGhost: { backgroundColor: "#F8FAFC", borderColor: "#E2E8F0" },
+  heroBtnPrimary: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  heroBtnSecondary: {
+    backgroundColor: theme.colors.card,
+    borderColor: theme.colors.border,
+  },
+  heroBtnGhost: {
+    backgroundColor: theme.colors.bg,
+    borderColor: theme.colors.border,
+  },
   heroBtnDisabled: { opacity: 0.6 },
 
-  heroBtnTitle: { fontSize: 14, fontWeight: "800", color: "#111827" },
-  heroBtnSub: { marginTop: 3, fontSize: 12, color: "#64748B" },
-  heroBtnTitleOnPrimary: { color: "#FFFFFF" },
-  heroBtnSubOnPrimary: { color: "#DBEAFE" },
+  heroBtnTitle: { fontSize: 14, fontWeight: "800", color: theme.colors.text },
+  heroBtnSub: { marginTop: 3, fontSize: 12, color: theme.colors.subtext },
+  heroBtnTitleOnPrimary: { color: theme.colors.primaryText },
+  heroBtnSubOnPrimary: { color: theme.colors.infoBg },
 
   managePanel: {
-    marginTop: 12,
-    paddingTop: 12,
+    marginTop: theme.space.sm,
+    paddingTop: theme.space.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E5E7EB",
+    borderTopColor: theme.colors.border,
   },
   manageHeaderRow: {
     flexDirection: "row",
@@ -1009,16 +1029,16 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
   },
-  manageTitle: { fontSize: 14, fontWeight: "800", color: "#0F172A" },
-  manageHint: { marginTop: 4, fontSize: 12, color: "#64748B" },
+  manageTitle: { ...theme.type.h3, fontSize: 14, fontWeight: "800" },
+  manageHint: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
 
   manageRow: {
     marginTop: 10,
     padding: 12,
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.card,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
+    borderColor: theme.colors.border,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -1032,106 +1052,119 @@ const styles = StyleSheet.create({
   manageName: {
     fontSize: 14,
     fontWeight: "800",
-    color: "#111827",
+    color: theme.colors.text,
     flex: 1,
     paddingRight: 6,
   },
-  manageSub: { marginTop: 4, fontSize: 12, color: "#64748B" },
+  manageSub: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
 
   manageActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   manageMsgBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#EFF6FF",
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.infoBg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#BFDBFE",
+    borderColor: theme.colors.border,
   },
-  manageMsgBtnText: { fontSize: 12, fontWeight: "800", color: "#1D4ED8" },
+  manageMsgBtnText: { fontSize: 12, fontWeight: "800", color: theme.colors.infoText },
 
   manageRemoveBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: theme.radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#FECACA",
-    backgroundColor: "#FEF2F2",
+    borderColor: theme.colors.dangerBg,
+    backgroundColor: theme.colors.dangerBg,
   },
-  manageRemoveBtnText: { fontSize: 12, fontWeight: "800", color: "#B91C1C" },
+  manageRemoveBtnText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.dangerText,
+  },
 
   manageEmptyBox: {
     marginTop: 10,
     padding: 12,
-    borderRadius: 14,
-    backgroundColor: "#F8FAFC",
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.bg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E2E8F0",
+    borderColor: theme.colors.border,
   },
-  manageEmptyTitle: { fontSize: 13, fontWeight: "800", color: "#0F172A" },
-  manageEmptyBody: { marginTop: 4, fontSize: 12, color: "#64748B" },
+  manageEmptyTitle: { fontSize: 13, fontWeight: "800", color: theme.colors.text },
+  manageEmptyBody: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
   managePrimaryCta: {
     marginTop: 10,
     alignSelf: "flex-start",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#1D4ED8",
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.primary,
   },
-  managePrimaryCtaText: { fontSize: 12, fontWeight: "800", color: "#FFFFFF" },
+  managePrimaryCtaText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.primaryText,
+  },
 
   manageAssignBtnBelow: {
     marginTop: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 14,
-    backgroundColor: "#1D4ED8",
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.primary,
     alignItems: "center",
   },
   manageAssignBtnBelowText: {
     fontSize: 12,
     fontWeight: "800",
-    color: "#FFFFFF",
+    color: theme.colors.primaryText,
   },
 
-  cardText: { fontSize: 14, marginBottom: 4 },
+  cardText: { ...theme.type.body, marginBottom: 4 },
 
   primaryButton: {
     marginTop: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
-    borderRadius: 999,
+    borderRadius: theme.radius.pill,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#2563EB",
+    backgroundColor: theme.colors.primary,
   },
-  primaryButtonText: { color: "#FFFFFF", fontWeight: "600" },
+  primaryButtonText: { color: theme.colors.primaryText, fontWeight: "700" },
+
   secondaryButton: {
     marginTop: 8,
     paddingVertical: 10,
     paddingHorizontal: 16,
-    borderRadius: 999,
+    borderRadius: theme.radius.pill,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    backgroundColor: "#FFFFFF",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
-  secondaryButtonText: { fontWeight: "500" },
+  secondaryButtonText: { fontWeight: "700", color: theme.colors.text },
 
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.5)",
+    backgroundColor: theme.colors.overlay,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
   },
   modalContent: {
     width: "100%",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    padding: theme.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    ...theme.shadow.floating,
   },
-  modalTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
+  modalTitle: { ...theme.type.h3, marginBottom: 8 },
+
   modalButtons: {
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -1143,14 +1176,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    borderRadius: theme.radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "transparent",
   },
-  advocateRowSelected: { backgroundColor: "#DBEAFE" },
-  advocateRowDisabled: { opacity: 0.4 },
-  advocateName: { flex: 1, fontSize: 14 },
-  advocateStatusText: { fontSize: 12, color: "#64748B", marginTop: 2 },
-  advocateSelectedMark: { fontSize: 16, fontWeight: "700" },
+  advocateRowSelected: {
+    backgroundColor: theme.colors.providerBg,
+    borderColor: theme.colors.border,
+  },
+  advocateRowDisabled: { opacity: 0.45 },
+  advocateName: { flex: 1, fontSize: 14, color: theme.colors.text, fontWeight: "700" },
+  advocateStatusText: { fontSize: 12, color: theme.colors.subtext, marginTop: 2 },
+  advocateSelectedMark: { fontSize: 16, fontWeight: "800", color: theme.colors.primary },
 });
 
 export default PatientDetailScreen;
