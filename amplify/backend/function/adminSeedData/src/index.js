@@ -211,6 +211,22 @@ exports.handler = async (event) => {
       TABLE_ADVOCATE_ASSIGNMENT,
     );
 
+    const CARE_TEAM_ID = (pId, prId) => `CARE_TEAM:${pId}:${prId}`;
+    const DM_ID = (a, b) => {
+      const [minId, maxId] = [a, b].sort();
+      return `DM:${minId}:${maxId}`;
+    };
+
+    const careTeam1Id = CARE_TEAM_ID(patientId, providerId);
+    const careTeam2Id = CARE_TEAM_ID(patient2Id, providerId);
+    const careTeam3Id = CARE_TEAM_ID(patient3Id, providerId);
+
+    const dmPatientProviderId = DM_ID(patientId, providerId);
+    const dmPatientAdvocateId = DM_ID(patientId, advocateId);
+    const dmP2ProviderId = DM_ID(patient2Id, providerId);
+    const dmP3ProviderId = DM_ID(patient3Id, providerId);
+    const dmP2Advocate1Id = DM_ID(patient2Id, advocateId);
+
     const seedPlan = {
       users: [
         withModelTimestamps({
@@ -348,7 +364,7 @@ exports.handler = async (event) => {
         });
 
       const convCareTeam = conv({
-        id: "demo-care-team-conv",
+        id: careTeam1Id,
         title: "Care Team Chat",
         isGroup: true,
         createdBy: providerId,
@@ -358,7 +374,7 @@ exports.handler = async (event) => {
       });
 
       const convPatientProvider = conv({
-        id: "demo-patient-provider-conv",
+        id: dmPatientProviderId,
         title: null,
         isGroup: false,
         createdBy: patientId,
@@ -368,7 +384,7 @@ exports.handler = async (event) => {
       });
 
       const convPatientAdvocate = conv({
-        id: "demo-patient-advocate-conv",
+        id: dmPatientAdvocateId,
         title: null,
         isGroup: false,
         createdBy: advocateId,
@@ -378,7 +394,7 @@ exports.handler = async (event) => {
       });
 
       const convCareTeam2 = conv({
-        id: "demo-care-team-2",
+        id: careTeam2Id,
         title: "Care Team — Morgan",
         isGroup: true,
         createdBy: providerId,
@@ -388,7 +404,7 @@ exports.handler = async (event) => {
       });
 
       const convCareTeam3 = conv({
-        id: "demo-care-team-3",
+        id: careTeam3Id,
         title: "Care Team — Taylor",
         isGroup: true,
         createdBy: providerId,
@@ -398,7 +414,7 @@ exports.handler = async (event) => {
       });
 
       const convP2Provider = conv({
-        id: "demo-p2-provider",
+        id: dmP2ProviderId,
         title: null,
         isGroup: false,
         createdBy: patient2Id,
@@ -408,7 +424,7 @@ exports.handler = async (event) => {
       });
 
       const convP3Provider = conv({
-        id: "demo-p3-provider",
+        id: dmP3ProviderId,
         title: null,
         isGroup: false,
         createdBy: providerId,
@@ -418,7 +434,7 @@ exports.handler = async (event) => {
       });
 
       const convP2Advocate1 = conv({
-        id: "demo-p2-advocate1",
+        id: dmP2Advocate1Id,
         title: null,
         isGroup: false,
         createdBy: advocateId,
@@ -498,17 +514,14 @@ exports.handler = async (event) => {
       );
 
     seedPlan.participants = [
-      ...participantsForConversation(
-        seedPlan.conversations.byId["demo-care-team-conv"],
-        {
-          [patientId]: minutesAgo(20),
-          [providerId]: minutesAgo(5),
-          [advocateId]: minutesAgo(10),
-        },
-      ),
+      ...participantsForConversation(seedPlan.conversations.byId[careTeam1Id], {
+        [patientId]: minutesAgo(20),
+        [providerId]: minutesAgo(5),
+        [advocateId]: minutesAgo(10),
+      }),
 
       ...participantsForConversation(
-        seedPlan.conversations.byId["demo-patient-provider-conv"],
+        seedPlan.conversations.byId[dmPatientProviderId],
         {
           [patientId]: minutesAgo(55),
           [providerId]: minutesAgo(55),
@@ -516,32 +529,26 @@ exports.handler = async (event) => {
       ),
 
       ...participantsForConversation(
-        seedPlan.conversations.byId["demo-patient-advocate-conv"],
+        seedPlan.conversations.byId[dmPatientAdvocateId],
         {
           [patientId]: minutesAgo(12),
           [advocateId]: minutesAgo(30),
         },
       ),
 
-      ...participantsForConversation(
-        seedPlan.conversations.byId["demo-care-team-2"],
-        {
-          [providerId]: minutesAgo(40),
-          [advocate2Id]: minutesAgo(120),
-        },
-      ),
+      ...participantsForConversation(seedPlan.conversations.byId[careTeam2Id], {
+        [providerId]: minutesAgo(40),
+        [advocate2Id]: minutesAgo(120),
+      }),
+
+      ...participantsForConversation(seedPlan.conversations.byId[careTeam3Id], {
+        [providerId]: minutesAgo(300),
+        [advocate2Id]: minutesAgo(90),
+        [patient3Id]: minutesAgo(95),
+      }),
 
       ...participantsForConversation(
-        seedPlan.conversations.byId["demo-care-team-3"],
-        {
-          [providerId]: minutesAgo(300),
-          [advocate2Id]: minutesAgo(90),
-          [patient3Id]: minutesAgo(95),
-        },
-      ),
-
-      ...participantsForConversation(
-        seedPlan.conversations.byId["demo-p2-provider"],
+        seedPlan.conversations.byId[dmP2ProviderId],
         {
           [patient2Id]: minutesAgo(65),
           [providerId]: minutesAgo(200),
@@ -549,7 +556,7 @@ exports.handler = async (event) => {
       ),
 
       ...participantsForConversation(
-        seedPlan.conversations.byId["demo-p3-provider"],
+        seedPlan.conversations.byId[dmP3ProviderId],
         {
           [patient3Id]: minutesAgo(180),
           [providerId]: minutesAgo(180),
@@ -557,7 +564,7 @@ exports.handler = async (event) => {
       ),
 
       ...participantsForConversation(
-        seedPlan.conversations.byId["demo-p2-advocate1"],
+        seedPlan.conversations.byId[dmP2Advocate1Id],
         {
           [patient2Id]: minutesAgo(22),
           [advocateId]: minutesAgo(200),
@@ -614,63 +621,63 @@ exports.handler = async (event) => {
     seedPlan.messages = [
       message(
         m("care-001"),
-        "demo-care-team-conv",
+        careTeam1Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-conv"].memberIds,
+        seedPlan.conversations.byId[careTeam1Id].memberIds,
         "SYSTEM",
         "Care team chat created.",
         minutesAgo(119),
       ),
       message(
         m("care-002"),
-        "demo-care-team-conv",
+        careTeam1Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-conv"].memberIds,
+        seedPlan.conversations.byId[careTeam1Id].memberIds,
         "TEXT",
         "Hi Jordan — checking in. How are symptoms today?",
         minutesAgo(115),
       ),
       message(
         m("care-003"),
-        "demo-care-team-conv",
+        careTeam1Id,
         patientId,
-        seedPlan.conversations.byId["demo-care-team-conv"].memberIds,
+        seedPlan.conversations.byId[careTeam1Id].memberIds,
         "TEXT",
         "Still some pain, but it’s better than yesterday.",
         minutesAgo(112),
       ),
       message(
         m("care-004"),
-        "demo-care-team-conv",
+        careTeam1Id,
         advocateId,
-        seedPlan.conversations.byId["demo-care-team-conv"].memberIds,
+        seedPlan.conversations.byId[careTeam1Id].memberIds,
         "TEXT",
         "Thanks for the update. I can help coordinate follow-up if needed.",
         minutesAgo(95),
       ),
       message(
         m("care-005"),
-        "demo-care-team-conv",
+        careTeam1Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-conv"].memberIds,
+        seedPlan.conversations.byId[careTeam1Id].memberIds,
         "TEXT",
         "Let’s adjust the plan: hydration + rest, and we’ll reassess tomorrow.",
         minutesAgo(60),
       ),
       message(
         m("care-006"),
-        "demo-care-team-conv",
+        careTeam1Id,
         patientId,
-        seedPlan.conversations.byId["demo-care-team-conv"].memberIds,
+        seedPlan.conversations.byId[careTeam1Id].memberIds,
         "TEXT",
         "Sounds good. I can do that.",
         minutesAgo(25),
       ),
       message(
         m("care-007"),
-        "demo-care-team-conv",
+        careTeam1Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-conv"].memberIds,
+        seedPlan.conversations.byId[careTeam1Id].memberIds,
         "TEXT",
         "If anything worsens, message here and we’ll respond ASAP.",
         minutesAgo(5),
@@ -678,27 +685,27 @@ exports.handler = async (event) => {
 
       message(
         m("pp-001"),
-        "demo-patient-provider-conv",
+        dmPatientProviderId,
         patientId,
-        seedPlan.conversations.byId["demo-patient-provider-conv"].memberIds,
+        seedPlan.conversations.byId[dmPatientProviderId].memberIds,
         "TEXT",
         "Quick question: should I take the medication with food?",
         minutesAgo(80),
       ),
       message(
         m("pp-002"),
-        "demo-patient-provider-conv",
+        dmPatientProviderId,
         providerId,
-        seedPlan.conversations.byId["demo-patient-provider-conv"].memberIds,
+        seedPlan.conversations.byId[dmPatientProviderId].memberIds,
         "TEXT",
         "Yes — with a small meal is best.",
         minutesAgo(70),
       ),
       message(
         m("pp-003"),
-        "demo-patient-provider-conv",
+        dmPatientProviderId,
         patientId,
-        seedPlan.conversations.byId["demo-patient-provider-conv"].memberIds,
+        seedPlan.conversations.byId[dmPatientProviderId].memberIds,
         "TEXT",
         "Got it. Thanks!",
         minutesAgo(55),
@@ -706,18 +713,18 @@ exports.handler = async (event) => {
 
       message(
         m("pa-001"),
-        "demo-patient-advocate-conv",
+        dmPatientAdvocateId,
         patientId,
-        seedPlan.conversations.byId["demo-patient-advocate-conv"].memberIds,
+        seedPlan.conversations.byId[dmPatientAdvocateId].memberIds,
         "TEXT",
         "Can you help me understand the next steps after the appointment?",
         minutesAgo(25),
       ),
       message(
         m("pa-002"),
-        "demo-patient-advocate-conv",
+        dmPatientAdvocateId,
         advocateId,
-        seedPlan.conversations.byId["demo-patient-advocate-conv"].memberIds,
+        seedPlan.conversations.byId[dmPatientAdvocateId].memberIds,
         "TEXT",
         "Absolutely — I’ll summarize what to expect and what to watch for.",
         minutesAgo(12),
@@ -725,54 +732,54 @@ exports.handler = async (event) => {
 
       message(
         m("ct2-001"),
-        "demo-care-team-2",
+        careTeam2Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-2"].memberIds,
+        seedPlan.conversations.byId[careTeam2Id].memberIds,
         "SYSTEM",
         "Care team chat created.",
         minutesAgo(590),
       ),
       message(
         m("ct2-002"),
-        "demo-care-team-2",
+        careTeam2Id,
         patient2Id,
-        seedPlan.conversations.byId["demo-care-team-2"].memberIds,
+        seedPlan.conversations.byId[careTeam2Id].memberIds,
         "TEXT",
         "I’m not sure which follow-up appointment I should schedule.",
         minutesAgo(120),
       ),
       message(
         m("ct2-003"),
-        "demo-care-team-2",
+        careTeam2Id,
         advocate2Id,
-        seedPlan.conversations.byId["demo-care-team-2"].memberIds,
+        seedPlan.conversations.byId[careTeam2Id].memberIds,
         "TEXT",
         "I can help coordinate with the clinic — do you prefer mornings or afternoons?",
         minutesAgo(90),
       ),
       message(
         m("ct2-004"),
-        "demo-care-team-2",
+        careTeam2Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-2"].memberIds,
+        seedPlan.conversations.byId[careTeam2Id].memberIds,
         "TEXT",
         "Let’s do a 2-week follow-up. Advocate can help schedule it.",
         minutesAgo(70),
       ),
       message(
         m("ct2-005"),
-        "demo-care-team-2",
+        careTeam2Id,
         patient2Id,
-        seedPlan.conversations.byId["demo-care-team-2"].memberIds,
+        seedPlan.conversations.byId[careTeam2Id].memberIds,
         "TEXT",
         "Afternoons are better for me.",
         minutesAgo(55),
       ),
       message(
         m("ct2-006"),
-        "demo-care-team-2",
+        careTeam2Id,
         advocate2Id,
-        seedPlan.conversations.byId["demo-care-team-2"].memberIds,
+        seedPlan.conversations.byId[careTeam2Id].memberIds,
         "TEXT",
         "Great — I’ll request an afternoon slot and confirm here.",
         minutesAgo(40),
@@ -780,36 +787,36 @@ exports.handler = async (event) => {
 
       message(
         m("ct3-001"),
-        "demo-care-team-3",
+        careTeam3Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-3"].memberIds,
+        seedPlan.conversations.byId[careTeam3Id].memberIds,
         "SYSTEM",
         "Care team chat created.",
         minutesAgo(880),
       ),
       message(
         m("ct3-002"),
-        "demo-care-team-3",
+        careTeam3Id,
         patient3Id,
-        seedPlan.conversations.byId["demo-care-team-3"].memberIds,
+        seedPlan.conversations.byId[careTeam3Id].memberIds,
         "TEXT",
         "The new medication made me dizzy this morning.",
         minutesAgo(400),
       ),
       message(
         m("ct3-003"),
-        "demo-care-team-3",
+        careTeam3Id,
         providerId,
-        seedPlan.conversations.byId["demo-care-team-3"].memberIds,
+        seedPlan.conversations.byId[careTeam3Id].memberIds,
         "TEXT",
         "Please take it with food and stay hydrated. If dizziness persists, we’ll adjust.",
         minutesAgo(300),
       ),
       message(
         m("ct3-004"),
-        "demo-care-team-3",
+        careTeam3Id,
         advocate2Id,
-        seedPlan.conversations.byId["demo-care-team-3"].memberIds,
+        seedPlan.conversations.byId[careTeam3Id].memberIds,
         "TEXT",
         "I can also help check if transportation or timing is affecting your routine.",
         minutesAgo(90),
@@ -817,27 +824,27 @@ exports.handler = async (event) => {
 
       message(
         m("p2p-001"),
-        "demo-p2-provider",
+        dmP2ProviderId,
         patient2Id,
-        seedPlan.conversations.byId["demo-p2-provider"].memberIds,
+        seedPlan.conversations.byId[dmP2ProviderId].memberIds,
         "TEXT",
         "Should I take the medication with food?",
         minutesAgo(80),
       ),
       message(
         m("p2p-002"),
-        "demo-p2-provider",
+        dmP2ProviderId,
         providerId,
-        seedPlan.conversations.byId["demo-p2-provider"].memberIds,
+        seedPlan.conversations.byId[dmP2ProviderId].memberIds,
         "TEXT",
         "Yes — with a small meal is best.",
         minutesAgo(70),
       ),
       message(
         m("p2p-003"),
-        "demo-p2-provider",
+        dmP2ProviderId,
         patient2Id,
-        seedPlan.conversations.byId["demo-p2-provider"].memberIds,
+        seedPlan.conversations.byId[dmP2ProviderId].memberIds,
         "TEXT",
         "Got it. Thanks!",
         minutesAgo(65),
@@ -845,18 +852,18 @@ exports.handler = async (event) => {
 
       message(
         m("p3p-001"),
-        "demo-p3-provider",
+        dmP3ProviderId,
         providerId,
-        seedPlan.conversations.byId["demo-p3-provider"].memberIds,
+        seedPlan.conversations.byId[dmP3ProviderId].memberIds,
         "TEXT",
         "Checking in — any changes since last visit?",
         minutesAgo(200),
       ),
       message(
         m("p3p-002"),
-        "demo-p3-provider",
+        dmP3ProviderId,
         patient3Id,
-        seedPlan.conversations.byId["demo-p3-provider"].memberIds,
+        seedPlan.conversations.byId[dmP3ProviderId].memberIds,
         "TEXT",
         "Much better overall. Sleep improved.",
         minutesAgo(180),
@@ -864,27 +871,27 @@ exports.handler = async (event) => {
 
       message(
         m("p2a1-001"),
-        "demo-p2-advocate1",
+        dmP2Advocate1Id,
         patient2Id,
-        seedPlan.conversations.byId["demo-p2-advocate1"].memberIds,
+        seedPlan.conversations.byId[dmP2Advocate1Id].memberIds,
         "TEXT",
         "Can you explain what I should expect after the appointment?",
         minutesAgo(60),
       ),
       message(
         m("p2a1-002"),
-        "demo-p2-advocate1",
+        dmP2Advocate1Id,
         advocateId,
-        seedPlan.conversations.byId["demo-p2-advocate1"].memberIds,
+        seedPlan.conversations.byId[dmP2Advocate1Id].memberIds,
         "TEXT",
         "Absolutely — I’ll summarize next steps and what to watch for.",
         minutesAgo(35),
       ),
       message(
         m("p2a1-003"),
-        "demo-p2-advocate1",
+        dmP2Advocate1Id,
         patient2Id,
-        seedPlan.conversations.byId["demo-p2-advocate1"].memberIds,
+        seedPlan.conversations.byId[dmP2Advocate1Id].memberIds,
         "TEXT",
         "Thank you — that helps a lot.",
         minutesAgo(22),
@@ -1004,6 +1011,8 @@ exports.handler = async (event) => {
         schemaDrift: "No ConversationParticipant.role written",
         emptyThread: "demo-empty-thread intentionally has 0 messages",
         removedChat: '"System Updates" conversation fully removed',
+        deterministicIds:
+          "Care team uses CARE_TEAM:${patientId}:${providerId}; DMs use DM:${minId}:${maxId}",
       },
     });
   } catch (e) {
