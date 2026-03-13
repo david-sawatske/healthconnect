@@ -9,23 +9,12 @@ Amplify Params - DO NOT EDIT */
 const {
   DynamoDBClient,
   GetItemCommand,
-  UpdateItemCommand,
-  PutItemCommand,
+  TransactWriteItemsCommand,
 } = require("@aws-sdk/client-dynamodb");
 
 const ddb = new DynamoDBClient({
   region: process.env.AWS_REGION || process.env.REGION,
 });
-
-const crypto = require("crypto");
-
-function uuid() {
-  return crypto.randomUUID
-    ? crypto.randomUUID()
-    : [4, 2, 2, 2, 6]
-        .map((n) => crypto.randomBytes(n).toString("hex"))
-        .join("-");
-}
 
 const INVITE_TABLE = "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev";
 const CONVO_TABLE = "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev";
@@ -86,87 +75,101 @@ exports.handler = async (event) => {
     const unique = Array.from(
       new Set([...(existingMembers || []), advocateId]),
     );
-    const memberIdsList = { L: unique.map((v) => ({ S: v })) };
+
+    const existingMemberIdsList = {
+      L: (existingMembers || []).map((v) => ({ S: v })),
+    };
+
+    const memberIdsList = {
+      L: unique.map((v) => ({ S: v })),
+    };
 
     const now = new Date().toISOString();
-
-    await ddb.send(
-      new UpdateItemCommand({
-        TableName: CONVO_TABLE,
-        Key: { id: { S: conversationId } },
-        UpdateExpression: "SET memberIds = :m, updatedAt = :u",
-        ExpressionAttributeValues: {
-          ":m": memberIdsList,
-          ":u": { S: now },
-        },
-      }),
-    );
-
-    await ddb.send(
-      new UpdateItemCommand({
-        TableName: INVITE_TABLE,
-        Key: { id: { S: inviteId } },
-        ConditionExpression: "#s = :p",
-        UpdateExpression:
-          "SET #s = :a, approvedBy = :by, approvedAt = :t, updatedAt = :u",
-        ExpressionAttributeNames: { "#s": "status" },
-        ExpressionAttributeValues: {
-          ":p": { S: "PENDING" },
-          ":a": { S: "APPROVED" },
-          ":by": { S: advocateId },
-          ":t": { S: now },
-          ":u": { S: now },
-        },
-      }),
-    );
-
     const assignmentId = `PA:${patientId}:PR:${providerId}:ADV:${advocateId}`;
-
-    await ddb.send(
-      new PutItemCommand({
-        TableName: ADVOCATE_ASSIGNMENT_TABLE,
-        Item: {
-          id: { S: assignmentId },
-          patientId: { S: patientId },
-          providerId: { S: providerId },
-          advocateId: { S: advocateId },
-          active: { BOOL: true },
-          createdAt: { S: now },
-          updatedAt: { S: now },
-        },
-      }),
-    );
-
     const participantId = `CP:${conversationId}:${advocateId}`;
+    const msgId = `SYS:INVITE_APPROVED:${inviteId}`;
 
     await ddb.send(
-      new PutItemCommand({
-        TableName: CONVO_PARTICIPANT_TABLE,
-        Item: {
-          id: { S: participantId },
-          userId: { S: advocateId },
-          conversationId: { S: conversationId },
-          createdAt: { S: now },
-          updatedAt: { S: now },
-        },
-      }),
-    );
-
-    const msgId = uuid();
-
-    await ddb.send(
-      new PutItemCommand({
-        TableName: MESSAGE_TABLE,
-        Item: {
-          id: { S: msgId },
-          conversationId: { S: conversationId },
-          senderId: { S: "system" },
-          memberIds: { L: memberIdsList.L },
-          type: { S: "SYSTEM" },
-          body: { S: "An advocate has joined the conversation." },
-          createdAt: { S: now },
-          updatedAt: { S: now },
-        },
+      new TransactWriteItemsCommand({
+        ClientRequestToken: `${inviteId}`,
+        TransactItems: [
+          {
+            Update: {
+              TableName: INVITE_TABLE,
+              Key: { id: { S: inviteId } },
+              ConditionExpression: "#s = :p",
+              UpdateExpression:
+                "SET #s = :a, approvedBy = :by, approvedAt = :t, updatedAt = :u",
+              ExpressionAttributeNames: {
+                "#s": "status",
+              },
+              ExpressionAttributeValues: {
+                ":p": { S: "PENDING" },
+                ":a": { S: "APPROVED" },
+                ":by": { S: advocateId },
+                ":t": { S: now },
+                ":u": { S: now },
+              },
+            },
+          },
+          {
+            Update: {
+              TableName: CONVO_TABLE,
+              Key: { id: { S: conversationId } },
+              ConditionExpression: "memberIds = :expectedMembers",
+              UpdateExpression: "SET memberIds = :m, updatedAt = :u",
+              ExpressionAttributeValues: {
+                ":expectedMembers": existingMemberIdsList,
+                ":m": memberIdsList,
+                ":u": { S: now },
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: ADVOCATE_ASSIGNMENT_TABLE,
+              ConditionExpression: "attribute_not_exists(id)",
+              Item: {
+                id: { S: assignmentId },
+                patientId: { S: patientId },
+                providerId: { S: providerId },
+                advocateId: { S: advocateId },
+                active: { BOOL: true },
+                createdAt: { S: now },
+                updatedAt: { S: now },
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: CONVO_PARTICIPANT_TABLE,
+              ConditionExpression: "attribute_not_exists(id)",
+              Item: {
+                id: { S: participantId },
+                userId: { S: advocateId },
+                conversationId: { S: conversationId },
+                createdAt: { S: now },
+                updatedAt: { S: now },
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: MESSAGE_TABLE,
+              ConditionExpression: "attribute_not_exists(id)",
+              Item: {
+                id: { S: msgId },
+                conversationId: { S: conversationId },
+                senderId: { S: "system" },
+                memberIds: memberIdsList,
+                type: { S: "SYSTEM" },
+                body: { S: "An advocate has joined the conversation." },
+                createdAt: { S: now },
+                updatedAt: { S: now },
+              },
+            },
+          },
+        ],
       }),
     );
 
