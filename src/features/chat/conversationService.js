@@ -254,8 +254,8 @@ export async function ensureCareTeamConversation({
     ...advocateIds,
   ]);
 
-  if (desiredMemberIds.length < 3) {
-    throw new Error("Care team chat requires at least 3 members");
+  if (desiredMemberIds.length < 2) {
+    throw new Error("Care team chat requires at least patient and provider");
   }
 
   log("ensureCareTeamConversation → desired", {
