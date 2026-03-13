@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   FlatList,
   RefreshControl,
+  TouchableOpacity,
 } from "react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,86 +19,117 @@ import { theme } from "../ui/theme";
 const client = generateClient();
 
 const devLog = (...args) => {
-  if (__DEV__) console.devLog("[ADVOCATE_HOME]", ...args);
+  if (__DEV__) console.log("[ADVOCATE_HOME]", ...args);
 };
 
 const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
-  query ListMyAdvocateAssignments(
-    $advocateId: ID!
-    $limit: Int
-    $nextToken: String
-  ) {
-    listAdvocateAssignments(
-      filter: { advocateId: { eq: $advocateId }, active: { eq: true } }
-      limit: $limit
-      nextToken: $nextToken
+    query ListMyAdvocateAssignments(
+        $advocateId: ID!
+        $limit: Int
+        $nextToken: String
     ) {
-      items {
-        id
-        patientId
-        providerId
-        advocateId
-        active
-        createdAt
-      }
-      nextToken
+        listAdvocateAssignments(
+            filter: { advocateId: { eq: $advocateId }, active: { eq: true } }
+            limit: $limit
+            nextToken: $nextToken
+        ) {
+            items {
+                id
+                patientId
+                providerId
+                advocateId
+                active
+                createdAt
+            }
+            nextToken
+        }
     }
-  }
+`;
+
+const LIST_MY_PENDING_ADVOCATE_INVITES = /* GraphQL */ `
+    query ListMyPendingAdvocateInvites(
+        $advocateId: String!
+        $limit: Int
+        $nextToken: String
+    ) {
+        listAdvocateInvites(
+            filter: {
+                advocateId: { eq: $advocateId }
+                status: { eq: PENDING }
+            }
+            limit: $limit
+            nextToken: $nextToken
+        ) {
+            items {
+                id
+                patientId
+                advocateId
+                conversationId
+                status
+                createdBy
+                approvedBy
+                approvedAt
+                createdAt
+                updatedAt
+            }
+            nextToken
+        }
+    }
 `;
 
 const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
+    query GetUser($id: ID!) {
+        getUser(id: $id) {
+            id
+            displayName
+            role
+            email
+        }
     }
-  }
 `;
 
 const LIST_MY_CONVERSATIONS = /* GraphQL */ `
-  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
-    listConversations(
-      filter: { memberIds: { contains: $sub } }
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        title
-        memberIds
-        isGroup
-        createdAt
-        updatedAt
-        lastMessageAt
-      }
-      nextToken
+    query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
+        listConversations(
+            filter: { memberIds: { contains: $sub } }
+            limit: $limit
+            nextToken: $nextToken
+        ) {
+            items {
+                id
+                title
+                memberIds
+                isGroup
+                createdAt
+                updatedAt
+                lastMessageAt
+            }
+            nextToken
+        }
     }
-  }
 `;
 
 const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
-  query ConversationParticipantsByUser(
-    $userId: String!
-    $limit: Int
-    $nextToken: String
-  ) {
-    conversationParticipantsByUser(
-      userId: $userId
-      limit: $limit
-      nextToken: $nextToken
+    query ConversationParticipantsByUser(
+        $userId: String!
+        $limit: Int
+        $nextToken: String
     ) {
-      items {
-        id
-        conversationId
-        userId
-        lastReadAt
-        updatedAt
-      }
-      nextToken
+        conversationParticipantsByUser(
+            userId: $userId
+            limit: $limit
+            nextToken: $nextToken
+        ) {
+            items {
+                id
+                conversationId
+                userId
+                lastReadAt
+                updatedAt
+            }
+            nextToken
+        }
     }
-  }
 `;
 
 const batchFetchUsers = async (ids) => {
@@ -131,10 +163,13 @@ const AdvocateHomeScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   const [assignments, setAssignments] = useState([]);
+  const [pendingInvites, setPendingInvites] = useState([]);
+  const [loadingPendingInvites, setLoadingPendingInvites] = useState(false);
   const [nextToken, setNextToken] = useState(null);
   const [error, setError] = useState(null);
 
   const [patients, setPatients] = useState([]);
+  const [inviteUsersById, setInviteUsersById] = useState({});
 
   const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
   const [loadingReads, setLoadingReads] = useState(false);
@@ -251,6 +286,53 @@ const AdvocateHomeScreen = () => {
     },
     [advocateId, processAssignments],
   );
+
+  const fetchPendingInvites = useCallback(async () => {
+    if (!advocateId) return;
+
+    setLoadingPendingInvites(true);
+
+    try {
+      let nt = null;
+      const all = [];
+
+      do {
+        const { data } = await client.graphql({
+          query: LIST_MY_PENDING_ADVOCATE_INVITES,
+          variables: {
+            advocateId,
+            limit: 100,
+            nextToken: nt,
+          },
+          authMode: "userPool",
+        });
+
+        const res = data?.listAdvocateInvites;
+        const items = res?.items || [];
+        nt = res?.nextToken || null;
+
+        all.push(...items);
+      } while (nt);
+
+      setPendingInvites(all);
+
+      const userIds = all.flatMap((invite) => [
+        invite.patientId,
+        invite.createdBy,
+      ]);
+
+      if (userIds.length > 0) {
+        const userMap = await batchFetchUsers(userIds);
+        setInviteUsersById(userMap);
+      } else {
+        setInviteUsersById({});
+      }
+    } catch (err) {
+      devLog("Error fetching pending invites:", err);
+    } finally {
+      setLoadingPendingInvites(false);
+    }
+  }, [advocateId]);
 
   const readsInFlightRef = useRef(false);
 
@@ -387,6 +469,7 @@ const AdvocateHomeScreen = () => {
         setLoading(true);
         await Promise.all([
           fetchAssignments({ reset: true }),
+          fetchPendingInvites(),
           fetchMyReadState(),
           fetchMyConversationsAndIndex(),
         ]);
@@ -404,6 +487,7 @@ const AdvocateHomeScreen = () => {
     advocateId,
     loadingCurrentUser,
     fetchAssignments,
+    fetchPendingInvites,
     fetchMyReadState,
     fetchMyConversationsAndIndex,
   ]);
@@ -413,12 +497,18 @@ const AdvocateHomeScreen = () => {
 
     Promise.all([
       fetchAssignments({ reset: true }).catch(() => {}),
+      fetchPendingInvites().catch(() => {}),
       fetchMyReadState().catch(() => {}),
       fetchMyConversationsAndIndex().catch(() => {}),
     ])
       .catch(() => {})
       .finally(() => setRefreshing(false));
-  }, [fetchAssignments, fetchMyReadState, fetchMyConversationsAndIndex]);
+  }, [
+    fetchAssignments,
+    fetchPendingInvites,
+    fetchMyReadState,
+    fetchMyConversationsAndIndex,
+  ]);
 
   const loadMore = () => {
     if (nextTokenRef.current && !loading) {
@@ -458,6 +548,22 @@ const AdvocateHomeScreen = () => {
     },
     [navigation, advocateId],
   );
+
+  const pendingInviteRows = useMemo(() => {
+    return [...pendingInvites]
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt || 0).getTime() -
+          new Date(a.createdAt || 0).getTime(),
+      )
+      .map((invite) => ({
+        ...invite,
+        patientName:
+          inviteUsersById[invite.patientId]?.displayName || "Unknown Patient",
+        providerName:
+          inviteUsersById[invite.createdBy]?.displayName || "Unknown Provider",
+      }));
+  }, [pendingInvites, inviteUsersById]);
 
   const computeUnreadForRow = useCallback(
     (row) => {
@@ -535,11 +641,49 @@ const AdvocateHomeScreen = () => {
         <RolePill role="ADVOCATE" />
       </View>
 
-      {error && (
+      {error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      )}
+      ) : null}
+
+      <View style={styles.pendingSection}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>Pending Invites</Text>
+          {loadingPendingInvites ? (
+            <ActivityIndicator size="small" />
+          ) : null}
+        </View>
+
+        {pendingInviteRows.length === 0 ? (
+          <Text style={styles.emptyText}>No pending invites right now.</Text>
+        ) : (
+          pendingInviteRows.map((invite) => (
+            <TouchableOpacity
+              key={invite.id}
+              style={styles.inviteCard}
+              onPress={() => navigation.navigate("InviteApproval")}
+              activeOpacity={0.85}
+            >
+              <View style={styles.inviteCardTop}>
+                <Text style={styles.invitePatientName} numberOfLines={1}>
+                  {invite.patientName}
+                </Text>
+                <View style={styles.pendingPill}>
+                  <Text style={styles.pendingPillText}>Pending</Text>
+                </View>
+              </View>
+
+              <Text style={styles.inviteMeta} numberOfLines={1}>
+                Provider: {invite.providerName}
+              </Text>
+              <Text style={styles.inviteMeta} numberOfLines={1}>
+                Sent: {new Date(invite.createdAt).toLocaleDateString()}
+              </Text>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>My Patients</Text>
@@ -606,19 +750,80 @@ const styles = StyleSheet.create({
     color: theme.colors.dangerText,
   },
 
+  pendingSection: {
+    marginBottom: theme.space.md,
+  },
+
   section: {
     flex: 1,
   },
+
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: theme.space.xs,
+  },
+
   sectionTitle: {
     ...theme.type.h3,
     marginBottom: theme.space.xs,
   },
+
   emptyText: {
     ...theme.type.subtext,
   },
+
   loadingText: {
     ...theme.type.subtext,
     marginTop: theme.space.xs,
+  },
+
+  inviteCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: theme.space.xs,
+    ...theme.shadow.card,
+  },
+
+  inviteCardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  invitePatientName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  inviteMeta: {
+    marginTop: 4,
+    fontSize: 12,
+    color: theme.colors.subtext,
+  },
+
+  pendingPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.infoBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+
+  pendingPillText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.infoText,
   },
 
   readsSpinner: {

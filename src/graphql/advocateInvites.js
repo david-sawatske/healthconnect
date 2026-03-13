@@ -9,20 +9,6 @@ export const CreateAdvocateInvite = /* GraphQL */ `
   }
 `;
 
-export const ApproveAdvocateInvite = /* GraphQL */ `
-  mutation ApproveAdvocateInvite($input: UpdateAdvocateInviteInput!) {
-    updateAdvocateInvite(input: $input) {
-      id
-      status
-      approvedBy
-      approvedAt
-      conversationId
-      patientId
-      updatedAt
-    }
-  }
-`;
-
 export const DeclineAdvocateInvite = /* GraphQL */ `
   mutation DeclineAdvocateInvite($input: UpdateAdvocateInviteInput!) {
     updateAdvocateInvite(input: $input) {

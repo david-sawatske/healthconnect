@@ -52,14 +52,36 @@ const LIST_ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
   }
 `;
 
-const CREATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
-  mutation CreateAdvocateAssignment($input: CreateAdvocateAssignmentInput!) {
-    createAdvocateAssignment(input: $input) {
+const LIST_ADVOCATE_INVITES_FOR_PATIENT = /* GraphQL */ `
+  query ListAdvocateInvitesForPatient($patientId: ID!) {
+    listAdvocateInvites(filter: { patientId: { eq: $patientId } }) {
+      items {
+        id
+        patientId
+        advocateId
+        conversationId
+        status
+        createdBy
+        approvedBy
+        approvedAt
+        createdAt
+        updatedAt
+      }
+    }
+  }
+`;
+
+const CREATE_ADVOCATE_INVITE = /* GraphQL */ `
+  mutation CreateAdvocateInvite($input: CreateAdvocateInviteInput!) {
+    createAdvocateInvite(input: $input) {
       id
       patientId
-      providerId
       advocateId
-      active
+      conversationId
+      status
+      createdBy
+      approvedBy
+      approvedAt
       createdAt
       updatedAt
     }
@@ -148,6 +170,8 @@ const PatientDetailScreen = () => {
 
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [advocateAssignments, setAdvocateAssignments] = useState([]);
+  const [advocateInvites, setAdvocateInvites] = useState([]);
+  const [loadingInvites, setLoadingInvites] = useState(true);
   const [advocateUsersById, setAdvocateUsersById] = useState({});
 
   const [advocates, setAdvocates] = useState([]);
@@ -156,7 +180,6 @@ const PatientDetailScreen = () => {
   const [assigning, setAssigning] = useState(false);
 
   const [providerUser, setProviderUser] = useState(null);
-
   const [manageExpanded, setManageExpanded] = useState(false);
 
   const viewerId = currentUser?.id ?? null;
@@ -174,6 +197,7 @@ const PatientDetailScreen = () => {
     if (!patientId) return;
 
     let mounted = true;
+
     (async () => {
       setLoadingAssignments(true);
       try {
@@ -196,9 +220,7 @@ const PatientDetailScreen = () => {
           ...new Set(sorted.map((a) => a.advocateId).filter(Boolean)),
         ];
 
-        if (uniqueAdvocateIds.length === 0) {
-          setAdvocateUsersById({});
-        } else {
+        if (uniqueAdvocateIds.length > 0) {
           const userResults = await Promise.all(
             uniqueAdvocateIds.map((id) =>
               safeGql({
@@ -214,12 +236,14 @@ const PatientDetailScreen = () => {
 
           if (!mounted) return;
 
-          const usersById = {};
-          userResults.forEach((r) => {
-            const u = r?.data?.getUser;
-            if (u?.id) usersById[u.id] = u;
+          setAdvocateUsersById((prev) => {
+            const next = { ...prev };
+            userResults.forEach((r) => {
+              const u = r?.data?.getUser;
+              if (u?.id) next[u.id] = u;
+            });
+            return next;
           });
-          setAdvocateUsersById(usersById);
         }
       } catch (e) {
         if (!mounted) return;
@@ -233,6 +257,76 @@ const PatientDetailScreen = () => {
       mounted = false;
     };
   }, [patientId]);
+
+  useEffect(() => {
+    if (!patientId) return;
+
+    let mounted = true;
+
+    (async () => {
+      setLoadingInvites(true);
+      try {
+        const res = await safeGql({
+          query: LIST_ADVOCATE_INVITES_FOR_PATIENT,
+          variables: { patientId },
+          label: "ListAdvocateInvitesForPatient",
+        });
+
+        const items = res?.data?.listAdvocateInvites?.items || [];
+        if (!mounted) return;
+
+        const sorted = [...items].sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+
+        setAdvocateInvites(sorted);
+
+        const uniqueAdvocateIds = [
+          ...new Set(sorted.map((i) => i.advocateId).filter(Boolean)),
+        ];
+
+        const missingIds = uniqueAdvocateIds.filter(
+          (id) => !advocateUsersById[id],
+        );
+
+        if (missingIds.length > 0) {
+          const userResults = await Promise.all(
+            missingIds.map((id) =>
+              safeGql({
+                query: GET_USER,
+                variables: { id },
+                label: `GetInviteAdvocateUser:${id}`,
+              }).catch((err) => {
+                log("GetInviteAdvocateUser ERR", id, err);
+                return null;
+              }),
+            ),
+          );
+
+          if (!mounted) return;
+
+          setAdvocateUsersById((prev) => {
+            const next = { ...prev };
+            userResults.forEach((r) => {
+              const u = r?.data?.getUser;
+              if (u?.id) next[u.id] = u;
+            });
+            return next;
+          });
+        }
+      } catch (e) {
+        if (!mounted) return;
+        log("Load advocate invites ERR", e);
+      } finally {
+        if (mounted) setLoadingInvites(false);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [patientId, advocateUsersById]);
 
   useEffect(() => {
     let mounted = true;
@@ -271,9 +365,22 @@ const PatientDetailScreen = () => {
     );
   }, [advocateAssignments, effectiveProviderId]);
 
+  const providerScopedPendingInvites = useMemo(() => {
+    if (!effectiveProviderId) return [];
+
+    return (advocateInvites || []).filter(
+      (invite) =>
+        invite.createdBy === effectiveProviderId && invite.status === "PENDING",
+    );
+  }, [advocateInvites, effectiveProviderId]);
+
   const activeAssignmentsForManagePanel = useMemo(() => {
     return (providerScopedAssignments || []).filter((a) => a.active);
   }, [providerScopedAssignments]);
+
+  const pendingInvitesForManagePanel = useMemo(() => {
+    return providerScopedPendingInvites;
+  }, [providerScopedPendingInvites]);
 
   const activeAdvocatesForSummary = useMemo(() => {
     return (providerScopedAssignments || [])
@@ -417,7 +524,7 @@ const PatientDetailScreen = () => {
   const handleAssignAdvocate = useCallback(
     async (selectedAdvocate) => {
       if (!isProviderView) {
-        Alert.alert("Error", "Only providers can assign advocates.");
+        Alert.alert("Error", "Only providers can invite advocates.");
         return;
       }
       if (!viewerId) {
@@ -435,77 +542,84 @@ const PatientDetailScreen = () => {
         );
         return;
       }
+      if (!selectedAdvocate?.id) {
+        Alert.alert("Error", "Missing advocate info.");
+        return;
+      }
 
-      const matchingAssignments = advocateAssignments.filter(
+      const existingActive = advocateAssignments.find(
         (a) =>
           a.patientId === patientId &&
           a.providerId === effectiveProviderId &&
-          a.advocateId === selectedAdvocate.id,
+          a.advocateId === selectedAdvocate.id &&
+          a.active,
       );
-
-      const existingActive = matchingAssignments.find((a) => a.active);
-      const existingInactive = matchingAssignments.find((a) => !a.active);
 
       if (existingActive) {
         Alert.alert("Already Assigned", "This advocate is already assigned.");
         return;
       }
 
+      const existingPending = advocateInvites.find(
+        (invite) =>
+          invite.patientId === patientId &&
+          invite.createdBy === effectiveProviderId &&
+          invite.advocateId === selectedAdvocate.id &&
+          invite.status === "PENDING",
+      );
+
+      if (existingPending) {
+        Alert.alert(
+          "Invite Already Sent",
+          "This advocate already has a pending invite.",
+        );
+        return;
+      }
+
       setAssigning(true);
       try {
-        let updatedOrNew;
+        const activeAdvocateIds = Array.from(
+          new Set(
+            (providerScopedAssignments || [])
+              .filter((a) => a.active)
+              .map((a) => a.advocateId)
+              .filter(Boolean),
+          ),
+        );
 
-        if (existingInactive) {
-          const res = await safeGql({
-            query: UPDATE_ADVOCATE_ASSIGNMENT,
-            variables: {
-              input: {
-                id: existingInactive.id,
-                active: true,
-              },
+        const conversation = await ensureCareTeamConversation({
+          currentUserId: viewerId,
+          patientId,
+          providerId: effectiveProviderId,
+          advocateIds: activeAdvocateIds,
+          title: `Care Team: ${patientName || "Patient"}`,
+        });
+
+        const res = await safeGql({
+          query: CREATE_ADVOCATE_INVITE,
+          variables: {
+            input: {
+              patientId,
+              advocateId: selectedAdvocate.id,
+              conversationId: conversation.id,
+              status: "PENDING",
+              createdBy: viewerId,
             },
-            label: "UpdateAdvocateAssignment-reactivate",
-          });
+          },
+          label: "CreateAdvocateInvite",
+        });
 
-          updatedOrNew = res?.data?.updateAdvocateAssignment;
-        } else {
-          const res = await safeGql({
-            query: CREATE_ADVOCATE_ASSIGNMENT,
-            variables: {
-              input: {
-                patientId,
-                providerId: effectiveProviderId,
-                advocateId: selectedAdvocate.id,
-                active: true,
-              },
-            },
-            label: "CreateAdvocateAssignment",
-          });
-
-          updatedOrNew = res?.data?.createAdvocateAssignment;
+        const newInvite = res?.data?.createAdvocateInvite;
+        if (!newInvite) {
+          throw new Error("No invite returned");
         }
 
-        if (!updatedOrNew) {
-          console.log("[ASSIGN_ADVOCATE] No assignment returned");
-          return;
-        }
-
-        setAdvocateAssignments((prev) => {
-          const existsIndex = prev.findIndex((a) => a.id === updatedOrNew.id);
-          let next;
-
-          if (existsIndex >= 0) {
-            next = [...prev];
-            next[existsIndex] = { ...prev[existsIndex], ...updatedOrNew };
-          } else {
-            next = [updatedOrNew, ...prev];
-          }
-
-          return next.sort(
+        setAdvocateInvites((prev) =>
+          [newInvite, ...prev].sort(
             (a, b) =>
               new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-          );
-        });
+          ),
+        );
 
         setAdvocateUsersById((prev) => ({
           ...prev,
@@ -514,19 +628,29 @@ const PatientDetailScreen = () => {
 
         setAdvocatePickerVisible(false);
         setManageExpanded(true);
+
+        Alert.alert(
+          "Invite sent",
+          `${
+            selectedAdvocate.displayName || selectedAdvocate.email || "Advocate"
+          } can approve this from their invites screen.`,
+        );
       } catch (e) {
-        log("Assign advocate ERR", e);
-        Alert.alert("Error", "Failed to assign advocate.");
+        log("Create advocate invite ERR", e);
+        Alert.alert("Error", "Failed to send advocate invite.");
       } finally {
         setAssigning(false);
       }
     },
     [
-      patientId,
-      viewerId,
-      advocateAssignments,
       isProviderView,
+      viewerId,
+      patientId,
       effectiveProviderId,
+      advocateAssignments,
+      advocateInvites,
+      providerScopedAssignments,
+      patientName,
     ],
   );
 
@@ -607,7 +731,7 @@ const PatientDetailScreen = () => {
       );
     }
 
-    if (loadingAssignments) {
+    if (loadingAssignments || loadingInvites) {
       return (
         <View style={styles.managePanel}>
           <View style={styles.manageHeaderRow}>
@@ -622,6 +746,7 @@ const PatientDetailScreen = () => {
     }
 
     const hasActive = activeAssignmentsForManagePanel.length > 0;
+    const hasPending = pendingInvitesForManagePanel.length > 0;
 
     return (
       <View style={styles.managePanel}>
@@ -629,8 +754,8 @@ const PatientDetailScreen = () => {
           <View style={{ flex: 1 }}>
             <Text style={styles.manageTitle}>Advocates</Text>
             <Text style={styles.manageHint} numberOfLines={2}>
-              Active advocates for {providerDisplayName}. Message them directly
-              or assign new support.
+              Active advocates for {providerDisplayName}. Pending invites stay
+              here until the advocate approves them.
             </Text>
           </View>
         </View>
@@ -673,38 +798,58 @@ const PatientDetailScreen = () => {
                 </View>
               );
             })}
-
-            <TouchableOpacity
-              style={[
-                styles.manageAssignBtnBelow,
-                assigning && styles.heroBtnDisabled,
-              ]}
-              onPress={openAdvocatePicker}
-              disabled={assigning}
-            >
-              <Text style={styles.manageAssignBtnBelowText}>
-                {assigning ? "Saving..." : "Assign New Advocate"}
-              </Text>
-            </TouchableOpacity>
           </>
-        ) : (
-          <View style={styles.manageEmptyBox}>
-            <Text style={styles.manageEmptyTitle}>No advocates assigned</Text>
-            <Text style={styles.manageEmptyBody}>
-              Assign an advocate to enable group care team chat and add support
-              for this patient.
-            </Text>
-            <TouchableOpacity
-              style={styles.managePrimaryCta}
-              onPress={openAdvocatePicker}
-              disabled={assigning}
-            >
-              <Text style={styles.managePrimaryCtaText}>
-                {assigning ? "Saving..." : "Assign Advocate"}
-              </Text>
-            </TouchableOpacity>
+        ) : null}
+
+        {hasPending ? (
+          <View style={styles.pendingSection}>
+            <Text style={styles.pendingSectionTitle}>Pending Invites</Text>
+            {pendingInvitesForManagePanel.map((invite) => {
+              const user = advocateUsersById[invite.advocateId] || {};
+              const name = user.displayName || user.email || "Advocate";
+
+              return (
+                <View key={invite.id} style={styles.pendingRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.manageName} numberOfLines={1}>
+                      {name}
+                    </Text>
+                    <Text style={styles.pendingSub} numberOfLines={1}>
+                      Waiting for advocate approval
+                    </Text>
+                  </View>
+
+                  <View style={styles.pendingPill}>
+                    <Text style={styles.pendingPillText}>Pending</Text>
+                  </View>
+                </View>
+              );
+            })}
           </View>
-        )}
+        ) : null}
+
+        {!hasActive && !hasPending ? (
+          <View style={styles.manageEmptyBox}>
+            <Text style={styles.manageEmptyTitle}>No advocates yet</Text>
+            <Text style={styles.manageEmptyBody}>
+              Send an invite to add an advocate to this patient’s care team
+              after they approve it.
+            </Text>
+          </View>
+        ) : null}
+
+        <TouchableOpacity
+          style={[
+            styles.manageAssignBtnBelow,
+            assigning && styles.heroBtnDisabled,
+          ]}
+          onPress={openAdvocatePicker}
+          disabled={assigning}
+        >
+          <Text style={styles.manageAssignBtnBelowText}>
+            {assigning ? "Sending..." : "Invite Advocate"}
+          </Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -738,7 +883,7 @@ const PatientDetailScreen = () => {
           <View style={styles.heroHeaderRow}>
             <Text style={styles.heroTitle}>Care Team</Text>
 
-            {loadingAssignments ? (
+            {loadingAssignments || loadingInvites ? (
               <View style={styles.heroLoadingPill}>
                 <ActivityIndicator size="small" />
                 <Text style={styles.heroLoadingText}>Loading</Text>
@@ -805,7 +950,7 @@ const PatientDetailScreen = () => {
                 title={
                   manageExpanded ? "Hide Manage Advocates" : "Manage Advocates"
                 }
-                subtitle="View advocates + message + assign"
+                subtitle="View advocates + invites + messaging"
                 onPress={handleToggleManage}
                 disabled={!viewerId || loadingCurrentUser}
               />
@@ -816,7 +961,7 @@ const PatientDetailScreen = () => {
         </View>
       </View>
 
-      {isProviderView && (
+      {isProviderView ? (
         <AdvocatePickerModal
           visible={advocatePickerVisible}
           onClose={() => setAdvocatePickerVisible(false)}
@@ -824,8 +969,9 @@ const PatientDetailScreen = () => {
           loading={advocatesLoading}
           onSelect={handleAssignAdvocate}
           existingAssignments={providerScopedAssignments}
+          pendingInvites={providerScopedPendingInvites}
         />
-      )}
+      ) : null}
     </View>
   );
 };
@@ -837,6 +983,7 @@ const AdvocatePickerModal = ({
   loading,
   onSelect,
   existingAssignments = [],
+  pendingInvites = [],
 }) => {
   const [selectedAdvocateId, setSelectedAdvocateId] = useState(null);
 
@@ -844,9 +991,16 @@ const AdvocatePickerModal = ({
     if (!visible) setSelectedAdvocateId(null);
   }, [visible]);
 
-  const assignedMap = {};
+  const statusMap = {};
+
   existingAssignments.forEach((a) => {
-    if (a.active) assignedMap[a.advocateId] = "Active";
+    if (a.active) statusMap[a.advocateId] = "Active";
+  });
+
+  pendingInvites.forEach((invite) => {
+    if (invite.status === "PENDING" && !statusMap[invite.advocateId]) {
+      statusMap[invite.advocateId] = "Pending Invite";
+    }
   });
 
   const handleConfirm = () => {
@@ -855,8 +1009,16 @@ const AdvocatePickerModal = ({
       return;
     }
 
-    if (assignedMap[selectedAdvocateId]) {
+    if (statusMap[selectedAdvocateId] === "Active") {
       Alert.alert("Already Assigned", "This advocate is already assigned.");
+      return;
+    }
+
+    if (statusMap[selectedAdvocateId] === "Pending Invite") {
+      Alert.alert(
+        "Invite Already Sent",
+        "This advocate already has a pending invite.",
+      );
       return;
     }
 
@@ -865,34 +1027,34 @@ const AdvocatePickerModal = ({
   };
 
   const renderItem = ({ item }) => {
-    const isAssigned = assignedMap[item.id] != null;
-    const status = assignedMap[item.id];
+    const status = statusMap[item.id] || null;
+    const isDisabled = !!status;
     const isSelected = item.id === selectedAdvocateId;
 
     return (
       <TouchableOpacity
-        disabled={isAssigned}
+        disabled={isDisabled}
         style={[
           styles.advocateRow,
-          isSelected && !isAssigned && styles.advocateRowSelected,
-          isAssigned && styles.advocateRowDisabled,
+          isSelected && !isDisabled && styles.advocateRowSelected,
+          isDisabled && styles.advocateRowDisabled,
         ]}
         onPress={() => {
-          if (!isAssigned) setSelectedAdvocateId(item.id);
+          if (!isDisabled) setSelectedAdvocateId(item.id);
         }}
       >
         <View style={{ flex: 1 }}>
           <Text style={styles.advocateName} numberOfLines={1}>
             {item.displayName || item.email || "Unnamed Advocate"}
           </Text>
-          {isAssigned && (
+          {status ? (
             <Text style={styles.advocateStatusText}>{status}</Text>
-          )}
+          ) : null}
         </View>
 
-        {!isAssigned && isSelected && (
+        {!isDisabled && isSelected ? (
           <Text style={styles.advocateSelectedMark}>✓</Text>
-        )}
+        ) : null}
       </TouchableOpacity>
     );
   };
@@ -901,7 +1063,7 @@ const AdvocatePickerModal = ({
     <Modal visible={visible} transparent animationType="slide">
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Assign Advocate</Text>
+          <Text style={styles.modalTitle}>Invite Advocate</Text>
 
           {loading ? (
             <ActivityIndicator style={{ marginVertical: 16 }} />
@@ -925,7 +1087,7 @@ const AdvocatePickerModal = ({
               style={styles.primaryButton}
               onPress={handleConfirm}
             >
-              <Text style={styles.primaryButtonText}>Assign</Text>
+              <Text style={styles.primaryButtonText}>Send Invite</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1091,6 +1253,49 @@ const styles = StyleSheet.create({
     color: theme.colors.dangerText,
   },
 
+  pendingSection: {
+    marginTop: 12,
+    paddingTop: 8,
+  },
+  pendingSectionTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  pendingRow: {
+    marginTop: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.bg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    minHeight: 72,
+  },
+  pendingSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: theme.colors.subtext,
+  },
+  pendingPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.infoBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+  pendingPillText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.infoText,
+  },
+
   manageEmptyBox: {
     marginTop: 10,
     padding: 12,
@@ -1105,19 +1310,6 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
   },
   manageEmptyBody: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
-  managePrimaryCta: {
-    marginTop: 10,
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: theme.radius.pill,
-    backgroundColor: theme.colors.primary,
-  },
-  managePrimaryCtaText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: theme.colors.primaryText,
-  },
 
   manageAssignBtnBelow: {
     marginTop: 10,
