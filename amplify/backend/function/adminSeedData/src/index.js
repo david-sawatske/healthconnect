@@ -35,6 +35,24 @@ const {
   TABLE_MESSAGE,
 } = process.env;
 
+function requireEnv(name, value) {
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+requireEnv(
+  "AUTH_HEALTHCONNECT97A44150_USERPOOLID",
+  AUTH_HEALTHCONNECT97A44150_USERPOOLID,
+);
+requireEnv("TABLE_USER", TABLE_USER);
+requireEnv("TABLE_PROVIDER_PATIENT", TABLE_PROVIDER_PATIENT);
+requireEnv("TABLE_ADVOCATE_ASSIGNMENT", TABLE_ADVOCATE_ASSIGNMENT);
+requireEnv("TABLE_CONVERSATION", TABLE_CONVERSATION);
+requireEnv("TABLE_CONVERSATION_PARTICIPANT", TABLE_CONVERSATION_PARTICIPANT);
+requireEnv("TABLE_MESSAGE", TABLE_MESSAGE);
+
 exports.handler = async (event) => {
   console.log("[ADMIN_SEED] event.raw =", JSON.stringify(event));
 

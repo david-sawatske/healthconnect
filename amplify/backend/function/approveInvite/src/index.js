@@ -16,13 +16,32 @@ const ddb = new DynamoDBClient({
   region: process.env.AWS_REGION || process.env.REGION,
 });
 
-const INVITE_TABLE = "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev";
-const CONVO_TABLE = "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev";
-const ADVOCATE_ASSIGNMENT_TABLE =
-  "AdvocateAssignment-5izqvjgcw5e5zdbimlgzknen3m-dev";
-const CONVO_PARTICIPANT_TABLE =
-  "ConversationParticipant-5izqvjgcw5e5zdbimlgzknen3m-dev";
-const MESSAGE_TABLE = "Message-5izqvjgcw5e5zdbimlgzknen3m-dev";
+const {
+  TABLE_ADVOCATE_INVITE,
+  TABLE_CONVERSATION,
+  TABLE_ADVOCATE_ASSIGNMENT,
+  TABLE_CONVERSATION_PARTICIPANT,
+  TABLE_MESSAGE,
+} = process.env;
+
+function requireEnv(name, value) {
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+const INVITE_TABLE = requireEnv("TABLE_ADVOCATE_INVITE", TABLE_ADVOCATE_INVITE);
+const CONVO_TABLE = requireEnv("TABLE_CONVERSATION", TABLE_CONVERSATION);
+const ADVOCATE_ASSIGNMENT_TABLE = requireEnv(
+  "TABLE_ADVOCATE_ASSIGNMENT",
+  TABLE_ADVOCATE_ASSIGNMENT,
+);
+const CONVO_PARTICIPANT_TABLE = requireEnv(
+  "TABLE_CONVERSATION_PARTICIPANT",
+  TABLE_CONVERSATION_PARTICIPANT,
+);
+const MESSAGE_TABLE = requireEnv("TABLE_MESSAGE", TABLE_MESSAGE);
 
 function unmarshallStringArray(attr) {
   if (!attr || !attr.L) return [];

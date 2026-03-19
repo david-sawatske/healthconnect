@@ -1,12 +1,30 @@
 {
   "permissions": {
     "api": {
-      "healthconnect": [
-        "Query",
-        "Mutation",
-        "Subscription"
-      ]
+      "healthconnect": ["Query", "Mutation"]
     }
   },
-  "lambdaLayers": []
+  "lambdaLayers": [],
+  "environmentVariableList": [
+    {
+      "cloudFormationParameterName": "tableAdvocateInvite",
+      "environmentVariableName": "TABLE_ADVOCATE_INVITE"
+    },
+    {
+      "cloudFormationParameterName": "tableConversation",
+      "environmentVariableName": "TABLE_CONVERSATION"
+    },
+    {
+      "cloudFormationParameterName": "tableAdvocateAssignment",
+      "environmentVariableName": "TABLE_ADVOCATE_ASSIGNMENT"
+    },
+    {
+      "cloudFormationParameterName": "tableConversationParticipant",
+      "environmentVariableName": "TABLE_CONVERSATION_PARTICIPANT"
+    },
+    {
+      "cloudFormationParameterName": "tableMessage",
+      "environmentVariableName": "TABLE_MESSAGE"
+    }
+  ]
 }

@@ -3,9 +3,7 @@
     "healthconnect": {
       "dependsOn": [
         {
-          "attributes": [
-            "UserPoolId"
-          ],
+          "attributes": ["UserPoolId"],
           "category": "auth",
           "resourceName": "healthconnect97a44150"
         }
@@ -27,24 +25,17 @@
     "seeding": {
       "dependsOn": [
         {
-          "attributes": [
-            "Name",
-            "Arn"
-          ],
+          "attributes": ["Name", "Arn"],
           "category": "function",
           "resourceName": "adminSeedData"
         },
         {
-          "attributes": [
-            "UserPoolId"
-          ],
+          "attributes": ["UserPoolId"],
           "category": "auth",
           "resourceName": "healthconnect97a44150"
         },
         {
-          "attributes": [
-            "AdminGroupRole"
-          ],
+          "attributes": ["AdminGroupRole"],
           "category": "auth",
           "resourceName": "userPoolGroups"
         }
@@ -59,23 +50,15 @@
       "dependsOn": [],
       "frontendAuthConfig": {
         "mfaConfiguration": "OFF",
-        "mfaTypes": [
-          "SMS"
-        ],
+        "mfaTypes": ["SMS"],
         "passwordProtectionSettings": {
           "passwordPolicyCharacters": [],
           "passwordPolicyMinLength": 8
         },
-        "signupAttributes": [
-          "EMAIL"
-        ],
+        "signupAttributes": ["EMAIL"],
         "socialProviders": [],
-        "usernameAttributes": [
-          "EMAIL"
-        ],
-        "verificationMechanisms": [
-          "EMAIL"
-        ]
+        "usernameAttributes": ["EMAIL"],
+        "verificationMechanisms": ["EMAIL"]
       },
       "providerPlugin": "awscloudformation",
       "service": "Cognito"
@@ -102,9 +85,7 @@
       "build": true,
       "dependsOn": [
         {
-          "attributes": [
-            "UserPoolId"
-          ],
+          "attributes": ["UserPoolId"],
           "category": "auth",
           "resourceName": "healthconnect97a44150"
         }
@@ -116,10 +97,7 @@
       "build": true,
       "dependsOn": [
         {
-          "attributes": [
-            "GraphQLAPIIdOutput",
-            "GraphQLAPIEndpointOutput"
-          ],
+          "attributes": ["GraphQLAPIIdOutput", "GraphQLAPIEndpointOutput"],
           "category": "api",
           "resourceName": "healthconnect"
         }
@@ -258,6 +236,46 @@
       ]
     },
     "AMPLIFY_function_approveInvite_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableConversationParticipant": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableMessage": {
       "usedBy": [
         {
           "category": "function",
