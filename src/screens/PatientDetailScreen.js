@@ -37,7 +37,7 @@ const LIST_ADVOCATE_USERS = /* GraphQL */ `
 `;
 
 const LIST_ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
-  query ListAdvocateAssignmentsForPatient($patientId: ID!) {
+  query ListAdvocateAssignmentsForPatient($patientId: String!) {
     listAdvocateAssignments(filter: { patientId: { eq: $patientId } }) {
       items {
         id
@@ -53,7 +53,7 @@ const LIST_ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
 `;
 
 const LIST_ADVOCATE_INVITES_FOR_PATIENT = /* GraphQL */ `
-  query ListAdvocateInvitesForPatient($patientId: ID!) {
+  query ListAdvocateInvitesForPatient($patientId: String!) {
     listAdvocateInvites(filter: { patientId: { eq: $patientId } }) {
       items {
         id
