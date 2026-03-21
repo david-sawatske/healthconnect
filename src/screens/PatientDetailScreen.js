@@ -37,7 +37,7 @@ const LIST_ADVOCATE_USERS = /* GraphQL */ `
 `;
 
 const LIST_ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
-  query ListAdvocateAssignmentsForPatient($patientId: String!) {
+  query ListAdvocateAssignmentsForPatient($patientId: ID!) {
     listAdvocateAssignments(filter: { patientId: { eq: $patientId } }) {
       items {
         id
