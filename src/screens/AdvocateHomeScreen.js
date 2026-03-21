@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -7,6 +13,8 @@ import {
   FlatList,
   RefreshControl,
   TouchableOpacity,
+  Modal,
+  Alert,
 } from "react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -14,6 +22,8 @@ import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
 import PatientListItem from "../components/PatientListItem";
 import RolePill from "../components/RolePill";
+import { DeclineAdvocateInvite } from "../graphql/advocateInvites";
+import { ApproveInviteServer } from "../graphql/customMutations";
 import { theme } from "../ui/theme";
 
 const client = generateClient();
@@ -23,113 +33,110 @@ const devLog = (...args) => {
 };
 
 const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
-    query ListMyAdvocateAssignments(
-        $advocateId: ID!
-        $limit: Int
-        $nextToken: String
+  query ListMyAdvocateAssignments(
+    $advocateId: ID!
+    $limit: Int
+    $nextToken: String
+  ) {
+    listAdvocateAssignments(
+      filter: { advocateId: { eq: $advocateId }, active: { eq: true } }
+      limit: $limit
+      nextToken: $nextToken
     ) {
-        listAdvocateAssignments(
-            filter: { advocateId: { eq: $advocateId }, active: { eq: true } }
-            limit: $limit
-            nextToken: $nextToken
-        ) {
-            items {
-                id
-                patientId
-                providerId
-                advocateId
-                active
-                createdAt
-            }
-            nextToken
-        }
+      items {
+        id
+        patientId
+        providerId
+        advocateId
+        active
+        createdAt
+      }
+      nextToken
     }
+  }
 `;
 
 const LIST_MY_PENDING_ADVOCATE_INVITES = /* GraphQL */ `
-    query ListMyPendingAdvocateInvites(
-        $advocateId: String!
-        $limit: Int
-        $nextToken: String
+  query ListMyPendingAdvocateInvites(
+    $advocateId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    listAdvocateInvites(
+      filter: { advocateId: { eq: $advocateId }, status: { eq: PENDING } }
+      limit: $limit
+      nextToken: $nextToken
     ) {
-        listAdvocateInvites(
-            filter: {
-                advocateId: { eq: $advocateId }
-                status: { eq: PENDING }
-            }
-            limit: $limit
-            nextToken: $nextToken
-        ) {
-            items {
-                id
-                patientId
-                advocateId
-                conversationId
-                status
-                createdBy
-                approvedBy
-                approvedAt
-                createdAt
-                updatedAt
-            }
-            nextToken
-        }
+      items {
+        id
+        patientId
+        advocateId
+        conversationId
+        status
+        createdBy
+        approvedBy
+        approvedAt
+        createdAt
+        updatedAt
+      }
+      nextToken
     }
+  }
 `;
 
 const GET_USER = /* GraphQL */ `
-    query GetUser($id: ID!) {
-        getUser(id: $id) {
-            id
-            displayName
-            role
-            email
-        }
+  query GetUser($id: ID!) {
+    getUser(id: $id) {
+      id
+      displayName
+      role
+      email
     }
+  }
 `;
 
 const LIST_MY_CONVERSATIONS = /* GraphQL */ `
-    query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
-        listConversations(
-            filter: { memberIds: { contains: $sub } }
-            limit: $limit
-            nextToken: $nextToken
-        ) {
-            items {
-                id
-                title
-                memberIds
-                isGroup
-                createdAt
-                updatedAt
-                lastMessageAt
-            }
-            nextToken
-        }
+  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
+    listConversations(
+      filter: { memberIds: { contains: $sub } }
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        title
+        memberIds
+        isGroup
+        createdAt
+        updatedAt
+        lastMessageAt
+      }
+      nextToken
     }
+  }
 `;
 
 const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
-    query ConversationParticipantsByUser(
-        $userId: String!
-        $limit: Int
-        $nextToken: String
+  query ConversationParticipantsByUser(
+    $userId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    conversationParticipantsByUser(
+      userId: $userId
+      limit: $limit
+      nextToken: $nextToken
     ) {
-        conversationParticipantsByUser(
-            userId: $userId
-            limit: $limit
-            nextToken: $nextToken
-        ) {
-            items {
-                id
-                conversationId
-                userId
-                lastReadAt
-                updatedAt
-            }
-            nextToken
-        }
+      items {
+        id
+        conversationId
+        userId
+        lastReadAt
+        updatedAt
+      }
+      nextToken
     }
+  }
 `;
 
 const batchFetchUsers = async (ids) => {
@@ -177,6 +184,10 @@ const AdvocateHomeScreen = () => {
   const [directConvoByPatientId, setDirectConvoByPatientId] = useState({});
   const [careTeamConvoByPairKey, setCareTeamConvoByPairKey] = useState({});
 
+  const [selectedInvite, setSelectedInvite] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [inviteBusy, setInviteBusy] = useState(false);
+
   const assignmentsRef = useRef([]);
   const nextTokenRef = useRef(null);
 
@@ -205,6 +216,12 @@ const AdvocateHomeScreen = () => {
   }, [careTeamConvoByPairKey]);
 
   const displayName = currentUser?.displayName ?? "Advocate";
+
+  const closeInviteModal = useCallback(() => {
+    if (inviteBusy) return;
+    setModalVisible(false);
+    setSelectedInvite(null);
+  }, [inviteBusy]);
 
   const processAssignments = useCallback(async (assignmentsList) => {
     try {
@@ -602,6 +619,74 @@ const AdvocateHomeScreen = () => {
     [advocateId],
   );
 
+  const handleAcceptInvite = useCallback(async () => {
+    if (!selectedInvite?.id) return;
+
+    try {
+      setInviteBusy(true);
+
+      const res = await client.graphql({
+        query: ApproveInviteServer,
+        variables: { inviteId: selectedInvite.id },
+        authMode: "userPool",
+      });
+
+      devLog("Approve invite success:", res);
+
+      setModalVisible(false);
+      setSelectedInvite(null);
+
+      await Promise.all([
+        fetchPendingInvites(),
+        fetchAssignments({ reset: true }),
+        fetchMyReadState(),
+        fetchMyConversationsAndIndex(),
+      ]);
+    } catch (err) {
+      devLog("Accept invite failed:", err);
+      Alert.alert("Error", "Failed to accept invite.");
+    } finally {
+      setInviteBusy(false);
+    }
+  }, [
+    selectedInvite,
+    fetchPendingInvites,
+    fetchAssignments,
+    fetchMyReadState,
+    fetchMyConversationsAndIndex,
+  ]);
+
+  const handleDeclineInvite = useCallback(async () => {
+    if (!selectedInvite?.id) return;
+
+    try {
+      setInviteBusy(true);
+
+      const res = await client.graphql({
+        query: DeclineAdvocateInvite,
+        variables: {
+          input: {
+            id: selectedInvite.id,
+            status: "DECLINED",
+          },
+        },
+        authMode: "userPool",
+      });
+
+      devLog("Decline invite success:", res);
+
+      setModalVisible(false);
+      setSelectedInvite(null);
+
+      await fetchPendingInvites();
+    } catch (err) {
+      devLog("Decline invite failed:", err);
+      Alert.alert("Error", "Failed to decline invite.");
+    } finally {
+      setInviteBusy(false);
+    }
+  }, [selectedInvite, fetchPendingInvites]);
+
   const renderPatientItem = ({ item }) => {
     const subtitle = `Provider: ${item.providerName || "Unknown Provider"}`;
     const isUnread = computeUnreadForRow(item);
@@ -650,9 +735,7 @@ const AdvocateHomeScreen = () => {
       <View style={styles.pendingSection}>
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>Pending Invites</Text>
-          {loadingPendingInvites ? (
-            <ActivityIndicator size="small" />
-          ) : null}
+          {loadingPendingInvites ? <ActivityIndicator size="small" /> : null}
         </View>
 
         {pendingInviteRows.length === 0 ? (
@@ -662,7 +745,10 @@ const AdvocateHomeScreen = () => {
             <TouchableOpacity
               key={invite.id}
               style={styles.inviteCard}
-              onPress={() => navigation.navigate("InviteApproval")}
+              onPress={() => {
+                setSelectedInvite(invite);
+                setModalVisible(true);
+              }}
               activeOpacity={0.85}
             >
               <View style={styles.inviteCardTop}>
@@ -712,6 +798,58 @@ const AdvocateHomeScreen = () => {
           <ActivityIndicator size="small" />
         </View>
       ) : null}
+
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeInviteModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Care Team Invite</Text>
+
+            <Text style={styles.modalText}>
+              {selectedInvite?.patientName || "Unknown Patient"}
+            </Text>
+
+            <Text style={styles.modalSubtext}>
+              Invited by {selectedInvite?.providerName || "Unknown Provider"}
+            </Text>
+
+            {inviteBusy ? (
+              <ActivityIndicator style={styles.modalSpinner} />
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.acceptBtn}
+                  onPress={handleAcceptInvite}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.acceptText}>Accept</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.declineBtn}
+                  onPress={handleDeclineInvite}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.declineText}>Decline</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={closeInviteModal}
+              disabled={inviteBusy}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -745,6 +883,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+
   errorText: {
     ...theme.type.subtext,
     color: theme.colors.dangerText,
@@ -836,5 +975,84 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: theme.space.sm,
     paddingVertical: theme.space.xs,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    padding: 20,
+  },
+
+  modalCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    padding: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
+  },
+
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 8,
+    color: theme.colors.text,
+  },
+
+  modalText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+
+  modalSubtext: {
+    fontSize: 13,
+    color: theme.colors.subtext,
+    marginTop: 4,
+    marginBottom: 16,
+  },
+
+  modalSpinner: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+
+  acceptBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+
+  acceptText: {
+    color: theme.colors.primaryText || "#FFFFFF",
+    textAlign: "center",
+    fontWeight: "700",
+  },
+
+  declineBtn: {
+    backgroundColor: theme.colors.dangerBg,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+
+  declineText: {
+    color: theme.colors.dangerText,
+    textAlign: "center",
+    fontWeight: "700",
+  },
+
+  cancelBtn: {
+    marginTop: 12,
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+
+  cancelText: {
+    color: theme.colors.subtext,
+    fontWeight: "600",
   },
 });
