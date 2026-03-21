@@ -33,6 +33,7 @@ const {
   TABLE_CONVERSATION,
   TABLE_CONVERSATION_PARTICIPANT,
   TABLE_MESSAGE,
+  TABLE_ADVOCATE_INVITE,
 } = process.env;
 
 function requireEnv(name, value) {
@@ -52,6 +53,7 @@ requireEnv("TABLE_ADVOCATE_ASSIGNMENT", TABLE_ADVOCATE_ASSIGNMENT);
 requireEnv("TABLE_CONVERSATION", TABLE_CONVERSATION);
 requireEnv("TABLE_CONVERSATION_PARTICIPANT", TABLE_CONVERSATION_PARTICIPANT);
 requireEnv("TABLE_MESSAGE", TABLE_MESSAGE);
+requireEnv("TABLE_ADVOCATE_INVITE", TABLE_ADVOCATE_INVITE);
 
 exports.handler = async (event) => {
   console.log("[ADMIN_SEED] event.raw =", JSON.stringify(event));
@@ -76,6 +78,7 @@ exports.handler = async (event) => {
       !TABLE_CONVERSATION && "TABLE_CONVERSATION",
       !TABLE_CONVERSATION_PARTICIPANT && "TABLE_CONVERSATION_PARTICIPANT",
       !TABLE_MESSAGE && "TABLE_MESSAGE",
+      !TABLE_ADVOCATE_INVITE && "TABLE_ADVOCATE_INVITE",
     ].filter(Boolean);
 
     if (missingEnv.length) {
@@ -188,6 +191,7 @@ exports.handler = async (event) => {
       Conversation: 0,
       ProviderPatient: 0,
       AdvocateAssignment: 0,
+      AdvocateInvite: 0,
     };
 
     const usersToDelete = [];
@@ -224,6 +228,7 @@ exports.handler = async (event) => {
       TABLE_CONVERSATION_PARTICIPANT,
     );
     deleteSummary.Conversation = await clearTable(TABLE_CONVERSATION);
+    deleteSummary.AdvocateInvite = await clearTable(TABLE_ADVOCATE_INVITE);
     deleteSummary.ProviderPatient = await clearTable(TABLE_PROVIDER_PATIENT);
     deleteSummary.AdvocateAssignment = await clearTable(
       TABLE_ADVOCATE_ASSIGNMENT,
@@ -471,17 +476,6 @@ exports.handler = async (event) => {
         lastMessageAt: minutesAgo(15),
       });
 
-      const convLongTitle = conv({
-        id: "demo-long-title",
-        title:
-          "Long Title Test — Care Team Coordination for Follow-Up, Labs, Rx, and Scheduling",
-        isGroup: true,
-        createdBy: providerId,
-        memberIds: [patientId, providerId, advocateId, advocate2Id],
-        createdAt: minutesAgo(300),
-        lastMessageAt: minutesAgo(8),
-      });
-
       const convEmpty = conv({
         id: "demo-empty-thread",
         title: null,
@@ -501,7 +495,6 @@ exports.handler = async (event) => {
         convP3Provider,
         convP2Advocate1,
         convGroup4,
-        convLongTitle,
         convEmpty,
       ];
 
@@ -596,15 +589,6 @@ exports.handler = async (event) => {
           [advocate2Id]: minutesAgo(60),
           [provider2Id]: minutesAgo(500),
           [patient2Id]: minutesAgo(300),
-        },
-      ),
-
-      ...participantsForConversation(
-        seedPlan.conversations.byId["demo-long-title"],
-        {
-          [patientId]: minutesAgo(120),
-          [providerId]: minutesAgo(8),
-          [advocateId]: minutesAgo(10),
         },
       ),
 
@@ -950,34 +934,6 @@ exports.handler = async (event) => {
         "TEXT",
         "Once reviewed, I can help coordinate scheduling and insurance questions.",
         minutesAgo(15),
-      ),
-
-      message(
-        m("lt-001"),
-        "demo-long-title",
-        providerId,
-        seedPlan.conversations.byId["demo-long-title"].memberIds,
-        "SYSTEM",
-        "Care coordination thread created.",
-        minutesAgo(250),
-      ),
-      message(
-        m("lt-002"),
-        "demo-long-title",
-        patientId,
-        seedPlan.conversations.byId["demo-long-title"].memberIds,
-        "TEXT",
-        "I’m confused about labs vs follow-up timing. Which comes first?",
-        minutesAgo(120),
-      ),
-      message(
-        m("lt-003"),
-        "demo-long-title",
-        providerId,
-        seedPlan.conversations.byId["demo-long-title"].memberIds,
-        "TEXT",
-        "Labs first this week, then follow-up next week. Advocate can help schedule.",
-        minutesAgo(8),
       ),
     ];
 
