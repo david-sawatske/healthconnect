@@ -22,7 +22,9 @@ import { theme } from "../ui/theme";
 
 const client = generateClient();
 
-const log = (...args) => console.log("[PATIENT_DETAIL]", ...args);
+const devLog = (...args) => {
+  if (__DEV__) console.log("[PATIENT_DETAIL]", ...args);
+};
 
 const LIST_ADVOCATE_USERS = /* GraphQL */ `
   query ListAdvocateUsers {
@@ -104,10 +106,11 @@ async function safeGql({ query, variables = {}, label }) {
       variables,
       authMode: "userPool",
     });
-    log(label || "GQL", "OK", JSON.stringify(res?.data)?.slice(0, 240));
+
+    devLog(label || "GQL", "OK", JSON.stringify(res?.data)?.slice(0, 240));
     return res;
   } catch (err) {
-    log(label || "GQL", "ERR", err);
+    devLog(label || "GQL", "ERR", err);
     throw err;
   }
 }
@@ -164,27 +167,34 @@ function getInviteErrorAlert(message) {
   }
 
   return {
-    title: "Error",
-    body: "Failed to send advocate invite.",
+    title: "Unable to send invite",
+    body: "The advocate invite could not be sent. Please try again.",
   };
 }
 
 const HeroActionButton = ({ variant, title, subtitle, onPress, disabled }) => {
-  const base = [styles.heroBtn];
-  if (variant === "primary") base.push(styles.heroBtnPrimary);
-  if (variant === "secondary") base.push(styles.heroBtnSecondary);
-  if (variant === "ghost") base.push(styles.heroBtnGhost);
-  if (disabled) base.push(styles.heroBtnDisabled);
+  const buttonStyles = [styles.heroBtn];
+
+  if (variant === "primary") buttonStyles.push(styles.heroBtnPrimary);
+  if (variant === "secondary") buttonStyles.push(styles.heroBtnSecondary);
+  if (variant === "ghost") buttonStyles.push(styles.heroBtnGhost);
+  if (disabled) buttonStyles.push(styles.heroBtnDisabled);
 
   const titleStyle = [styles.heroBtnTitle];
   const subStyle = [styles.heroBtnSub];
+
   if (variant === "primary") {
     titleStyle.push(styles.heroBtnTitleOnPrimary);
     subStyle.push(styles.heroBtnSubOnPrimary);
   }
 
   return (
-    <TouchableOpacity style={base} onPress={onPress} disabled={disabled}>
+    <TouchableOpacity
+      style={buttonStyles}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.85}
+    >
       <Text style={titleStyle} numberOfLines={1}>
         {title}
       </Text>
@@ -193,6 +203,10 @@ const HeroActionButton = ({ variant, title, subtitle, onPress, disabled }) => {
       </Text>
     </TouchableOpacity>
   );
+};
+
+const SectionCard = ({ children, style }) => {
+  return <View style={[styles.sectionCard, style]}>{children}</View>;
 };
 
 const PatientDetailScreen = () => {
@@ -255,6 +269,7 @@ const PatientDetailScreen = () => {
           (a, b) =>
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );
+
         setAdvocateAssignments(sorted);
 
         const uniqueAdvocateIds = [
@@ -269,7 +284,7 @@ const PatientDetailScreen = () => {
                 variables: { id },
                 label: `GetAdvocateUser:${id}`,
               }).catch((err) => {
-                log("GetAdvocateUser ERR", id, err);
+                devLog("GetAdvocateUser ERR", id, err);
                 return null;
               }),
             ),
@@ -286,9 +301,9 @@ const PatientDetailScreen = () => {
             return next;
           });
         }
-      } catch (e) {
+      } catch (error) {
         if (!mounted) return;
-        log("Load advocate assignments ERR", e);
+        devLog("Load advocate assignments ERR", error);
       } finally {
         if (mounted) setLoadingAssignments(false);
       }
@@ -339,7 +354,7 @@ const PatientDetailScreen = () => {
                 variables: { id },
                 label: `GetInviteAdvocateUser:${id}`,
               }).catch((err) => {
-                log("GetInviteAdvocateUser ERR", id, err);
+                devLog("GetInviteAdvocateUser ERR", id, err);
                 return null;
               }),
             ),
@@ -356,9 +371,9 @@ const PatientDetailScreen = () => {
             return next;
           });
         }
-      } catch (e) {
+      } catch (error) {
         if (!mounted) return;
-        log("Load advocate invites ERR", e);
+        devLog("Load advocate invites ERR", error);
       } finally {
         if (mounted) setLoadingInvites(false);
       }
@@ -387,8 +402,8 @@ const PatientDetailScreen = () => {
 
         if (!mounted) return;
         setProviderUser(res?.data?.getUser || null);
-      } catch (e) {
-        log("GetProviderUserForPatient ERR", e);
+      } catch (error) {
+        devLog("GetProviderUserForPatient ERR", error);
       }
     };
 
@@ -448,9 +463,12 @@ const PatientDetailScreen = () => {
           conversation,
           title: conversation.title || targetUser.displayName || "Conversation",
         });
-      } catch (err) {
-        log("openDirectChat ERR", err);
-        Alert.alert("Unable to open chat", "Something went wrong.");
+      } catch (error) {
+        devLog("openDirectChat ERR", error);
+        Alert.alert(
+          "Unable to open chat",
+          "The conversation could not be opened. Please try again.",
+        );
       }
     },
     [viewerId, currentUser?.displayName, navigation],
@@ -458,17 +476,19 @@ const PatientDetailScreen = () => {
 
   const openCareTeamChat = useCallback(async () => {
     if (!patientId) {
-      Alert.alert("Error", "Missing patient info.");
+      Alert.alert("Missing patient", "Patient information is not available.");
       return;
     }
+
     if (!viewerId) {
-      Alert.alert("Error", "Current user not loaded yet.");
+      Alert.alert("User not ready", "Your account is still loading.");
       return;
     }
+
     if (!effectiveProviderId) {
       Alert.alert(
         "Missing provider context",
-        "This patient can have multiple providers. Open this screen from a specific provider relationship so we can start the correct care team chat.",
+        "Open this patient from a specific provider relationship so the correct care team chat can be used.",
       );
       return;
     }
@@ -512,9 +532,12 @@ const PatientDetailScreen = () => {
         conversation: direct,
         title: direct.title || "Conversation",
       });
-    } catch (err) {
-      log("openCareTeamChat ERR", err);
-      Alert.alert("Error", "Unable to open conversation.");
+    } catch (error) {
+      devLog("openCareTeamChat ERR", error);
+      Alert.alert(
+        "Unable to open conversation",
+        "The conversation could not be opened. Please try again.",
+      );
     }
   }, [
     patientId,
@@ -530,7 +553,7 @@ const PatientDetailScreen = () => {
     if (!isProviderView) return;
 
     if (!viewerId) {
-      Alert.alert("Error", "Provider not loaded yet.");
+      Alert.alert("User not ready", "Your provider account is still loading.");
       return;
     }
 
@@ -543,6 +566,7 @@ const PatientDetailScreen = () => {
     }
 
     setAdvocatePickerVisible(true);
+
     if (advocates.length > 0) return;
 
     setAdvocatesLoading(true);
@@ -552,11 +576,15 @@ const PatientDetailScreen = () => {
         variables: {},
         label: "ListAdvocateUsers",
       });
+
       const items = res?.data?.listUsers?.items || [];
       setAdvocates(items);
-    } catch (e) {
-      log("ListAdvocateUsers ERR", e);
-      Alert.alert("Error", "Failed to load advocates.");
+    } catch (error) {
+      devLog("ListAdvocateUsers ERR", error);
+      Alert.alert(
+        "Unable to load advocates",
+        "The advocate list could not be loaded. Please try again.",
+      );
     } finally {
       setAdvocatesLoading(false);
     }
@@ -565,17 +593,26 @@ const PatientDetailScreen = () => {
   const handleAssignAdvocate = useCallback(
     async (selectedAdvocate) => {
       if (!isProviderView) {
-        Alert.alert("Error", "Only providers can invite advocates.");
+        Alert.alert(
+          "Action unavailable",
+          "Only providers can invite advocates.",
+        );
         return;
       }
+
       if (!viewerId) {
-        Alert.alert("Error", "Provider not loaded yet.");
+        Alert.alert(
+          "User not ready",
+          "Your provider account is still loading.",
+        );
         return;
       }
+
       if (!patientId) {
-        Alert.alert("Error", "Missing patient info.");
+        Alert.alert("Missing patient", "Patient information is not available.");
         return;
       }
+
       if (!effectiveProviderId) {
         Alert.alert(
           "Missing provider context",
@@ -583,8 +620,12 @@ const PatientDetailScreen = () => {
         );
         return;
       }
+
       if (!selectedAdvocate?.id) {
-        Alert.alert("Error", "Missing advocate info.");
+        Alert.alert(
+          "Missing advocate",
+          "The selected advocate could not be identified.",
+        );
         return;
       }
 
@@ -618,6 +659,7 @@ const PatientDetailScreen = () => {
       }
 
       setAssigning(true);
+
       try {
         const activeAdvocateIds = Array.from(
           new Set(
@@ -672,10 +714,10 @@ const PatientDetailScreen = () => {
             selectedAdvocate.displayName || selectedAdvocate.email || "Advocate"
           } can approve this from their invites screen.`,
         );
-      } catch (e) {
-        const message = getGraphQlErrorMessage(e);
+      } catch (error) {
+        const message = getGraphQlErrorMessage(error);
         const alertCopy = getInviteErrorAlert(message);
-        log("Create advocate invite ERR", message, e);
+        devLog("Create advocate invite ERR", message, error);
         Alert.alert(alertCopy.title, alertCopy.body);
       } finally {
         setAssigning(false);
@@ -729,9 +771,12 @@ const PatientDetailScreen = () => {
                     a.id === assignment.id ? { ...a, ...updated } : a,
                   ),
                 );
-              } catch (e) {
-                log("Update advocate assignment (remove) ERR", e);
-                Alert.alert("Error", "Failed to remove advocate.");
+              } catch (error) {
+                devLog("Update advocate assignment (remove) ERR", error);
+                Alert.alert(
+                  "Unable to remove advocate",
+                  "The advocate could not be removed. Please try again.",
+                );
               }
             },
           },
@@ -759,20 +804,20 @@ const PatientDetailScreen = () => {
 
     if (!effectiveProviderId) {
       return (
-        <View style={styles.managePanel}>
+        <SectionCard style={styles.managePanel}>
           <Text style={styles.manageTitle}>Advocates</Text>
           <Text style={styles.manageHint}>
             This patient can have multiple providers. Open this screen from a
             specific provider relationship to manage advocates for that
             provider.
           </Text>
-        </View>
+        </SectionCard>
       );
     }
 
     if (loadingAssignments || loadingInvites) {
       return (
-        <View style={styles.managePanel}>
+        <SectionCard style={styles.managePanel}>
           <View style={styles.manageHeaderRow}>
             <Text style={styles.manageTitle}>Advocates</Text>
             <View style={styles.heroLoadingPill}>
@@ -780,7 +825,7 @@ const PatientDetailScreen = () => {
               <Text style={styles.heroLoadingText}>Loading</Text>
             </View>
           </View>
-        </View>
+        </SectionCard>
       );
     }
 
@@ -788,9 +833,9 @@ const PatientDetailScreen = () => {
     const hasPending = pendingInvitesForManagePanel.length > 0;
 
     return (
-      <View style={styles.managePanel}>
+      <SectionCard style={styles.managePanel}>
         <View style={styles.manageHeaderRow}>
-          <View style={{ flex: 1 }}>
+          <View style={styles.flexOne}>
             <Text style={styles.manageTitle}>Advocates</Text>
             <Text style={styles.manageHint} numberOfLines={2}>
               Active advocates for {providerDisplayName}. Pending invites stay
@@ -799,15 +844,14 @@ const PatientDetailScreen = () => {
           </View>
         </View>
 
-        {hasActive ? (
-          <>
-            {activeAssignmentsForManagePanel.map((assignment) => {
+        {hasActive
+          ? activeAssignmentsForManagePanel.map((assignment) => {
               const user = advocateUsersById[assignment.advocateId] || {};
               const name = user.displayName || user.email || "Advocate";
 
               return (
                 <View key={assignment.id} style={styles.manageRow}>
-                  <View style={{ flex: 1 }}>
+                  <View style={styles.flexOne}>
                     <View style={styles.manageRowTop}>
                       <Text style={styles.manageName} numberOfLines={1}>
                         {name}
@@ -823,6 +867,7 @@ const PatientDetailScreen = () => {
                       style={styles.manageMsgBtn}
                       onPress={() => openDirectChat(user)}
                       disabled={!user?.id || !viewerId || loadingCurrentUser}
+                      activeOpacity={0.85}
                     >
                       <Text style={styles.manageMsgBtnText}>Message</Text>
                     </TouchableOpacity>
@@ -830,15 +875,15 @@ const PatientDetailScreen = () => {
                     <TouchableOpacity
                       style={styles.manageRemoveBtn}
                       onPress={() => handleRemoveAssignment(assignment)}
+                      activeOpacity={0.85}
                     >
                       <Text style={styles.manageRemoveBtnText}>Remove</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               );
-            })}
-          </>
-        ) : null}
+            })
+          : null}
 
         {hasPending ? (
           <View style={styles.pendingSection}>
@@ -849,7 +894,7 @@ const PatientDetailScreen = () => {
 
               return (
                 <View key={invite.id} style={styles.pendingRow}>
-                  <View style={{ flex: 1 }}>
+                  <View style={styles.flexOne}>
                     <Text style={styles.manageName} numberOfLines={1}>
                       {name}
                     </Text>
@@ -884,12 +929,13 @@ const PatientDetailScreen = () => {
           ]}
           onPress={openAdvocatePicker}
           disabled={assigning}
+          activeOpacity={0.85}
         >
           <Text style={styles.manageAssignBtnBelowText}>
-            {assigning ? "Sending..." : "Invite Advocate"}
+            {assigning ? "Sending…" : "Invite Advocate"}
           </Text>
         </TouchableOpacity>
-      </View>
+      </SectionCard>
     );
   };
 
@@ -904,6 +950,7 @@ const PatientDetailScreen = () => {
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
+          activeOpacity={0.85}
         >
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
@@ -914,11 +961,11 @@ const PatientDetailScreen = () => {
           </Text>
         </View>
 
-        <View style={{ width: 40 }} />
+        <View style={styles.topBarSpacer} />
       </View>
 
       <View style={styles.content}>
-        <View style={styles.heroCard}>
+        <SectionCard style={styles.heroCard}>
           <View style={styles.heroHeaderRow}>
             <Text style={styles.heroTitle}>Care Team</Text>
 
@@ -989,7 +1036,7 @@ const PatientDetailScreen = () => {
                 title={
                   manageExpanded ? "Hide Manage Advocates" : "Manage Advocates"
                 }
-                subtitle="View advocates + invites + messaging"
+                subtitle="View advocates, invites, and messages"
                 onPress={handleToggleManage}
                 disabled={!viewerId || loadingCurrentUser}
               />
@@ -997,7 +1044,7 @@ const PatientDetailScreen = () => {
           </View>
 
           {renderManageAdvocatesPanel()}
-        </View>
+        </SectionCard>
       </View>
 
       {isProviderView ? (
@@ -1081,8 +1128,9 @@ const AdvocatePickerModal = ({
         onPress={() => {
           if (!isDisabled) setSelectedAdvocateId(item.id);
         }}
+        activeOpacity={0.85}
       >
-        <View style={{ flex: 1 }}>
+        <View style={styles.flexOne}>
           <Text style={styles.advocateName} numberOfLines={1}>
             {item.displayName || item.email || "Unnamed Advocate"}
           </Text>
@@ -1105,7 +1153,7 @@ const AdvocatePickerModal = ({
           <Text style={styles.modalTitle}>Invite Advocate</Text>
 
           {loading ? (
-            <ActivityIndicator style={{ marginVertical: 16 }} />
+            <ActivityIndicator style={styles.modalLoading} />
           ) : advocates.length === 0 ? (
             <Text style={styles.cardText}>No advocates available.</Text>
           ) : (
@@ -1113,18 +1161,24 @@ const AdvocatePickerModal = ({
               data={advocates}
               keyExtractor={(item) => item.id}
               renderItem={renderItem}
-              style={{ maxHeight: 320, width: "100%" }}
+              style={styles.modalList}
               keyboardShouldPersistTaps="handled"
             />
           )}
 
           <View style={styles.modalButtons}>
-            <TouchableOpacity style={styles.secondaryButton} onPress={onClose}>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={onClose}
+              activeOpacity={0.85}
+            >
               <Text style={styles.secondaryButtonText}>Cancel</Text>
             </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.primaryButton}
               onPress={handleConfirm}
+              activeOpacity={0.85}
             >
               <Text style={styles.primaryButtonText}>Send Invite</Text>
             </TouchableOpacity>
@@ -1136,18 +1190,26 @@ const AdvocatePickerModal = ({
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.bg },
+  flexOne: {
+    flex: 1,
+  },
+
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.bg,
+  },
 
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: theme.space.sm,
     paddingBottom: theme.space.xs,
-    gap: 10,
+    gap: theme.space.xs,
   },
+
   backBtn: {
     width: 40,
-    height: 36,
+    height: 40,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.card,
     alignItems: "center",
@@ -1156,247 +1218,349 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     ...theme.shadow.card,
   },
-  backText: { fontSize: 18, fontWeight: "800", color: theme.colors.text },
 
-  topBarTitleWrap: { flex: 1 },
-  topBarTitle: { ...theme.type.h2, fontSize: 18 },
+  backText: {
+    ...theme.type.body,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
 
-  content: { flex: 1, paddingHorizontal: theme.space.sm, paddingTop: 6 },
+  topBarTitleWrap: {
+    flex: 1,
+  },
 
-  heroCard: {
+  topBarTitle: {
+    ...theme.type.h2,
+    textAlign: "center",
+  },
+
+  topBarSpacer: {
+    width: 40,
+    height: 40,
+  },
+
+  content: {
+    flex: 1,
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+  },
+
+  sectionCard: {
     backgroundColor: theme.colors.card,
     borderRadius: theme.radius.lg,
     padding: theme.space.sm,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
-    marginBottom: theme.space.sm,
     ...theme.shadow.card,
   },
+
+  heroCard: {
+    marginBottom: theme.space.sm,
+  },
+
   heroHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: theme.space.xs,
   },
-  heroTitle: { ...theme.type.h3, fontSize: 16, fontWeight: "800" },
+
+  heroTitle: {
+    ...theme.type.h3,
+    color: theme.colors.text,
+  },
 
   heroLoadingPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    gap: theme.space.xs,
+    paddingHorizontal: theme.space.xs + 2,
+    paddingVertical: theme.space.xs / 2,
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.disabledBg,
   },
+
   heroLoadingText: {
-    fontSize: 12,
+    ...theme.type.small,
     color: theme.colors.muted,
-    fontWeight: "700",
+    fontWeight: "600",
   },
 
-  heroActionsGrid: { marginTop: theme.space.sm, gap: 10 },
+  heroActionsGrid: {
+    marginTop: theme.space.sm,
+    gap: theme.space.xs,
+  },
 
   heroBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingVertical: theme.space.xs + 4,
+    paddingHorizontal: theme.space.xs + 4,
     borderRadius: theme.radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
   },
+
   heroBtnPrimary: {
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
+
   heroBtnSecondary: {
     backgroundColor: theme.colors.card,
     borderColor: theme.colors.border,
   },
+
   heroBtnGhost: {
     backgroundColor: theme.colors.bg,
     borderColor: theme.colors.border,
   },
-  heroBtnDisabled: { opacity: 0.6 },
 
-  heroBtnTitle: { fontSize: 14, fontWeight: "800", color: theme.colors.text },
-  heroBtnSub: { marginTop: 3, fontSize: 12, color: theme.colors.subtext },
-  heroBtnTitleOnPrimary: { color: theme.colors.primaryText },
-  heroBtnSubOnPrimary: { color: theme.colors.infoBg },
+  heroBtnDisabled: {
+    opacity: 0.6,
+  },
+
+  heroBtnTitle: {
+    ...theme.type.subtext,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+
+  heroBtnSub: {
+    ...theme.type.small,
+    marginTop: 4,
+    color: theme.colors.subtext,
+  },
+
+  heroBtnTitleOnPrimary: {
+    color: theme.colors.primaryText,
+  },
+
+  heroBtnSubOnPrimary: {
+    color: theme.colors.infoBg,
+  },
 
   managePanel: {
     marginTop: theme.space.sm,
-    paddingTop: theme.space.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border,
   },
+
   manageHeaderRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 10,
+    gap: theme.space.xs,
   },
-  manageTitle: { ...theme.type.h3, fontSize: 14, fontWeight: "800" },
-  manageHint: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
+
+  manageTitle: {
+    ...theme.type.h3,
+    color: theme.colors.text,
+  },
+
+  manageHint: {
+    ...theme.type.small,
+    marginTop: 4,
+    color: theme.colors.subtext,
+    lineHeight: 18,
+  },
 
   manageRow: {
-    marginTop: 10,
-    padding: 12,
+    marginTop: theme.space.xs,
+    padding: theme.space.xs + 4,
     borderRadius: theme.radius.lg,
-    backgroundColor: theme.colors.card,
+    backgroundColor: theme.colors.bg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: theme.space.xs,
   },
+
   manageRowTop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    gap: theme.space.xs,
   },
+
   manageName: {
-    fontSize: 14,
-    fontWeight: "800",
+    ...theme.type.body,
+    fontWeight: "600",
     color: theme.colors.text,
     flex: 1,
-    paddingRight: 6,
+    paddingRight: theme.space.xs,
   },
-  manageSub: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
 
-  manageActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  manageSub: {
+    ...theme.type.small,
+    marginTop: 4,
+    color: theme.colors.subtext,
+  },
+
+  manageActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.space.xs,
+  },
+
   manageMsgBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: theme.space.xs + 4,
+    paddingVertical: theme.space.xs,
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.infoBg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+
   manageMsgBtnText: {
-    fontSize: 12,
-    fontWeight: "800",
+    ...theme.type.small,
+    fontWeight: "700",
     color: theme.colors.infoText,
   },
 
   manageRemoveBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: theme.space.xs + 4,
+    paddingVertical: theme.space.xs,
     borderRadius: theme.radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.dangerBg,
     backgroundColor: theme.colors.dangerBg,
   },
+
   manageRemoveBtnText: {
-    fontSize: 12,
-    fontWeight: "800",
+    ...theme.type.small,
+    fontWeight: "700",
     color: theme.colors.dangerText,
   },
 
   pendingSection: {
-    marginTop: 12,
-    paddingTop: 8,
+    marginTop: theme.space.sm,
+    paddingTop: theme.space.xs,
   },
+
   pendingSectionTitle: {
-    fontSize: 12,
-    fontWeight: "800",
+    ...theme.type.small,
+    fontWeight: "700",
     color: theme.colors.muted,
     textTransform: "uppercase",
     letterSpacing: 0.4,
   },
+
   pendingRow: {
-    marginTop: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    marginTop: theme.space.xs,
+    paddingVertical: theme.space.sm - 2,
+    paddingHorizontal: theme.space.xs + 4,
     borderRadius: theme.radius.lg,
     backgroundColor: theme.colors.bg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 12,
+    gap: theme.space.xs,
     minHeight: 72,
   },
+
   pendingSub: {
+    ...theme.type.small,
     marginTop: 4,
-    fontSize: 12,
     color: theme.colors.subtext,
   },
+
   pendingPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: theme.space.xs + 2,
+    paddingVertical: theme.space.xs / 2 + 2,
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.infoBg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+
   pendingPillText: {
-    fontSize: 12,
-    fontWeight: "800",
+    ...theme.type.small,
+    fontWeight: "700",
     color: theme.colors.infoText,
   },
 
   manageEmptyBox: {
-    marginTop: 10,
-    padding: 12,
+    marginTop: theme.space.xs,
+    padding: theme.space.xs + 4,
     borderRadius: theme.radius.lg,
     backgroundColor: theme.colors.bg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+
   manageEmptyTitle: {
-    fontSize: 13,
-    fontWeight: "800",
+    ...theme.type.subtext,
+    fontWeight: "700",
     color: theme.colors.text,
   },
-  manageEmptyBody: { marginTop: 4, fontSize: 12, color: theme.colors.subtext },
+
+  manageEmptyBody: {
+    ...theme.type.small,
+    marginTop: 4,
+    color: theme.colors.subtext,
+    lineHeight: 18,
+  },
 
   manageAssignBtnBelow: {
-    marginTop: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    marginTop: theme.space.xs,
+    paddingHorizontal: theme.space.xs + 4,
+    paddingVertical: theme.space.xs + 2,
     borderRadius: theme.radius.lg,
     backgroundColor: theme.colors.primary,
     alignItems: "center",
   },
+
   manageAssignBtnBelowText: {
-    fontSize: 12,
-    fontWeight: "800",
+    ...theme.type.small,
+    fontWeight: "700",
     color: theme.colors.primaryText,
   },
 
-  cardText: { ...theme.type.body, marginBottom: 4 },
+  cardText: {
+    ...theme.type.body,
+    color: theme.colors.text,
+  },
 
   primaryButton: {
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: theme.space.xs + 2,
+    paddingHorizontal: theme.space.sm,
     borderRadius: theme.radius.pill,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: theme.colors.primary,
+    minWidth: 120,
   },
-  primaryButtonText: { color: theme.colors.primaryText, fontWeight: "700" },
+
+  primaryButtonText: {
+    ...theme.type.subtext,
+    fontWeight: "700",
+    color: theme.colors.primaryText,
+  },
 
   secondaryButton: {
-    marginTop: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: theme.space.xs + 2,
+    paddingHorizontal: theme.space.sm,
     borderRadius: theme.radius.pill,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.card,
+    minWidth: 100,
   },
-  secondaryButtonText: { fontWeight: "700", color: theme.colors.text },
+
+  secondaryButtonText: {
+    ...theme.type.subtext,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
 
   modalOverlay: {
     flex: 1,
     backgroundColor: theme.colors.overlay,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 20,
+    paddingHorizontal: theme.space.sm,
   },
+
   modalContent: {
     width: "100%",
     backgroundColor: theme.colors.card,
@@ -1406,43 +1570,63 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     ...theme.shadow.floating,
   },
-  modalTitle: { ...theme.type.h3, marginBottom: 8 },
+
+  modalTitle: {
+    ...theme.type.h3,
+    marginBottom: theme.space.xs,
+    color: theme.colors.text,
+  },
+
+  modalLoading: {
+    marginVertical: theme.space.sm,
+  },
+
+  modalList: {
+    maxHeight: 320,
+    width: "100%",
+  },
 
   modalButtons: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    marginTop: 12,
-    gap: 10,
+    marginTop: theme.space.sm,
+    gap: theme.space.xs,
   },
 
   advocateRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
+    paddingVertical: theme.space.xs + 2,
+    paddingHorizontal: theme.space.xs + 2,
     borderRadius: theme.radius.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "transparent",
   },
+
   advocateRowSelected: {
     backgroundColor: theme.colors.providerBg,
     borderColor: theme.colors.border,
   },
-  advocateRowDisabled: { opacity: 0.45 },
-  advocateName: {
-    flex: 1,
-    fontSize: 14,
-    color: theme.colors.text,
-    fontWeight: "700",
+
+  advocateRowDisabled: {
+    opacity: 0.45,
   },
+
+  advocateName: {
+    ...theme.type.subtext,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+
   advocateStatusText: {
-    fontSize: 12,
+    ...theme.type.small,
     color: theme.colors.subtext,
     marginTop: 2,
   },
+
   advocateSelectedMark: {
-    fontSize: 16,
-    fontWeight: "800",
+    ...theme.type.body,
+    fontWeight: "700",
     color: theme.colors.primary,
   },
 });
