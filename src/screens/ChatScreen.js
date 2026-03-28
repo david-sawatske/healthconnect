@@ -3,13 +3,13 @@ import {
   View,
   Text,
   TextInput,
-  Button,
   StyleSheet,
   FlatList,
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallSignals } from "../hooks/useCallSignals";
@@ -22,6 +22,10 @@ import {
   badgeStyleForRole,
 } from "../features/chat/chatUiHelpers";
 import { theme } from "../ui/theme";
+
+const devLog = (...args) => {
+  if (__DEV__) console.log("[CHAT_SCREEN]", ...args);
+};
 
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
@@ -109,6 +113,32 @@ export default function ChatScreen({ route, navigation }) {
     requestAnimationFrame(() => listRef.current?.scrollToEnd?.({ animated }));
   };
 
+  const handleAttach = useCallback(async () => {
+    try {
+      await attach();
+      scrollToBottom(true);
+    } catch (error) {
+      devLog("attach failed", error);
+      Alert.alert(
+        "Upload failed",
+        "Your attachment could not be uploaded. Please try again.",
+      );
+    }
+  }, [attach]);
+
+  const handleSend = useCallback(async () => {
+    try {
+      await send();
+      scrollToBottom(true);
+    } catch (error) {
+      devLog("send failed", error);
+      Alert.alert(
+        "Message not sent",
+        "Your message could not be sent. Please try again.",
+      );
+    }
+  }, [send]);
+
   const renderItem = ({ item, index }) => {
     const isSystem = item.type === "SYSTEM";
     const mine = item.senderId === myId;
@@ -124,7 +154,7 @@ export default function ChatScreen({ route, navigation }) {
 
     return (
       <>
-        {showDateSeparator && (
+        {showDateSeparator ? (
           <View style={styles.dateSeparatorRow}>
             <View style={styles.dateSeparator}>
               <Text style={styles.dateSeparatorText}>
@@ -132,7 +162,7 @@ export default function ChatScreen({ route, navigation }) {
               </Text>
             </View>
           </View>
-        )}
+        ) : null}
 
         {isSystem ? (
           <View style={styles.systemRow}>
@@ -160,16 +190,16 @@ export default function ChatScreen({ route, navigation }) {
               </Text>
             </View>
 
-            {item.type === "TEXT" && !!item.body && (
+            {item.type === "TEXT" && !!item.body ? (
               <Text style={styles.body}>{item.body}</Text>
-            )}
+            ) : null}
 
             {(item.type === "IMAGE" ||
               item.type === "VIDEO" ||
               item.type === "FILE") &&
-              !!item.mediaKey && (
-                <MediaBubble mediaKey={item.mediaKey} type={item.type} />
-              )}
+            !!item.mediaKey ? (
+              <MediaBubble mediaKey={item.mediaKey} type={item.type} />
+            ) : null}
 
             <Text style={styles.meta}>{formatTime(item.createdAt)}</Text>
           </View>
@@ -178,16 +208,23 @@ export default function ChatScreen({ route, navigation }) {
     );
   };
 
+  const canSend = !!text.trim() && !sending && !!myId;
+  const canStartCall = !!conversationId && !!myId;
+
   return (
     <KeyboardAvoidingView
       style={styles.screen}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
+      keyboardVerticalOffset={0}
     >
       <View
         style={[
           styles.mePillRow,
-          { paddingTop: insets.top ? insets.top / 4 : 6 },
+          {
+            paddingTop: insets.top
+              ? Math.max(theme.space.xs, insets.top / 4)
+              : theme.space.xs,
+          },
         ]}
       >
         <Text style={styles.mePillName}>{myDisplayName}</Text>
@@ -220,10 +257,11 @@ export default function ChatScreen({ route, navigation }) {
           <TouchableOpacity
             accessibilityLabel="Start a video call"
             style={[
-              styles.iconBtnCall,
-              (!conversationId || !myId) && styles.iconBtnDisabled,
+              styles.iconButton,
+              styles.callButton,
+              !canStartCall && styles.iconButtonDisabled,
             ]}
-            disabled={!conversationId || !myId}
+            disabled={!canStartCall}
             onPress={() =>
               navigation?.navigate?.("Call", {
                 conversation: conversationParam || {
@@ -232,24 +270,20 @@ export default function ChatScreen({ route, navigation }) {
                 },
               })
             }
+            activeOpacity={0.85}
           >
-            <Text style={styles.iconBtnText}>📞</Text>
+            <Text style={[styles.iconButtonText, styles.callButtonText]}>
+              📞
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             accessibilityLabel="Attach media"
-            style={styles.iconBtn}
-            onPress={async () => {
-              try {
-                await attach();
-                scrollToBottom(true);
-              } catch (e) {
-                console.log("[CHAT] attach error:", e);
-                Alert.alert("Upload failed", "Could not upload attachment.");
-              }
-            }}
+            style={styles.iconButton}
+            onPress={handleAttach}
+            activeOpacity={0.85}
           >
-            <Text style={styles.iconBtnText}>＋</Text>
+            <Text style={styles.iconButtonText}>＋</Text>
           </TouchableOpacity>
 
           <TextInput
@@ -258,32 +292,32 @@ export default function ChatScreen({ route, navigation }) {
             placeholderTextColor={theme.colors.subtext}
             value={text}
             onChangeText={setText}
-            onSubmitEditing={async () => {
-              try {
-                await send();
-                scrollToBottom(true);
-              } catch {
-                Alert.alert("Error", "Failed to send message.");
-              }
-            }}
+            onSubmitEditing={handleSend}
             returnKeyType="send"
           />
 
-          <View style={styles.sendBtnWrap}>
-            <Button
-              title={sending ? "Sending…" : "Send"}
-              onPress={async () => {
-                try {
-                  await send();
-                  scrollToBottom(true);
-                } catch {
-                  Alert.alert("Error", "Failed to send message.");
-                }
-              }}
-              disabled={!text.trim() || sending || !myId}
-              color={theme.colors.primary}
-            />
-          </View>
+          <TouchableOpacity
+            style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+            onPress={handleSend}
+            disabled={!canSend}
+            activeOpacity={0.85}
+          >
+            {sending ? (
+              <ActivityIndicator
+                size="small"
+                color={theme.colors.primaryText}
+              />
+            ) : (
+              <Text
+                style={[
+                  styles.sendButtonText,
+                  !canSend && styles.sendButtonTextDisabled,
+                ]}
+              >
+                Send
+              </Text>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -291,7 +325,10 @@ export default function ChatScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.colors.bg },
+  screen: {
+    flex: 1,
+    backgroundColor: theme.colors.bg,
+  },
 
   divider: {
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -309,14 +346,16 @@ const styles = StyleSheet.create({
     marginTop: theme.space.sm,
     marginBottom: theme.space.xs,
   },
+
   dateSeparator: {
     backgroundColor: theme.colors.disabledBg,
-    paddingVertical: 4,
-    paddingHorizontal: 12,
+    paddingVertical: theme.space.xs / 2,
+    paddingHorizontal: theme.space.xs + 4,
     borderRadius: theme.radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+
   dateSeparatorText: {
     ...theme.type.small,
     color: theme.colors.muted,
@@ -325,9 +364,9 @@ const styles = StyleSheet.create({
 
   bubble: {
     maxWidth: "85%",
-    padding: theme.space.xs + 2,
+    padding: theme.space.xs,
     borderRadius: theme.radius.md,
-    marginVertical: 6,
+    marginVertical: theme.space.xs / 2,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.card,
@@ -338,21 +377,25 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.infoBg,
     borderColor: theme.colors.border,
   },
+
   theirs: {
     alignSelf: "flex-start",
     backgroundColor: theme.colors.card,
     borderColor: theme.colors.border,
   },
+
   patient: {
     alignSelf: "flex-start",
     backgroundColor: theme.colors.pillPatientBg,
     borderColor: theme.colors.border,
   },
+
   provider: {
     alignSelf: "flex-start",
     backgroundColor: theme.colors.providerBg,
     borderColor: theme.colors.border,
   },
+
   advocate: {
     alignSelf: "flex-start",
     backgroundColor: theme.colors.advocateBg,
@@ -362,35 +405,40 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginBottom: 4,
+    gap: theme.space.xs,
+    marginBottom: theme.space.xs / 2,
   },
+
   sender: {
-    fontSize: 12,
+    ...theme.type.small,
     fontWeight: "600",
     color: theme.colors.muted,
   },
 
   badge: {
     fontSize: 10,
-    paddingHorizontal: 8,
+    paddingHorizontal: theme.space.xs,
     paddingVertical: 2,
     borderRadius: theme.radius.pill,
     overflow: "hidden",
     color: theme.colors.text,
   },
+
   badgePatient: {
     backgroundColor: theme.colors.pillPatientBg,
     color: theme.colors.pillPatientText,
   },
+
   badgeProvider: {
     backgroundColor: theme.colors.pillProviderBg,
     color: theme.colors.pillProviderText,
   },
+
   badgeAdvocate: {
     backgroundColor: theme.colors.pillAdvocateBg,
     color: theme.colors.pillAdvocateText,
   },
+
   badgeOther: {
     backgroundColor: theme.colors.disabledBg,
     color: theme.colors.disabledText,
@@ -400,18 +448,20 @@ const styles = StyleSheet.create({
     ...theme.type.body,
     color: theme.colors.text,
   },
+
   meta: {
     ...theme.type.small,
     color: theme.colors.subtext,
-    marginTop: 6,
+    marginTop: theme.space.xs / 2,
     textAlign: "right",
   },
 
   systemRow: {
     alignSelf: "center",
-    marginVertical: 8,
+    marginVertical: theme.space.xs,
     maxWidth: "92%",
   },
+
   systemPill: {
     paddingVertical: 6,
     paddingHorizontal: 10,
@@ -420,6 +470,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+
   systemText: {
     ...theme.type.small,
     color: theme.colors.infoText,
@@ -431,20 +482,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: theme.space.sm,
     paddingBottom: theme.space.xs,
-    gap: 8,
+    gap: theme.space.xs,
     backgroundColor: theme.colors.bg,
   },
+
   mePillName: {
     ...theme.type.subtext,
     fontWeight: "600",
     color: theme.colors.text,
   },
+
   mePillRole: {
     paddingHorizontal: 10,
     paddingVertical: 2,
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.disabledBg,
   },
+
   mePillRoleText: {
     fontSize: 11,
     fontWeight: "600",
@@ -458,10 +512,11 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
   },
+
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: theme.space.xs,
     padding: theme.space.xs,
     borderRadius: theme.radius.lg,
     backgroundColor: theme.colors.card,
@@ -470,7 +525,7 @@ const styles = StyleSheet.create({
     ...theme.shadow.card,
   },
 
-  iconBtn: {
+  iconButton: {
     width: 40,
     height: 40,
     borderRadius: theme.radius.md,
@@ -480,38 +535,60 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: theme.colors.bg,
   },
-  iconBtnCall: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
+
+  callButton: {
     backgroundColor: theme.colors.successBg,
+    borderColor: theme.colors.border,
   },
-  iconBtnDisabled: {
+
+  iconButtonDisabled: {
     opacity: 0.45,
   },
-  iconBtnText: {
+
+  iconButtonText: {
     fontSize: 18,
     fontWeight: "700",
     color: theme.colors.text,
   },
 
+  callButtonText: {
+    color: theme.colors.successText,
+  },
+
   input: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    minHeight: 40,
+    paddingVertical: theme.space.xs,
+    paddingHorizontal: theme.space.xs + 4,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.md,
     backgroundColor: theme.colors.bg,
     color: theme.colors.text,
+    ...theme.type.body,
   },
 
-  sendBtnWrap: {
+  sendButton: {
+    minHeight: 40,
+    paddingHorizontal: theme.space.sm,
     borderRadius: theme.radius.md,
-    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.primary,
+    minWidth: 72,
+  },
+
+  sendButtonDisabled: {
+    backgroundColor: theme.colors.disabledBg,
+  },
+
+  sendButtonText: {
+    ...theme.type.body,
+    color: theme.colors.primaryText,
+    fontWeight: "600",
+  },
+
+  sendButtonTextDisabled: {
+    color: theme.colors.disabledText,
   },
 });
