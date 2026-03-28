@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "api": {
+      "healthconnect": [
+        "Query",
+        "Mutation"
+      ]
+    }
+  },
+  "lambdaLayers": [],
+  "environmentVariableList": [
+    {
+      "cloudFormationParameterName": "tableAdvocateInvite",
+      "environmentVariableName": "TABLE_ADVOCATE_INVITE"
+    },
+    {
+      "cloudFormationParameterName": "tableAdvocateAssignment",
+      "environmentVariableName": "TABLE_ADVOCATE_ASSIGNMENT"
+    },
+    {
+      "cloudFormationParameterName": "tableConversation",
+      "environmentVariableName": "TABLE_CONVERSATION"
+    }
+  ]
+}

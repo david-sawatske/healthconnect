@@ -202,6 +202,12 @@ type AdvocateInvite
 type Mutation {
   approveInvite(inviteId: ID!): AdvocateInvite
     @function(name: "approveInvite-${env}")
+
+  createAdvocateInviteGuarded(
+    patientId: ID!
+    providerId: ID!
+    advocateId: ID!
+  ): AdvocateInvite @function(name: "createAdvocateInviteGuarded-${env}")
 }
 
 enum CallStatus {

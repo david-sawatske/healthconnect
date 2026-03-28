@@ -126,6 +126,21 @@
       ],
       "providerPlugin": "awscloudformation",
       "service": "Lambda"
+    },
+    "createAdvocateInviteGuarded": {
+      "build": true,
+      "dependsOn": [
+        {
+          "attributes": [
+            "GraphQLAPIIdOutput",
+            "GraphQLAPIEndpointOutput"
+          ],
+          "category": "api",
+          "resourceName": "healthconnect"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
     }
   },
   "parameters": {
@@ -302,6 +317,46 @@
         {
           "category": "function",
           "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
         }
       ]
     }
