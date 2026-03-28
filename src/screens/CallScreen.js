@@ -1,61 +1,93 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RTCView } from "react-native-webrtc";
 
 import { useCall } from "../features/calls/useCall";
+import { theme } from "../ui/theme";
+
+const devLog = (...args) => {
+  if (__DEV__) console.log("[CALL_SCREEN]", ...args);
+};
 
 export default function CallScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
 
-  const conversation = route?.params?.conversation || null;
-  const conversationId =
-    route?.params?.conversationId || conversation?.id || null;
+  const params = route?.params || {};
+  const conversation = params.conversation || null;
+  const conversationId = params.conversationId || conversation?.id || null;
 
-  const conversationMemberIds = Array.isArray(conversation?.memberIds)
+  const memberIds = Array.isArray(conversation?.memberIds)
     ? conversation.memberIds.filter(Boolean)
     : [];
 
-  const memberIdsFromRoute = Array.isArray(conversation?.memberIds)
-    ? conversation.memberIds.filter(Boolean)
-    : [];
-
-  const incomingOffer = route?.params?.incomingOffer || null;
+  const incomingOffer = params.incomingOffer || null;
   const incomingSessionId =
-    route?.params?.incomingSessionId || route?.params?.callSessionId || null;
+    params.incomingSessionId || params.callSessionId || null;
 
   const {
     status,
     isCaller,
     callSessionId,
-
     muted,
     videoEnabled,
     hasLocal,
     hasRemote,
     localStream,
     remoteStream,
-
     startCall,
     hangUp,
     toggleMute,
     toggleVideo,
   } = useCall({
     conversationId,
-    conversationMemberIds,
-    memberIdsFromRoute,
+    conversationMemberIds: memberIds,
+    memberIdsFromRoute: memberIds,
     incomingOffer,
     incomingSessionId,
     navigation,
   });
 
-  useEffect(() => {
-    if (incomingOffer && incomingSessionId && status === "IDLE") {
+  const handleStartCall = async () => {
+    try {
+      await startCall();
+    } catch (error) {
+      devLog("startCall failed", error);
+      Alert.alert(
+        "Unable to start call",
+        "Something went wrong while starting the call. Please try again.",
+      );
     }
-  }, [incomingOffer, incomingSessionId, status]);
+  };
+
+  const handleHangUp = async () => {
+    try {
+      await hangUp();
+    } catch (error) {
+      devLog("hangUp failed", error);
+      Alert.alert(
+        "Unable to end call",
+        "Something went wrong while ending the call. Please try again.",
+      );
+    }
+  };
+
+  const statusLabel =
+    status === "RINGING"
+      ? "Ringing…"
+      : status === "CONNECTED"
+        ? "Connected"
+        : status === "CONNECTING"
+          ? "Connecting…"
+          : "Waiting to start";
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Call</Text>
+        <Text style={styles.subtitle}>{statusLabel}</Text>
+      </View>
+
       <View style={styles.videoArea}>
         {hasRemote ? (
           <RTCView
@@ -65,119 +97,241 @@ export default function CallScreen({ route, navigation }) {
             mirror={false}
           />
         ) : (
-          <View style={styles.placeholder}>
+          <View style={styles.placeholderCard}>
+            <Text style={styles.placeholderTitle}>Video not live yet</Text>
             <Text style={styles.placeholderText}>
               {status === "RINGING"
-                ? "Ringing…"
-                : "Remote video will appear here"}
+                ? "The other participant is being notified."
+                : "Remote video will appear here when the call connects."}
             </Text>
           </View>
         )}
 
-        {hasLocal && (
+        {hasLocal ? (
           <RTCView
             streamURL={localStream?.toURL?.()}
             style={styles.localPreview}
             objectFit="cover"
             mirror
           />
-        )}
+        ) : null}
       </View>
 
-      <View style={styles.controls}>
-        {status === "IDLE" && (
+      <View style={styles.controlsSection}>
+        {status === "IDLE" ? (
           <TouchableOpacity
-            style={[styles.btn, styles.primary]}
-            onPress={async () => {
-              try {
-                await startCall();
-              } catch (e) {
-                Alert.alert("Call failed", "Unable to start the call.");
-              }
-            }}
-            disabled={status !== "IDLE"}
+            style={[styles.button, styles.primaryButton]}
+            onPress={handleStartCall}
+            activeOpacity={0.85}
           >
-            <Text style={styles.btnText}>Start Call</Text>
+            <Text style={[styles.buttonText, styles.primaryButtonText]}>
+              Start Call
+            </Text>
           </TouchableOpacity>
-        )}
+        ) : null}
 
         {(status === "RINGING" || status === "CONNECTED") && (
-          <>
-            <TouchableOpacity style={styles.btn} onPress={toggleMute}>
-              <Text style={styles.btnText}>{muted ? "Unmute" : "Mute"}</Text>
+          <View style={styles.controlsRow}>
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={toggleMute}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.buttonText, styles.secondaryButtonText]}>
+                {muted ? "Unmute" : "Mute"}
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.btn} onPress={toggleVideo}>
-              <Text style={styles.btnText}>
+            <TouchableOpacity
+              style={[styles.button, styles.secondaryButton]}
+              onPress={toggleVideo}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.buttonText, styles.secondaryButtonText]}>
                 {videoEnabled ? "Video Off" : "Video On"}
               </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.btn, styles.danger]}
-              onPress={async () => {
-                try {
-                  await hangUp();
-                } catch (e) {}
-              }}
+              style={[styles.button, styles.dangerButton]}
+              onPress={handleHangUp}
+              activeOpacity={0.85}
             >
-              <Text style={styles.btnText}>Hang Up</Text>
+              <Text style={[styles.buttonText, styles.dangerButtonText]}>
+                Hang Up
+              </Text>
             </TouchableOpacity>
-          </>
+          </View>
         )}
       </View>
 
-      <Text style={styles.meta}>
-        {`Status: ${status}`}
-        {callSessionId ? `   •   Session: ${callSessionId.slice(0, 8)}…` : ""}
-        {isCaller ? "   •   Caller" : ""}
-      </Text>
+      <View style={styles.metaWrap}>
+        <Text style={styles.metaText}>Status: {status}</Text>
+        {callSessionId ? (
+          <Text style={styles.metaText}>
+            Session: {callSessionId.slice(0, 8)}…
+          </Text>
+        ) : null}
+        {isCaller ? <Text style={styles.metaText}>Caller</Text> : null}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#000" },
-  videoArea: { flex: 1, justifyContent: "center", alignItems: "center" },
-  remoteVideo: { width: "100%", height: "100%" },
-  localPreview: {
-    position: "absolute",
-    right: 12,
-    bottom: 120,
-    width: 120,
-    height: 180,
-    borderRadius: 12,
+  root: {
+    flex: 1,
+    backgroundColor: theme.colors.bg,
+  },
+
+  header: {
+    alignItems: "center",
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+    paddingBottom: theme.space.sm,
+  },
+
+  title: {
+    ...theme.type.h2,
+    color: theme.colors.text,
+    textAlign: "center",
+  },
+
+  subtitle: {
+    ...theme.type.subtext,
+    color: theme.colors.subtext,
+    textAlign: "center",
+    marginTop: theme.space.xs,
+  },
+
+  videoArea: {
+    flex: 1,
+    paddingHorizontal: theme.space.sm,
+    paddingBottom: theme.space.sm,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  remoteVideo: {
+    width: "100%",
+    height: "100%",
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.card,
     overflow: "hidden",
   },
-  placeholder: {
-    width: "92%",
-    height: "68%",
-    borderRadius: 16,
-    backgroundColor: "#111",
+
+  placeholderCard: {
+    width: "100%",
+    height: "100%",
+    maxHeight: "78%",
+    borderRadius: theme.radius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: theme.space.md,
+    paddingVertical: theme.space.md,
+    ...theme.shadow.card,
+  },
+
+  placeholderTitle: {
+    ...theme.type.h3,
+    color: theme.colors.text,
+    textAlign: "center",
+    marginBottom: theme.space.xs,
+  },
+
+  placeholderText: {
+    ...theme.type.subtext,
+    color: theme.colors.subtext,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+
+  localPreview: {
+    position: "absolute",
+    right: theme.space.sm,
+    bottom: 96,
+    width: 120,
+    height: 180,
+    borderRadius: theme.radius.md,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
+    ...theme.shadow.card,
+  },
+
+  controlsSection: {
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+    paddingBottom: theme.space.xs,
+  },
+
+  controlsRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: theme.space.xs,
+  },
+
+  button: {
+    minHeight: 44,
+    paddingVertical: theme.space.xs,
+    paddingHorizontal: theme.space.sm,
+    borderRadius: theme.radius.pill,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  placeholderText: { color: "#888" },
-  controls: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 16,
-    justifyContent: "center",
-    backgroundColor: "#111",
+
+  primaryButton: {
+    alignSelf: "center",
+    minWidth: 140,
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
   },
-  btn: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    backgroundColor: "#333",
+
+  secondaryButton: {
+    backgroundColor: theme.colors.card,
+    borderColor: theme.colors.border,
   },
-  primary: { backgroundColor: "#2e7d32" },
-  danger: { backgroundColor: "#c62828" },
-  btnText: { color: "#fff", fontWeight: "700" },
-  meta: {
+
+  dangerButton: {
+    backgroundColor: theme.colors.dangerBg,
+    borderColor: theme.colors.dangerText,
+  },
+
+  buttonText: {
+    ...theme.type.body,
+    fontWeight: "600",
+  },
+
+  primaryButtonText: {
+    color: theme.colors.primaryText,
+  },
+
+  secondaryButtonText: {
+    color: theme.colors.text,
+  },
+
+  dangerButtonText: {
+    color: theme.colors.dangerText,
+  },
+
+  metaWrap: {
+    alignItems: "center",
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+    paddingBottom: theme.space.sm,
+    gap: theme.space.xs,
+  },
+
+  metaText: {
+    ...theme.type.small,
+    color: theme.colors.subtext,
     textAlign: "center",
-    color: "#bbb",
-    paddingBottom: 10,
-    paddingHorizontal: 12,
   },
 });
