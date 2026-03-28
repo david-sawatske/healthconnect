@@ -17,6 +17,7 @@ import {
   ensureDirectConversation,
   ensureCareTeamConversation,
 } from "../features/chat/conversationService";
+import { CreateAdvocateInviteGuarded } from "../graphql/advocateInvites";
 import { theme } from "../ui/theme";
 
 const client = generateClient();
@@ -71,23 +72,6 @@ const LIST_ADVOCATE_INVITES_FOR_PATIENT = /* GraphQL */ `
   }
 `;
 
-const CREATE_ADVOCATE_INVITE = /* GraphQL */ `
-  mutation CreateAdvocateInvite($input: CreateAdvocateInviteInput!) {
-    createAdvocateInvite(input: $input) {
-      id
-      patientId
-      advocateId
-      conversationId
-      status
-      createdBy
-      approvedBy
-      approvedAt
-      createdAt
-      updatedAt
-    }
-  }
-`;
-
 const UPDATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
   mutation UpdateAdvocateAssignment($input: UpdateAdvocateAssignmentInput!) {
     updateAdvocateAssignment(input: $input) {
@@ -126,6 +110,63 @@ async function safeGql({ query, variables = {}, label }) {
     log(label || "GQL", "ERR", err);
     throw err;
   }
+}
+
+function getGraphQlErrorMessage(error) {
+  const first =
+    error?.errors?.[0]?.message ||
+    error?.data?.errors?.[0]?.message ||
+    error?.message ||
+    "Unknown error";
+
+  return String(first);
+}
+
+function getInviteErrorAlert(message) {
+  if (
+    message.includes("Advocate is already in the care team conversation.") ||
+    message.includes("ADVOCATE_ALREADY_IN_CONVERSATION")
+  ) {
+    return {
+      title: "Already Added",
+      body: "This advocate is already part of the care team conversation.",
+    };
+  }
+
+  if (
+    message.includes("Active advocate assignment already exists.") ||
+    message.includes("ACTIVE_ASSIGNMENT_EXISTS")
+  ) {
+    return {
+      title: "Already Assigned",
+      body: "This advocate is already assigned to this patient.",
+    };
+  }
+
+  if (
+    message.includes("A pending invite already exists.") ||
+    message.includes("PENDING_INVITE_EXISTS")
+  ) {
+    return {
+      title: "Invite Already Sent",
+      body: "This advocate already has a pending invite.",
+    };
+  }
+
+  if (
+    message.includes("CARE_TEAM_CONVERSATION_NOT_FOUND") ||
+    (message.includes("Conversation") && message.includes("not found"))
+  ) {
+    return {
+      title: "Care team unavailable",
+      body: "The care team conversation could not be found. Please try again.",
+    };
+  }
+
+  return {
+    title: "Error",
+    body: "Failed to send advocate invite.",
+  };
 }
 
 const HeroActionButton = ({ variant, title, subtitle, onPress, disabled }) => {
@@ -587,7 +628,7 @@ const PatientDetailScreen = () => {
           ),
         );
 
-        const conversation = await ensureCareTeamConversation({
+        await ensureCareTeamConversation({
           currentUserId: viewerId,
           patientId,
           providerId: effectiveProviderId,
@@ -596,20 +637,16 @@ const PatientDetailScreen = () => {
         });
 
         const res = await safeGql({
-          query: CREATE_ADVOCATE_INVITE,
+          query: CreateAdvocateInviteGuarded,
           variables: {
-            input: {
-              patientId,
-              advocateId: selectedAdvocate.id,
-              conversationId: conversation.id,
-              status: "PENDING",
-              createdBy: viewerId,
-            },
+            patientId,
+            providerId: effectiveProviderId,
+            advocateId: selectedAdvocate.id,
           },
-          label: "CreateAdvocateInvite",
+          label: "CreateAdvocateInviteGuarded",
         });
 
-        const newInvite = res?.data?.createAdvocateInvite;
+        const newInvite = res?.data?.createAdvocateInviteGuarded;
         if (!newInvite) {
           throw new Error("No invite returned");
         }
@@ -636,8 +673,10 @@ const PatientDetailScreen = () => {
           } can approve this from their invites screen.`,
         );
       } catch (e) {
-        log("Create advocate invite ERR", e);
-        Alert.alert("Error", "Failed to send advocate invite.");
+        const message = getGraphQlErrorMessage(e);
+        const alertCopy = getInviteErrorAlert(message);
+        log("Create advocate invite ERR", message, e);
+        Alert.alert(alertCopy.title, alertCopy.body);
       } finally {
         setAssigning(false);
       }

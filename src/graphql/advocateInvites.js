@@ -1,10 +1,22 @@
-export const CreateAdvocateInvite = /* GraphQL */ `
-  mutation CreateAdvocateInvite($input: CreateAdvocateInviteInput!) {
-    createAdvocateInvite(input: $input) {
+export const CreateAdvocateInviteGuarded = /* GraphQL */ `
+  mutation CreateAdvocateInviteGuarded(
+    $patientId: ID!
+    $providerId: ID!
+    $advocateId: ID!
+  ) {
+    createAdvocateInviteGuarded(
+      patientId: $patientId
+      providerId: $providerId
+      advocateId: $advocateId
+    ) {
       id
+      patientId
       advocateId
       conversationId
       status
+      createdBy
+      createdAt
+      updatedAt
     }
   }
 `;
