@@ -22,6 +22,10 @@ import { theme } from "../ui/theme";
 
 const client = generateClient();
 
+const devLog = (...args) => {
+  if (__DEV__) console.log("[AUTH_SCREEN]", ...args);
+};
+
 const DEMO_LOGIN_ENABLED =
   __DEV__ ||
   String(process.env.EXPO_PUBLIC_DEMO_LOGIN).toLowerCase() === "true";
@@ -59,6 +63,28 @@ const GET_USER = /* GraphQL */ `
   }
 `;
 
+const getFriendlyAuthMessage = (err) => {
+  const code = err?.name || err?.code || "";
+  const message = err?.message || "";
+
+  if (
+    code === "NotAuthorizedException" ||
+    message.toLowerCase().includes("incorrect username or password")
+  ) {
+    return "That demo login was not accepted. Please check the configured demo credentials.";
+  }
+
+  if (code === "UserNotFoundException") {
+    return "This demo account could not be found.";
+  }
+
+  if (code === "NetworkError" || message.toLowerCase().includes("network")) {
+    return "We could not reach the server. Please check your connection and try again.";
+  }
+
+  return "Unable to sign in right now. Please try again.";
+};
+
 export default function AuthScreen({ navigation }) {
   const [checking, setChecking] = useState(true);
   const [loggingInRole, setLoggingInRole] = useState(null);
@@ -69,22 +95,21 @@ export default function AuthScreen({ navigation }) {
   }).current;
 
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
-    const i = viewableItems?.[0]?.index ?? 0;
-    setCurrentIndex(i);
+    const index = viewableItems?.[0]?.index ?? 0;
+    setCurrentIndex(index);
   }).current;
 
   const { width: screenWidth } = useWindowDimensions();
 
   const carouselCardWidth = useMemo(() => {
-    const maxW = 340;
-    const minW = 260;
-    const ideal = Math.round(screenWidth * 0.7);
-    return Math.max(minW, Math.min(maxW, ideal));
+    const maxWidth = 340;
+    const minWidth = 260;
+    const idealWidth = Math.round(screenWidth * 0.7);
+    return Math.max(minWidth, Math.min(maxWidth, idealWidth));
   }, [screenWidth]);
 
-  const carouselGap = 10;
+  const carouselGap = theme.space.sm;
   const snapInterval = carouselCardWidth + carouselGap;
-
   const sidePadding = Math.max(0, (screenWidth - carouselCardWidth) / 2);
 
   const roleAccent = useMemo(
@@ -98,7 +123,7 @@ export default function AuthScreen({ navigation }) {
   );
 
   const availableDemoUsers = useMemo(() => {
-    return DEMO_USERS.filter((u) => u.username && u.password);
+    return DEMO_USERS.filter((user) => user.username && user.password);
   }, []);
 
   const routeByUserRecord = useCallback(async () => {
@@ -115,7 +140,10 @@ export default function AuthScreen({ navigation }) {
       const user = data?.getUser;
 
       if (!user) {
-        Alert.alert("Login error", "User record not found in database");
+        Alert.alert(
+          "Account setup issue",
+          "Your account was found, but the app profile record is missing.",
+        );
         navigation.replace("Home");
         return;
       }
@@ -128,43 +156,57 @@ export default function AuthScreen({ navigation }) {
       else if (role === "ADMIN") navigation.replace("AdminHome");
       else navigation.replace("Home");
     } catch (err) {
-      console.log("[AUTH] route error:", err);
+      devLog("routeByUserRecord error", err);
       navigation.replace("Home");
     }
   }, [navigation]);
 
   useEffect(() => {
+    let isMounted = true;
+
     (async () => {
       try {
         await getCurrentUser();
         await routeByUserRecord();
-      } catch {
+      } catch (err) {
+        devLog("initial session check: no active session", err?.name || err);
       } finally {
-        setChecking(false);
+        if (isMounted) setChecking(false);
       }
     })();
+
+    return () => {
+      isMounted = false;
+    };
   }, [routeByUserRecord]);
 
   const handleDemoLogin = useCallback(
     async (demoUser) => {
       if (!demoUser?.username || !demoUser?.password) {
         Alert.alert(
-          "Demo user not configured",
-          "Missing demo credentials for this role.",
+          "Demo account unavailable",
+          "This demo role is not configured yet.",
         );
         return;
       }
 
       try {
         setLoggingInRole(demoUser.key);
+
         await signIn({
           username: demoUser.username,
           password: demoUser.password,
         });
+
         await routeByUserRecord();
       } catch (err) {
-        console.log("[AUTH] demo login error:", err);
-        Alert.alert("Login failed", err?.message || "Unknown error");
+        devLog("demo login error", {
+          role: demoUser.key,
+          name: err?.name,
+          message: err?.message,
+        });
+
+        Alert.alert("Login failed", getFriendlyAuthMessage(err));
       } finally {
         setLoggingInRole(null);
       }
@@ -210,7 +252,7 @@ export default function AuthScreen({ navigation }) {
         <Text style={styles.caption}>
           {DEMO_LOGIN_ENABLED
             ? "Choose a role to explore the app."
-            : "Demo login is disabled."}
+            : "Demo login is currently disabled."}
         </Text>
       </View>
 
@@ -219,11 +261,11 @@ export default function AuthScreen({ navigation }) {
           {availableDemoUsers.length === 0 ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyTitle}>
-                Demo accounts not configured
+                Demo accounts are not configured
               </Text>
               <Text style={styles.emptyText}>
-                Add EXPO_PUBLIC_DEMO_* env vars (email + password) and restart
-                Expo with cache clear:{" "}
+                Add the EXPO_PUBLIC_DEMO_* email and password environment
+                variables, then restart Expo with cache clear:{" "}
                 <Text style={styles.mono}>npx expo start -c</Text>
               </Text>
             </View>
@@ -237,9 +279,7 @@ export default function AuthScreen({ navigation }) {
                 ItemSeparatorComponent={() => (
                   <View style={{ width: carouselGap }} />
                 )}
-                contentContainerStyle={{
-                  paddingHorizontal: sidePadding,
-                }}
+                contentContainerStyle={styles.carouselContent}
                 snapToInterval={snapInterval}
                 snapToAlignment="start"
                 decelerationRate="fast"
@@ -251,50 +291,49 @@ export default function AuthScreen({ navigation }) {
                 })}
                 viewabilityConfig={viewabilityConfig}
                 onViewableItemsChanged={onViewableItemsChanged}
-                renderItem={({ item: u }) => {
-                  const busy = loggingInRole === u.key;
+                renderItem={({ item }) => {
+                  const busy = loggingInRole === item.key;
                   const disabled = !!loggingInRole;
 
                   return (
                     <TouchableOpacity
-                      key={u.key}
                       style={[
                         styles.roleCard,
-                        { width: carouselCardWidth },
-                        busy && { opacity: 0.65 },
-                        disabled && !busy && { opacity: 0.9 },
+                        { width: carouselCardWidth, marginHorizontal: 0 },
+                        busy && styles.roleCardBusy,
+                        disabled && !busy && styles.roleCardDimmed,
                       ]}
-                      onPress={() => handleDemoLogin(u)}
+                      onPress={() => handleDemoLogin(item)}
                       disabled={disabled}
-                      activeOpacity={0.85}
+                      activeOpacity={0.88}
                     >
                       <View
                         style={[
                           styles.roleAccent,
                           {
                             backgroundColor:
-                              roleAccent[u.key] || theme.colors.primary,
+                              roleAccent[item.key] || theme.colors.primary,
                           },
                         ]}
                       />
 
                       <View style={styles.cardContent}>
                         <Text style={styles.roleName}>Explore as</Text>
-                        <View style={styles.rolePill}>
-                          <Text style={styles.rolePillText}>{u.key}</Text>
-                        </View>
-                        <Text style={styles.roleMeta}>
-                          {String(u.username)}
-                        </Text>
 
-                        <View style={{ marginTop: 10 }}>
-                          {u.key === "Patient" ? (
+                        <View style={styles.rolePill}>
+                          <Text style={styles.rolePillText}>{item.key}</Text>
+                        </View>
+
+                        <Text style={styles.roleMeta}>{item.username}</Text>
+
+                        <View style={styles.featureList}>
+                          {item.key === "Patient" ? (
                             <>
                               <Text style={styles.bullet}>
                                 • Message your care team
                               </Text>
                               <Text style={styles.bullet}>
-                                • Share documents/photos
+                                • Share documents and photos
                               </Text>
                               <Text style={styles.bullet}>
                                 • Start video calls
@@ -302,21 +341,21 @@ export default function AuthScreen({ navigation }) {
                             </>
                           ) : null}
 
-                          {u.key === "Provider" ? (
+                          {item.key === "Provider" ? (
                             <>
                               <Text style={styles.bullet}>
-                                • View patient list + details
+                                • View patient list and details
                               </Text>
                               <Text style={styles.bullet}>
-                                • Chat + send attachments
+                                • Chat and send attachments
                               </Text>
                               <Text style={styles.bullet}>
-                                • Join/host video calls
+                                • Join or host video calls
                               </Text>
                             </>
                           ) : null}
 
-                          {u.key === "Advocate" ? (
+                          {item.key === "Advocate" ? (
                             <>
                               <Text style={styles.bullet}>
                                 • Coordinate across conversations
@@ -330,10 +369,10 @@ export default function AuthScreen({ navigation }) {
                             </>
                           ) : null}
 
-                          {u.key === "Admin" ? (
+                          {item.key === "Admin" ? (
                             <>
                               <Text style={styles.bullet}>
-                                • Seed / reset demo data
+                                • Seed and reset demo data
                               </Text>
                               <Text style={styles.bullet}>
                                 • Validate role-based routing
@@ -346,21 +385,27 @@ export default function AuthScreen({ navigation }) {
                         </View>
 
                         {busy ? (
-                          <View style={{ marginTop: theme.space.sm }}>
+                          <View style={styles.loadingWrap}>
                             <ActivityIndicator />
+                            <Text style={styles.loadingText}>Signing in…</Text>
                           </View>
                         ) : null}
                       </View>
                     </TouchableOpacity>
                   );
                 }}
+                ListHeaderComponent={<View style={{ width: sidePadding }} />}
+                ListFooterComponent={<View style={{ width: sidePadding }} />}
               />
 
               <View style={styles.dotsWrap}>
-                {availableDemoUsers.map((_, i) => (
+                {availableDemoUsers.map((_, index) => (
                   <View
-                    key={String(i)}
-                    style={[styles.dot, i === currentIndex && styles.dotActive]}
+                    key={String(index)}
+                    style={[
+                      styles.dot,
+                      index === currentIndex && styles.dotActive,
+                    ]}
                   />
                 ))}
               </View>
@@ -370,8 +415,8 @@ export default function AuthScreen({ navigation }) {
           <View style={styles.footerPill}>
             <Text style={styles.footerNote}>
               {__DEV__
-                ? "Demo mode enabled (dev build)."
-                : "Demo mode enabled via EXPO_PUBLIC_DEMO_LOGIN=true."}
+                ? "Demo mode is enabled in development."
+                : "Demo mode is enabled by environment configuration."}
             </Text>
           </View>
         </>
@@ -379,7 +424,7 @@ export default function AuthScreen({ navigation }) {
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>Demo login is off</Text>
           <Text style={styles.emptyText}>
-            To enable for a build, set{" "}
+            To enable it in a build, set{" "}
             <Text style={styles.mono}>EXPO_PUBLIC_DEMO_LOGIN=true</Text>.
           </Text>
         </View>
@@ -392,13 +437,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: theme.space.lg,
-    paddingVertical: theme.space.md,
+    paddingTop: theme.space.md,
+    paddingBottom: theme.space.lg,
     backgroundColor: theme.colors.bg,
   },
-  center: { alignItems: "center", justifyContent: "center" },
+
+  center: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   header: {
-    paddingTop: theme.space.md,
     alignItems: "center",
     marginBottom: theme.space.lg,
   },
@@ -407,14 +456,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: theme.space.sm,
   },
+
   brandTitle: {
     ...theme.type.h1,
     textAlign: "center",
   },
+
   brandTagline: {
     ...theme.type.subtext,
     textAlign: "center",
-    marginTop: 4,
+    marginTop: theme.space.xs,
   },
 
   logoWrap: {
@@ -424,9 +475,10 @@ const styles = StyleSheet.create({
     padding: theme.space.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    ...theme.shadow.floating,
     marginBottom: theme.space.md,
+    ...theme.shadow.floating,
   },
+
   logo: {
     width: 96,
     height: 96,
@@ -440,6 +492,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     marginBottom: theme.space.xs,
   },
+
   modePillText: {
     fontSize: 13,
     fontWeight: "600",
@@ -451,6 +504,7 @@ const styles = StyleSheet.create({
     ...theme.type.h2,
     marginBottom: theme.space.xs,
   },
+
   caption: {
     ...theme.type.subtext,
     textAlign: "center",
@@ -458,7 +512,10 @@ const styles = StyleSheet.create({
 
   carouselWrap: {
     marginTop: theme.space.sm,
-    marginBottom: theme.space.sm,
+  },
+
+  carouselContent: {
+    alignItems: "stretch",
   },
 
   roleCard: {
@@ -468,8 +525,16 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     borderRadius: theme.radius.lg,
     padding: theme.space.md,
-    ...theme.shadow.card,
     overflow: "hidden",
+    ...theme.shadow.card,
+  },
+
+  roleCardBusy: {
+    opacity: 0.7,
+  },
+
+  roleCardDimmed: {
+    opacity: 0.9,
   },
 
   roleAccent: {
@@ -478,6 +543,19 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 4,
+  },
+
+  cardContent: {
+    paddingTop: theme.space.lg,
+    minHeight: 210,
+  },
+
+  roleName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.colors.muted,
+    letterSpacing: 0.2,
+    textTransform: "uppercase",
   },
 
   rolePill: {
@@ -489,27 +567,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
+
   rolePillText: {
     fontSize: 12,
     fontWeight: "600",
     color: theme.colors.pillInfoText,
   },
 
-  cardContent: {
-    paddingTop: 18,
-  },
-
-  roleName: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: theme.colors.muted,
-    letterSpacing: 0.2,
-    textTransform: "uppercase",
-  },
   roleMeta: {
     ...theme.type.small,
-    marginTop: 4,
-    marginBottom: 10,
+    marginTop: theme.space.xs,
+    marginBottom: theme.space.sm,
+  },
+
+  featureList: {
+    marginTop: theme.space.xs,
   },
 
   bullet: {
@@ -519,6 +591,17 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
+  loadingWrap: {
+    marginTop: theme.space.md,
+    alignItems: "flex-start",
+  },
+
+  loadingText: {
+    marginTop: theme.space.xs,
+    fontSize: theme.type.small.fontSize,
+    color: theme.colors.subtext,
+  },
+
   dotsWrap: {
     flexDirection: "row",
     justifyContent: "center",
@@ -526,6 +609,7 @@ const styles = StyleSheet.create({
     marginTop: theme.space.sm,
     marginBottom: theme.space.md,
   },
+
   dot: {
     width: 7,
     height: 7,
@@ -533,6 +617,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.border,
     marginHorizontal: 4,
   },
+
   dotActive: {
     width: 18,
     height: 7,
@@ -551,9 +636,10 @@ const styles = StyleSheet.create({
     padding: theme.space.md,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    backgroundColor: theme.colors.bg,
+    backgroundColor: theme.colors.card,
     ...theme.shadow.card,
   },
+
   emptyTitle: {
     fontSize: theme.type.body.fontSize,
     fontWeight: "700",
@@ -561,12 +647,14 @@ const styles = StyleSheet.create({
     marginBottom: theme.space.xs,
     textAlign: "center",
   },
+
   emptyText: {
     fontSize: theme.type.small.fontSize,
     color: theme.colors.subtext,
     textAlign: "center",
     lineHeight: 18,
   },
+
   mono: {
     fontFamily: "Menlo",
     color: theme.colors.text,
@@ -582,6 +670,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
+
   footerNote: {
     textAlign: "center",
     fontSize: theme.type.small.fontSize,
