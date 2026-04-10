@@ -105,7 +105,7 @@ exports.handler = async (event) => {
 
     const now = new Date().toISOString();
     const assignmentId = `PA:${patientId}:PR:${providerId}:ADV:${advocateId}`;
-    const participantId = `CP:${conversationId}:${advocateId}`;
+    const participantId = `${conversationId}:${advocateId}`;
     const msgId = `SYS:INVITE_APPROVED:${inviteId}`;
 
     await ddb.send(
