@@ -235,10 +235,17 @@ exports.handler = async (event) => {
     );
 
     const CARE_TEAM_ID = (pId, prId) => `CARE_TEAM:${pId}:${prId}`;
+
     const DM_ID = (a, b) => {
       const [minId, maxId] = [a, b].sort();
       return `DM:${minId}:${maxId}`;
     };
+
+    const providerPatientId = ({ providerId, patientId }) =>
+      `PP:${providerId}:${patientId}`;
+
+    const advocateAssignmentId = ({ patientId, providerId, advocateId }) =>
+      `PA:${patientId}:PR:${providerId}:ADV:${advocateId}`;
 
     const careTeam1Id = CARE_TEAM_ID(patientId, providerId);
     const careTeam2Id = CARE_TEAM_ID(patient2Id, providerId);
@@ -299,29 +306,32 @@ exports.handler = async (event) => {
 
       providerPatients: [
         withModelTimestamps({
-          id: "demo-provider-patient",
+          id: providerPatientId({ providerId, patientId }),
           providerId,
           patientId,
         }),
 
         withModelTimestamps({
-          id: "demo-pp-jordan-2",
+          id: providerPatientId({ providerId: provider2Id, patientId }),
           providerId: provider2Id,
           patientId,
         }),
 
         withModelTimestamps({
-          id: "demo-pp-2",
+          id: providerPatientId({ providerId, patientId: patient2Id }),
           providerId,
           patientId: patient2Id,
         }),
         withModelTimestamps({
-          id: "demo-pp-3",
+          id: providerPatientId({ providerId, patientId: patient3Id }),
           providerId,
           patientId: patient3Id,
         }),
         withModelTimestamps({
-          id: "demo-pp-4",
+          id: providerPatientId({
+            providerId: provider2Id,
+            patientId: patient2Id,
+          }),
           providerId: provider2Id,
           patientId: patient2Id,
         }),
@@ -329,7 +339,7 @@ exports.handler = async (event) => {
 
       advocateAssignments: [
         withModelTimestamps({
-          id: "demo-advocate-assignment",
+          id: advocateAssignmentId({ providerId, patientId, advocateId }),
           providerId,
           patientId,
           advocateId,
@@ -337,7 +347,11 @@ exports.handler = async (event) => {
         }),
 
         withModelTimestamps({
-          id: "demo-aa-jordan-2",
+          id: advocateAssignmentId({
+            providerId: provider2Id,
+            patientId,
+            advocateId: advocate2Id,
+          }),
           providerId: provider2Id,
           patientId,
           advocateId: advocate2Id,
@@ -345,14 +359,22 @@ exports.handler = async (event) => {
         }),
 
         withModelTimestamps({
-          id: "demo-aa-2",
+          id: advocateAssignmentId({
+            providerId,
+            patientId: patient2Id,
+            advocateId: advocate2Id,
+          }),
           providerId,
           patientId: patient2Id,
           advocateId: advocate2Id,
           active: true,
         }),
         withModelTimestamps({
-          id: "demo-aa-3",
+          id: advocateAssignmentId({
+            providerId,
+            patientId: patient3Id,
+            advocateId: advocate2Id,
+          }),
           providerId,
           patientId: patient3Id,
           advocateId: advocate2Id,
@@ -986,7 +1008,7 @@ exports.handler = async (event) => {
         emptyThread: "demo-empty-thread intentionally has 0 messages",
         removedChat: '"System Updates" conversation fully removed',
         deterministicIds:
-          "Care team uses CARE_TEAM:${patientId}:${providerId}; DMs use DM:${minId}:${maxId}",
+          "Care team uses CARE_TEAM:${patientId}:${providerId}; DMs use DM:${minId}:${maxId}; ProviderPatient uses PP:${providerId}:${patientId}; AdvocateAssignment uses PA:${patientId}:PR:${providerId}:ADV:${advocateId}",
       },
     });
   } catch (e) {
