@@ -17,6 +17,33 @@ function uniq(arr) {
   return [...new Set((arr || []).filter(Boolean))];
 }
 
+function displayNameForUser(user) {
+  return user?.displayName || user?.name || user?.email || null;
+}
+
+function buildConversationTitle({ conversation, myId, usersById, memberIds }) {
+  if (conversation?.title) return conversation.title;
+
+  const others = (memberIds || []).filter((id) => id && id !== myId);
+
+  if (!conversation?.isGroup) {
+    if (others.length === 1) {
+      return displayNameForUser(usersById?.[others[0]]) || "Conversation";
+    }
+    return "Conversation";
+  }
+
+  if (others.length) {
+    const names = others
+      .map((id) => displayNameForUser(usersById?.[id]))
+      .filter(Boolean);
+
+    if (names.length) return names.join(", ");
+  }
+
+  return "Conversation";
+}
+
 export function useChat({ conversationId, conversation, currentUser }) {
   const myId = currentUser?.id || null;
 
@@ -28,8 +55,9 @@ export function useChat({ conversationId, conversation, currentUser }) {
   const [text, setText] = useState("");
   const [usersById, setUsersById] = useState({});
   const [sending, setSending] = useState(false);
-  
+
   const activeConversationIdRef = useRef(conversationId);
+
   useEffect(() => {
     activeConversationIdRef.current = conversationId;
   }, [conversationId]);
@@ -37,8 +65,9 @@ export function useChat({ conversationId, conversation, currentUser }) {
   const memberIds = useMemo(() => {
     if (memberIdsFromConversation.length) return memberIdsFromConversation;
     const first = messages?.[0];
-    if (Array.isArray(first?.memberIds) && first.memberIds.length)
+    if (Array.isArray(first?.memberIds) && first.memberIds.length) {
       return first.memberIds;
+    }
     return [];
   }, [memberIdsFromConversation.join("|"), messages]);
 
@@ -51,6 +80,15 @@ export function useChat({ conversationId, conversation, currentUser }) {
     memberIdsFromConversation.join("|"),
     myId,
   ]);
+
+  const conversationTitle = useMemo(() => {
+    return buildConversationTitle({
+      conversation,
+      myId,
+      usersById,
+      memberIds,
+    });
+  }, [conversation, myId, usersById, memberIds]);
 
   const markRead = useCallback(async () => {
     if (!conversationId || !myId) return;
@@ -73,13 +111,13 @@ export function useChat({ conversationId, conversation, currentUser }) {
       console.log("[CHAT] fetchMessages error:", e);
     }
   }, [conversationId]);
-  
+
   useEffect(() => {
     if (!conversationId) return;
     refreshMessages();
     markRead();
   }, [conversationId, refreshMessages, markRead]);
-  
+
   useEffect(() => {
     let cancelled = false;
 
@@ -88,7 +126,9 @@ export function useChat({ conversationId, conversation, currentUser }) {
       if (!memberIds.length) return;
       try {
         const map = await fetchUsersByIds(memberIds);
-        if (!cancelled) setUsersById(map);
+        if (!cancelled) {
+          setUsersById((prev) => ({ ...prev, ...map }));
+        }
       } catch (e) {
         console.log("[CHAT] participant load error:", e);
       }
@@ -98,7 +138,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
       cancelled = true;
     };
   }, [conversationId, memberIds.join("|")]);
-  
+
   useEffect(() => {
     if (!conversationId) return;
 
@@ -114,7 +154,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
       },
       onError: (err) => console.log("[CHAT] subscription error:", err),
     });
-    
+
     const retryTimer = setTimeout(() => {
       refreshMessages();
     }, 500);
@@ -210,7 +250,10 @@ export function useChat({ conversationId, conversation, currentUser }) {
       if (String(type).toUpperCase() === "SYSTEM") return "System";
       const u = usersById?.[senderId];
       return (
-        u?.displayName || u?.email || (senderId === myId ? "You" : "Member")
+        u?.displayName ||
+        u?.name ||
+        u?.email ||
+        (senderId === myId ? "You" : "Member")
       );
     },
     [usersById, myId],
@@ -222,6 +265,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
     memberIdsToUseForSend,
     messages,
     usersById,
+    conversationTitle,
     text,
     setText,
     sending,

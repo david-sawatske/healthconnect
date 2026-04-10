@@ -28,3 +28,22 @@ export function badgeStyleForRole(styles, { role, type }) {
       return [styles.badge, styles.badgeOther];
   }
 }
+
+export function getConversationTitle({ conversation, currentUserId, userMap }) {
+  if (conversation.title) return conversation.title;
+
+  const otherMembers = conversation.memberIds.filter(
+    (id) => id !== currentUserId,
+  );
+
+  if (!conversation.isGroup && otherMembers.length === 1) {
+    const otherUser = userMap[otherMembers[0]];
+    return otherUser?.name || "Unknown User";
+  }
+
+  if (otherMembers.length > 0) {
+    return otherMembers.map((id) => userMap[id]?.name || "Unknown").join(", ");
+  }
+
+  return "Conversation";
+}

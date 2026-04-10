@@ -119,6 +119,39 @@ const LAST_MESSAGE_BY_CONVERSATION = /* GraphQL */ `
 const PAGE_SIZE = 20;
 const PREVIEW_COUNT = 20;
 
+function uniq(arr) {
+  return [...new Set((arr || []).filter(Boolean))];
+}
+
+function getUserDisplay(user) {
+  return user?.displayName || user?.email || null;
+}
+
+function getConversationTitle({ conversation, currentUserId, usersById }) {
+  if (conversation?.title) return conversation.title;
+
+  const memberIds = Array.isArray(conversation?.memberIds)
+    ? conversation.memberIds
+    : [];
+
+  const otherIds = memberIds.filter((id) => id && id !== currentUserId);
+
+  if (!conversation?.isGroup) {
+    if (otherIds.length === 1) {
+      return getUserDisplay(usersById[otherIds[0]]) || "Conversation";
+    }
+    return "Conversation";
+  }
+
+  const names = otherIds
+    .map((id) => getUserDisplay(usersById[id]))
+    .filter(Boolean);
+
+  if (names.length) return names.join(", ");
+
+  return "Conversation";
+}
+
 const PatientHomeScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -144,9 +177,12 @@ const PatientHomeScreen = () => {
   const [loadingReads, setLoadingReads] = useState(false);
   const [expandedProviders, setExpandedProviders] = useState(() => new Set());
 
+  const [usersById, setUsersById] = useState({});
+
   const lastMessageRef = useRef({});
   const loadingLastRef = useRef({});
   const lastReadAtRef = useRef({});
+  const usersByIdRef = useRef({});
 
   useEffect(() => {
     lastMessageRef.current = lastMessageByConvo;
@@ -159,6 +195,10 @@ const PatientHomeScreen = () => {
   useEffect(() => {
     lastReadAtRef.current = lastReadAtByConvoId;
   }, [lastReadAtByConvoId]);
+
+  useEffect(() => {
+    usersByIdRef.current = usersById;
+  }, [usersById]);
 
   const username = currentUser?.displayName || "Patient";
 
@@ -176,6 +216,40 @@ const PatientHomeScreen = () => {
     },
     [getLastActivityTs],
   );
+
+  const fetchUserMapForIds = useCallback(async (ids) => {
+    const uniqueIds = uniq(ids).filter((id) => !usersByIdRef.current[id]);
+    if (!uniqueIds.length) return;
+
+    try {
+      const results = await Promise.all(
+        uniqueIds.map(async (id) => {
+          try {
+            const { data } = await client.graphql({
+              query: GET_USER,
+              variables: { id },
+              authMode: "userPool",
+            });
+            return data?.getUser || null;
+          } catch (err) {
+            console.log("[PATIENT_HOME] Error fetching user:", id, err);
+            return null;
+          }
+        }),
+      );
+
+      const map = {};
+      results.forEach((u) => {
+        if (u?.id) map[u.id] = u;
+      });
+
+      if (Object.keys(map).length) {
+        setUsersById((prev) => ({ ...prev, ...map }));
+      }
+    } catch (err) {
+      console.log("[PATIENT_HOME] fetchUserMapForIds error:", err);
+    }
+  }, []);
 
   const fetchLastMessage = useCallback(async (conversationId) => {
     if (!conversationId) return;
@@ -349,35 +423,20 @@ const PatientHomeScreen = () => {
         new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
       );
 
-      const fetchUser = async (id) => {
-        try {
-          const { data } = await client.graphql({
-            query: GET_USER,
-            variables: { id },
-            authMode: "userPool",
-          });
-          return data?.getUser || null;
-        } catch (err) {
-          console.log("[PATIENT_HOME] Error fetching user:", err);
-          return null;
-        }
-      };
-
       const allIds = Array.from(new Set([...providerIds, ...advocateIds]));
-      const results = await Promise.all(allIds.map(fetchUser));
+      await fetchUserMapForIds(allIds);
 
-      const usersById = {};
-      results.forEach((u) => {
-        if (u?.id) usersById[u.id] = u;
-      });
+      const mergedUsers = {
+        ...usersByIdRef.current,
+      };
 
       const teams = providerIds
         .map((providerId) => {
-          const providerUser = usersById[providerId] || null;
+          const providerUser = mergedUsers[providerId] || null;
           const advocatesForProvider = Array.from(
             providerToAdvocates.get(providerId) || [],
           )
-            .map((advId) => usersById[advId])
+            .map((advId) => mergedUsers[advId])
             .filter(Boolean);
 
           return {
@@ -400,7 +459,7 @@ const PatientHomeScreen = () => {
     } finally {
       setCareTeamLoading(false);
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, fetchUserMapForIds]);
 
   const toggleProviderExpanded = useCallback((providerId) => {
     if (!providerId) return;
@@ -421,10 +480,14 @@ const PatientHomeScreen = () => {
 
   useEffect(() => {
     if (!conversations.length) return;
+
     conversations
       .slice(0, PREVIEW_COUNT)
       .forEach((c) => fetchLastMessage(c.id));
-  }, [conversations, fetchLastMessage]);
+
+    const idsToLoad = uniq(conversations.flatMap((c) => c.memberIds || []));
+    fetchUserMapForIds(idsToLoad);
+  }, [conversations, fetchLastMessage, fetchUserMapForIds]);
 
   const onRefresh = useCallback(() => {
     if (!currentUser?.id) return;
@@ -462,7 +525,11 @@ const PatientHomeScreen = () => {
     navigation.navigate("Chat", {
       conversationId: conversation.id,
       conversation,
-      title: conversation.title || "Conversation",
+      title: getConversationTitle({
+        conversation,
+        currentUserId: currentUser?.id,
+        usersById: usersByIdRef.current,
+      }),
     });
   };
 
@@ -488,7 +555,14 @@ const PatientHomeScreen = () => {
           conversationId: conversation.id,
           conversation,
           title:
-            conversation.title ||
+            getConversationTitle({
+              conversation,
+              currentUserId: currentUser.id,
+              usersById: {
+                ...usersByIdRef.current,
+                [targetUser.id]: targetUser,
+              },
+            }) ||
             targetUser.displayName ||
             "Care Team Conversation",
         });
@@ -527,7 +601,11 @@ const PatientHomeScreen = () => {
         navigation.navigate("Chat", {
           conversationId: conversation.id,
           conversation,
-          title: conversation.title || "Care Team Chat",
+          title: getConversationTitle({
+            conversation,
+            currentUserId: currentUser.id,
+            usersById: usersByIdRef.current,
+          }),
         });
       } catch (err) {
         devLog("handleOpenCareTeamGroupChat error:", err);
@@ -785,9 +863,15 @@ const PatientHomeScreen = () => {
             (!lastReadAt ||
               new Date(lastReadAt).getTime() < new Date(lastMsgAt).getTime());
 
+          const title = getConversationTitle({
+            conversation: item,
+            currentUserId: currentUser?.id,
+            usersById,
+          });
+
           return (
             <ConversationListItem
-              title={item.title || "Conversation"}
+              title={title}
               preview={preview}
               timestamp={ts}
               unread={isUnread}
