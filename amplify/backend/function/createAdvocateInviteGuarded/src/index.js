@@ -155,6 +155,7 @@ exports.handler = async (event) => {
   const item = {
     id: inviteId,
     patientId,
+    providerId,
     advocateId,
     conversationId,
     status: "PENDING",

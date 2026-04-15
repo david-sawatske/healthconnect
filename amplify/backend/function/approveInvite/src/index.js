@@ -6,6 +6,8 @@
 Amplify Params - DO NOT EDIT */
 "use strict";
 
+const crypto = require("crypto");
+
 const {
   DynamoDBClient,
   GetItemCommand,
@@ -48,6 +50,10 @@ function unmarshallStringArray(attr) {
   return attr.L.map((x) => x.S);
 }
 
+function makeClientRequestToken(input) {
+  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 36);
+}
+
 exports.handler = async (event) => {
   console.log("event:", JSON.stringify(event, null, 2));
 
@@ -72,12 +78,12 @@ exports.handler = async (event) => {
     const patientId = inv.patientId?.S;
     const status = inv.status?.S;
     const conversationId = inv.conversationId?.S;
-    const providerId = inv.createdBy?.S;
+    const providerId = inv.providerId?.S;
 
     if (advocateId !== sub) throw new Error("Unauthorized: wrong advocate");
     if (status !== "PENDING") throw new Error(`Invalid status: ${status}`);
     if (!conversationId) throw new Error("Invite missing conversationId");
-    if (!providerId) throw new Error("Invite missing createdBy/providerId");
+    if (!providerId) throw new Error("Invite missing providerId");
     if (!patientId) throw new Error("Invite missing patientId");
 
     const convoRes = await ddb.send(
@@ -107,10 +113,11 @@ exports.handler = async (event) => {
     const assignmentId = `PA:${patientId}:PR:${providerId}:ADV:${advocateId}`;
     const participantId = `${conversationId}:${advocateId}`;
     const msgId = `SYS:INVITE_APPROVED:${inviteId}`;
+    const clientRequestToken = makeClientRequestToken(inviteId);
 
     await ddb.send(
       new TransactWriteItemsCommand({
-        ClientRequestToken: `${inviteId}`,
+        ClientRequestToken: clientRequestToken,
         TransactItems: [
           {
             Update: {
@@ -198,7 +205,6 @@ exports.handler = async (event) => {
       advocateId,
       conversationId,
       status: "APPROVED",
-      createdBy: providerId,
       approvedBy: advocateId,
       approvedAt: now,
     };

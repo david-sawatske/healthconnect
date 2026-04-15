@@ -192,6 +192,7 @@ type AdvocateInvite
   id: ID!
   patientId: String!
   advocateId: String!
+  providerId: String!
   conversationId: ID!
   status: InviteStatus!
   createdBy: String!

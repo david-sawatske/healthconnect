@@ -23,7 +23,7 @@
       "function": {
         "approveInvite": {
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
-          "s3Key": "amplify-builds/approveInvite-4f773849546f31435749-build.zip",
+          "s3Key": "amplify-builds/approveInvite-6b71785947636a4d6542-build.zip",
           "tableAdvocateInvite": "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev",
           "tableConversation": "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",
           "tableAdvocateAssignment": "AdvocateAssignment-5izqvjgcw5e5zdbimlgzknen3m-dev",
@@ -32,7 +32,7 @@
         },
         "adminSeedData": {
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
-          "s3Key": "amplify-builds/adminSeedData-654c676a42542f465074-build.zip",
+          "s3Key": "amplify-builds/adminSeedData-39665678627a33645a6f-build.zip",
           "demoPatientEmail": "patient@example.com",
           "demoProviderEmail": "provider@example.com",
           "demoAdvocateEmail": "advocate@example.com",
@@ -52,7 +52,7 @@
           "tableAdvocateAssignment": "AdvocateAssignment-5izqvjgcw5e5zdbimlgzknen3m-dev",
           "tableConversation": "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
-          "s3Key": "amplify-builds/createAdvocateInviteGuarded-57707750655a524a6134-build.zip"
+          "s3Key": "amplify-builds/createAdvocateInviteGuarded-486b59586e394d78424b-build.zip"
         }
       },
       "storage": {
