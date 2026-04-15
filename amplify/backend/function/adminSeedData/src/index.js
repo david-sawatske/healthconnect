@@ -498,15 +498,6 @@ exports.handler = async (event) => {
         lastMessageAt: minutesAgo(15),
       });
 
-      const convEmpty = conv({
-        id: "demo-empty-thread",
-        title: null,
-        isGroup: false,
-        createdBy: patientId,
-        memberIds: [patientId, providerId],
-        createdAt: minutesAgo(30),
-      });
-
       const list = [
         convCareTeam,
         convPatientProvider,
@@ -517,7 +508,6 @@ exports.handler = async (event) => {
         convP3Provider,
         convP2Advocate1,
         convGroup4,
-        convEmpty,
       ];
 
       const byId = Object.fromEntries(list.map((c) => [c.id, c]));
@@ -612,11 +602,6 @@ exports.handler = async (event) => {
           [provider2Id]: minutesAgo(500),
           [patient2Id]: minutesAgo(300),
         },
-      ),
-
-      ...participantsForConversation(
-        seedPlan.conversations.byId["demo-empty-thread"],
-        {},
       ),
     ];
 
@@ -1005,7 +990,6 @@ exports.handler = async (event) => {
       notes: {
         modelTimestamps: "All @model seed items include createdAt + updatedAt",
         schemaDrift: "No ConversationParticipant.role written",
-        emptyThread: "demo-empty-thread intentionally has 0 messages",
         removedChat: '"System Updates" conversation fully removed',
         deterministicIds:
           "Care team uses CARE_TEAM:${patientId}:${providerId}; DMs use DM:${minId}:${maxId}; ProviderPatient uses PP:${providerId}:${patientId}; AdvocateAssignment uses PA:${patientId}:PR:${providerId}:ADV:${advocateId}",
