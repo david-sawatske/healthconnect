@@ -303,9 +303,27 @@ export function useCall({
           bodyText = `📞 Call ended • ${callStartText}`;
         }
 
+        const combinedMemberIds = [
+          ...(conversationMemberIds || []),
+          ...(memberIdsFromRoute || []),
+        ];
+
+        const derivedMemberIds =
+          typeof conversationId === "string" && conversationId.startsWith("DM:")
+            ? conversationId.split(":").slice(1).filter(Boolean)
+            : [];
+
         const visibleToAll = Array.from(
-          new Set((conversationMemberIds || []).filter(Boolean)),
+          new Set([...combinedMemberIds, ...derivedMemberIds].filter(Boolean)),
         );
+
+        log("postEndedSystemMessage audience", {
+          conversationId,
+          me: me?.sub,
+          conversationMemberIds,
+          visibleToAll,
+          opts,
+        });
 
         await postCallEndedSystemMessage({
           conversationId,
