@@ -116,18 +116,26 @@ export default function AppNavigator() {
     const u = await getCurrentUser().catch(() => null);
     const senderId = u?.userId;
 
+    const explicitMemberIds = Array.isArray(incoming?.memberIds)
+      ? incoming.memberIds
+      : [];
+
     const derivedMemberIds =
       typeof incoming?.conversationId === "string" &&
       incoming.conversationId.startsWith("DM:")
         ? incoming.conversationId.split(":").slice(1).filter(Boolean)
         : [];
 
+    const memberIds = Array.from(
+      new Set([...explicitMemberIds, ...derivedMemberIds].filter(Boolean)),
+    );
+
     try {
       await declineIncomingCall({
         conversationId: incoming?.conversationId,
         callSessionId: incoming?.callSessionId,
         senderId,
-        memberIds: derivedMemberIds,
+        memberIds,
         reason: "declined",
       });
     } catch (e) {
