@@ -205,6 +205,7 @@ export async function declineIncomingCall({
   conversationId,
   callSessionId,
   senderId,
+  memberIds = [],
   reason = "declined",
 }) {
   if (!conversationId || !callSessionId || !senderId) return;
@@ -222,4 +223,18 @@ export async function declineIncomingCall({
     status: "ENDED",
     endedAt: new Date().toISOString(),
   });
+
+  const visibleToAll = Array.from(new Set((memberIds || []).filter(Boolean)));
+
+  if (visibleToAll.length > 0) {
+    await postCallEndedSystemMessage({
+      conversationId,
+      senderId,
+      memberIds: visibleToAll,
+      body: `📞 Call declined • ${new Date().toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })}`,
+    });
+  }
 }

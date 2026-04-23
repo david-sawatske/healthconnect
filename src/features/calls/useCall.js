@@ -87,6 +87,7 @@ export function useCall({
   const earlyIceRef = useRef([]);
   const endingRef = useRef(false);
   const answeredOnceRef = useRef(false);
+  const connectedOnceRef = useRef(false);
 
   const startedAtRef = useRef(null);
 
@@ -193,6 +194,7 @@ export function useCall({
       const s = pc.connectionState;
       log("connectionState", s);
       if (s === "connected") {
+        connectedOnceRef.current = true;
         setStatus("CONNECTED");
         clearRingTimer();
         clearRingingPoll();
@@ -203,6 +205,7 @@ export function useCall({
       const s = pc.iceConnectionState;
       log("iceConnectionState", s);
       if (s === "connected" || s === "completed") {
+        connectedOnceRef.current = true;
         setStatus("CONNECTED");
         clearRingTimer();
         clearRingingPoll();
@@ -258,10 +261,8 @@ export function useCall({
           callStartIso = sess?.startedAt || callStartIso || null;
         }
 
-        const callStartText = timeLabel(
-          callStartIso || new Date().toISOString(),
-        );
         const endedAtIso = new Date().toISOString();
+        const callStartText = timeLabel(callStartIso || endedAtIso);
 
         try {
           await updateCallSession({
@@ -271,12 +272,25 @@ export function useCall({
           });
         } catch {}
 
+        const {
+          declined = false,
+          timeout = false,
+          canceled = false,
+          failed = false,
+          connected = connectedOnceRef.current,
+        } = opts;
+
         let bodyText;
-        if (opts.declined) {
+
+        if (declined) {
           bodyText = `📞 Call declined • ${callStartText}`;
-        } else if (opts.timeout) {
+        } else if (timeout) {
           bodyText = `📞 Missed call • ${callStartText}`;
-        } else {
+        } else if (canceled) {
+          bodyText = `📞 Call canceled • ${callStartText}`;
+        } else if (failed) {
+          bodyText = `📞 Call failed • ${callStartText}`;
+        } else if (connected) {
           let durationText = "";
           if (callStartIso) {
             const ms =
@@ -285,6 +299,8 @@ export function useCall({
             if (pretty) durationText = ` • Duration: ${pretty}`;
           }
           bodyText = `📞 Call • ${callStartText}${durationText}`;
+        } else {
+          bodyText = `📞 Call ended • ${callStartText}`;
         }
 
         const visibleToAll = Array.from(
@@ -328,13 +344,7 @@ export function useCall({
 
       log("ring poll started");
     },
-    [
-      clearRingTimer,
-      clearRingingPoll,
-      clearRingingPoll,
-      stopTracksAndPC,
-      leaveToChat,
-    ],
+    [clearRingTimer, clearRingingPoll, stopTracksAndPC, leaveToChat],
   );
 
   const startRingTimer = useCallback(
@@ -369,7 +379,7 @@ export function useCall({
         stopTracksAndPC();
         setStatus("ENDED");
 
-        await postEndedSystemMessage({ timeout: true });
+        await postEndedSystemMessage({ timeout: true, connected: false });
         leaveToChat();
       }, RING_TIMEOUT_MS);
 
@@ -467,9 +477,6 @@ export function useCall({
 
             setStatus("ENDED");
 
-            let payload = safeParseJson(sig.payload) || sig.payload;
-            const reason = payload?.reason;
-
             try {
               await updateCallSession({
                 id: sig.callSessionId || callSessionIdRef.current,
@@ -479,16 +486,6 @@ export function useCall({
             } catch {}
 
             stopTracksAndPC();
-
-            const declined = isDecline || reason === "declined";
-            const timedOut =
-              sig.type === "TIMEOUT" || (!declined && reason === "no-answer");
-
-            await postEndedSystemMessage({
-              timeout: timedOut,
-              declined,
-            });
-
             leaveToChat();
           }
         } catch (e) {
@@ -523,7 +520,9 @@ export function useCall({
       setStatus("RINGING");
       log("accepting incoming call (user accepted)", { incomingSessionId });
 
-      startedAtRef.current = new Date().toISOString();
+      connectedOnceRef.current = false;
+      const sess = await getCallSession(incomingSessionId);
+      startedAtRef.current = sess?.startedAt || new Date().toISOString();
 
       try {
         if (!callSessionIdRef.current) setCallSessionId(incomingSessionId);
@@ -597,6 +596,10 @@ export function useCall({
     if (status !== "IDLE") return;
 
     try {
+      connectedOnceRef.current = false;
+      endingRef.current = false;
+      answeredOnceRef.current = false;
+
       let pc = ensurePC();
       await getLocalStream();
 
@@ -695,7 +698,10 @@ export function useCall({
     } catch {}
 
     stopTracksAndPC();
-    await postEndedSystemMessage();
+    await postEndedSystemMessage({
+      canceled: !connectedOnceRef.current,
+      connected: connectedOnceRef.current,
+    });
     leaveToChat();
   }, [
     conversationId,
