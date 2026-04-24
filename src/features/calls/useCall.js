@@ -185,8 +185,15 @@ export function useCall({
     pc.ontrack = (event) => {
       const [stream] = event.streams || [];
       if (!stream) return;
+
       remoteStreamRef.current = stream;
       setHasRemote(true);
+
+      connectedOnceRef.current = true;
+      setStatus("CONNECTED");
+      clearRingTimer();
+      clearRingingPoll();
+
       log("ontrack remote stream", stream?.id);
     };
 
