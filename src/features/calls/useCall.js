@@ -342,7 +342,7 @@ export function useCall({
         log("postEndedSystemMessage failed", e?.message || e);
       }
     },
-    [conversationId, conversationMemberIds, me?.sub],
+    [conversationId, conversationMemberIds, memberIdsFromRoute, me?.sub],
   );
 
   const startRingingPoll = useCallback(
@@ -702,6 +702,13 @@ export function useCall({
 
     const sid = callSessionIdRef.current;
 
+    stopTracksAndPC();
+
+    await postEndedSystemMessage({
+      canceled: !connectedOnceRef.current,
+      connected: connectedOnceRef.current,
+    });
+
     try {
       await createCallSignal({
         conversationId,
@@ -714,19 +721,6 @@ export function useCall({
       log("send BYE failed", e);
     }
 
-    try {
-      await updateCallSession({
-        id: sid,
-        status: "ENDED",
-        endedAt: new Date().toISOString(),
-      });
-    } catch {}
-
-    stopTracksAndPC();
-    await postEndedSystemMessage({
-      canceled: !connectedOnceRef.current,
-      connected: connectedOnceRef.current,
-    });
     leaveToChat();
   }, [
     conversationId,

@@ -11,6 +11,7 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallSignals } from "../hooks/useCallSignals";
 import { useCurrentUser } from "../context/CurrentUserContext";
@@ -48,6 +49,7 @@ export default function ChatScreen({ route, navigation }) {
     attach,
     roleForSender,
     nameForSender,
+    refreshMessages,
   } = useChat({
     conversationId,
     conversation: conversationParam,
@@ -55,6 +57,14 @@ export default function ChatScreen({ route, navigation }) {
   });
 
   useCallSignals({ conversationId, currentUserId: myId });
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!conversationId) return;
+
+      refreshMessages();
+    }, [conversationId, refreshMessages]),
+  );
 
   useEffect(() => {
     if (!conversationId) return;

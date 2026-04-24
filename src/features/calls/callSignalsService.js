@@ -210,20 +210,6 @@ export async function declineIncomingCall({
 }) {
   if (!conversationId || !callSessionId || !senderId) return;
 
-  await createCallSignal({
-    conversationId,
-    callSessionId,
-    senderId,
-    type: "BYE",
-    payload: { reason, at: Date.now() },
-  });
-
-  await updateCallSession({
-    id: callSessionId,
-    status: "ENDED",
-    endedAt: new Date().toISOString(),
-  });
-
   const visibleToAll = Array.from(new Set((memberIds || []).filter(Boolean)));
 
   if (visibleToAll.length > 0) {
@@ -237,4 +223,22 @@ export async function declineIncomingCall({
       })}`,
     });
   }
+
+  try {
+    await createCallSignal({
+      conversationId,
+      callSessionId,
+      senderId,
+      type: "BYE",
+      payload: { reason, at: Date.now() },
+    });
+  } catch {}
+
+  try {
+    await updateCallSession({
+      id: callSessionId,
+      status: "ENDED",
+      endedAt: new Date().toISOString(),
+    });
+  } catch {}
 }
