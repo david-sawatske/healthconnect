@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Alert } from "react-native";
+import { Button, Alert, Platform } from "react-native";
 import {
   NavigationContainer,
   createNavigationContainerRef,
@@ -12,7 +12,6 @@ import { signOut, getCurrentUser } from "aws-amplify/auth";
 import AuthScreen from "../screens/AuthScreen";
 import HomeScreen from "../screens/HomeScreen";
 import ChatScreen from "../screens/ChatScreen";
-import CallScreen from "../screens/CallScreen";
 import AdminHomeScreen from "../screens/AdminHomeScreen";
 import ProviderHomeScreen from "../screens/ProviderHomeScreen";
 import PatientDetailScreen from "../screens/PatientDetailScreen";
@@ -24,8 +23,14 @@ import { useCall } from "../context/CallContext";
 
 import GlobalRealtimeListener from "../services/realtime/GlobalRealtimeListener";
 import GlobalIncomingBanner from "../components/GlobalIncomingBanner";
-import IncomingCallModal from "../components/IncomingCallModal";
-import { declineIncomingCall } from "../features/calls/callLifecycleService";
+
+let CallScreen = null;
+let IncomingCallModal = null;
+
+if (Platform.OS !== "web") {
+  CallScreen = require("../screens/CallScreen").default;
+  IncomingCallModal = require("../components/IncomingCallModal").default;
+}
 
 const Stack = createNativeStackNavigator();
 export const navRef = createNavigationContainerRef();
@@ -96,6 +101,8 @@ export default function AppNavigator() {
   }, [incomingMsg, clearBanner]);
 
   async function onAccept(incoming) {
+    if (Platform.OS === "web") return;
+
     call?.setConnecting?.();
     call?.hide?.();
 
@@ -114,6 +121,13 @@ export default function AppNavigator() {
   }
 
   async function onDecline(incoming) {
+    if (Platform.OS === "web") {
+      call?.hide?.();
+      return;
+    }
+
+    const { declineIncomingCall } = require("../features/calls/callLifecycleService");
+
     const u = await getCurrentUser().catch(() => null);
     const senderId = u?.userId;
 
@@ -147,11 +161,15 @@ export default function AppNavigator() {
           <Stack.Screen name="Auth" component={AuthScreen} />
           <Stack.Screen name="Home" component={HomeScreen} />
           <Stack.Screen name="Chat" component={ChatScreen} />
-          <Stack.Screen
-            name="Call"
-            component={CallScreen}
-            options={{ headerShown: false }}
-          />
+
+          {Platform.OS !== "web" && CallScreen ? (
+            <Stack.Screen
+              name="Call"
+              component={CallScreen}
+              options={{ headerShown: false }}
+            />
+          ) : null}
+
           <Stack.Screen name="ProviderHome" component={ProviderHomeScreen} />
           <Stack.Screen
             name="PatientDetail"
@@ -179,7 +197,9 @@ export default function AppNavigator() {
         onPress={onPressBanner}
       />
 
-      <IncomingCallModal onAccept={onAccept} onDecline={onDecline} />
+      {Platform.OS !== "web" && IncomingCallModal ? (
+        <IncomingCallModal onAccept={onAccept} onDecline={onDecline} />
+      ) : null}
     </SafeAreaView>
   );
 }
