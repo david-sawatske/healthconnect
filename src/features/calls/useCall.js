@@ -10,10 +10,11 @@ import {
   createCallSession,
   createCallSignal,
   getCallSession,
-  postCallEndedSystemMessage,
   subscribeToSignals,
   updateCallSession,
 } from "./callSignalsService";
+
+import { hangUpCall, timeoutOutgoingCall } from "./callLifecycleService";
 
 const log = (...args) => console.log("[CALL]", ...args);
 
@@ -27,26 +28,10 @@ const SDP_ANSWER_OPTS = {
 
 const RING_TIMEOUT_MS = 10000;
 
-const formatDuration = (ms) => {
-  if (!ms || ms < 0) return null;
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  if (h) return `${h}h ${m}m ${sec}s`;
-  if (m) return `${m}m ${sec}s`;
-  return `${sec}s`;
-};
-
-const timeLabel = (iso) =>
-  new Date(iso || Date.now()).toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
 function safeParseJson(x) {
   if (x == null) return null;
   if (typeof x !== "string") return x;
+
   try {
     return JSON.parse(x);
   } catch {
@@ -75,6 +60,7 @@ export function useCall({
 
   const [callSessionId, _setCallSessionId] = useState(null);
   const callSessionIdRef = useRef(null);
+
   const setCallSessionId = (id) => {
     callSessionIdRef.current = id;
     _setCallSessionId(id);
@@ -109,6 +95,7 @@ export function useCall({
 
   const clearRingTimer = useCallback(() => {
     if (!ringTimerRef.current) return;
+
     clearTimeout(ringTimerRef.current);
     ringTimerRef.current = null;
     log("ring timer cleared");
@@ -116,6 +103,7 @@ export function useCall({
 
   const clearRingingPoll = useCallback(() => {
     if (!ringPollRef.current) return;
+
     clearInterval(ringPollRef.current);
     ringPollRef.current = null;
     log("ring poll cleared");
@@ -136,7 +124,7 @@ export function useCall({
     pcRef.current = null;
 
     try {
-      localStreamRef.current?.getTracks?.forEach((t) => t.stop());
+      localStreamRef.current?.getTracks?.().forEach((t) => t.stop());
     } catch {}
 
     localStreamRef.current = null;
@@ -200,6 +188,7 @@ export function useCall({
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       log("connectionState", s);
+
       if (s === "connected") {
         connectedOnceRef.current = true;
         setStatus("CONNECTED");
@@ -211,6 +200,7 @@ export function useCall({
     pc.oniceconnectionstatechange = () => {
       const s = pc.iceConnectionState;
       log("iceConnectionState", s);
+
       if (s === "connected" || s === "completed") {
         connectedOnceRef.current = true;
         setStatus("CONNECTED");
@@ -238,6 +228,7 @@ export function useCall({
     if (localStreamRef.current) return localStreamRef.current;
 
     log("getUserMedia start");
+
     const stream = await mediaDevices.getUserMedia({
       audio: true,
       video: {
@@ -257,93 +248,6 @@ export function useCall({
 
     return stream;
   }, [ensurePC]);
-
-  const postEndedSystemMessage = useCallback(
-    async (opts = {}) => {
-      try {
-        let callStartIso = startedAtRef.current;
-
-        if (!callStartIso && callSessionIdRef.current) {
-          const sess = await getCallSession(callSessionIdRef.current);
-          callStartIso = sess?.startedAt || callStartIso || null;
-        }
-
-        const endedAtIso = new Date().toISOString();
-        const callStartText = timeLabel(callStartIso || endedAtIso);
-
-        try {
-          await updateCallSession({
-            id: callSessionIdRef.current,
-            status: "ENDED",
-            endedAt: endedAtIso,
-          });
-        } catch {}
-
-        const {
-          declined = false,
-          timeout = false,
-          canceled = false,
-          failed = false,
-          connected = connectedOnceRef.current,
-        } = opts;
-
-        let bodyText;
-
-        if (declined) {
-          bodyText = `📞 Call declined • ${callStartText}`;
-        } else if (timeout) {
-          bodyText = `📞 Missed call • ${callStartText}`;
-        } else if (canceled) {
-          bodyText = `📞 Call canceled • ${callStartText}`;
-        } else if (failed) {
-          bodyText = `📞 Call failed • ${callStartText}`;
-        } else if (connected) {
-          let durationText = "";
-          if (callStartIso) {
-            const ms =
-              new Date(endedAtIso).getTime() - new Date(callStartIso).getTime();
-            const pretty = formatDuration(ms);
-            if (pretty) durationText = ` • Duration: ${pretty}`;
-          }
-          bodyText = `📞 Call • ${callStartText}${durationText}`;
-        } else {
-          bodyText = `📞 Call ended • ${callStartText}`;
-        }
-
-        const combinedMemberIds = [
-          ...(conversationMemberIds || []),
-          ...(memberIdsFromRoute || []),
-        ];
-
-        const derivedMemberIds =
-          typeof conversationId === "string" && conversationId.startsWith("DM:")
-            ? conversationId.split(":").slice(1).filter(Boolean)
-            : [];
-
-        const visibleToAll = Array.from(
-          new Set([...combinedMemberIds, ...derivedMemberIds].filter(Boolean)),
-        );
-
-        log("postEndedSystemMessage audience", {
-          conversationId,
-          me: me?.sub,
-          conversationMemberIds,
-          visibleToAll,
-          opts,
-        });
-
-        await postCallEndedSystemMessage({
-          conversationId,
-          senderId: me?.sub,
-          memberIds: visibleToAll,
-          body: bodyText,
-        });
-      } catch (e) {
-        log("postEndedSystemMessage failed", e?.message || e);
-      }
-    },
-    [conversationId, conversationMemberIds, memberIdsFromRoute, me?.sub],
-  );
 
   const startRingingPoll = useCallback(
     (sid) => {
@@ -378,33 +282,30 @@ export function useCall({
 
       ringTimerRef.current = setTimeout(async () => {
         log("ring timeout fired");
+
         if (endingRef.current) return;
         endingRef.current = true;
 
+        const resolvedCallSessionId = sid || callSessionIdRef.current;
+
+        setStatus("ENDED");
+        clearRingTimer();
+        clearRingingPoll();
+
         try {
-          await createCallSignal({
+          await timeoutOutgoingCall({
             conversationId,
-            callSessionId: sid || callSessionIdRef.current,
+            callSessionId: resolvedCallSessionId,
             senderId: me?.sub,
-            type: "BYE",
-            payload: { reason: "no-answer", at: Date.now() },
+            conversationMemberIds,
+            memberIdsFromRoute,
+            startedAt: startedAtRef.current,
           });
         } catch (e) {
-          log("send TIMEOUT(BYE) failed", e);
+          log("timeoutOutgoingCall failed", e?.message || e);
         }
 
-        try {
-          await updateCallSession({
-            id: sid || callSessionIdRef.current,
-            status: "ENDED",
-            endedAt: new Date().toISOString(),
-          });
-        } catch {}
-
         stopTracksAndPC();
-        setStatus("ENDED");
-
-        await postEndedSystemMessage({ timeout: true, connected: false });
         leaveToChat();
       }, RING_TIMEOUT_MS);
 
@@ -412,9 +313,11 @@ export function useCall({
     },
     [
       clearRingTimer,
+      clearRingingPoll,
       conversationId,
+      conversationMemberIds,
+      memberIdsFromRoute,
       me?.sub,
-      postEndedSystemMessage,
       stopTracksAndPC,
       leaveToChat,
     ],
@@ -459,6 +362,7 @@ export function useCall({
             }
 
             const queued = earlyIceRef.current.splice(0);
+
             for (const c of queued) {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(c));
@@ -466,6 +370,7 @@ export function useCall({
                 log("flush ICE failed", e);
               }
             }
+
             return;
           }
 
@@ -486,6 +391,7 @@ export function useCall({
                 }
               }
             }
+
             return;
           }
 
@@ -497,6 +403,7 @@ export function useCall({
           if (isDecline || isCancelOrTimeout || isBye) {
             clearRingTimer();
             clearRingingPoll();
+
             if (endingRef.current) return;
             endingRef.current = true;
 
@@ -531,7 +438,6 @@ export function useCall({
     isCaller,
     clearRingTimer,
     clearRingingPoll,
-    postEndedSystemMessage,
     stopTracksAndPC,
     leaveToChat,
   ]);
@@ -540,12 +446,14 @@ export function useCall({
     (async () => {
       if (!incomingOffer || !incomingSessionId || !me?.sub) return;
       if (answeredOnceRef.current) return;
+
       answeredOnceRef.current = true;
 
       setStatus("RINGING");
       log("accepting incoming call (user accepted)", { incomingSessionId });
 
       connectedOnceRef.current = false;
+
       const sess = await getCallSession(incomingSessionId);
       startedAtRef.current = sess?.startedAt || new Date().toISOString();
 
@@ -555,6 +463,7 @@ export function useCall({
         let pc = ensurePC();
 
         const offer = safeParseJson(incomingOffer) || incomingOffer;
+
         if (!offer?.type || !offer?.sdp) {
           log("Invalid incoming offer payload");
           setStatus("IDLE");
@@ -571,12 +480,13 @@ export function useCall({
 
         if (isClosed(pcRef.current)) {
           pc = ensurePC();
-          localStreamRef.current?.getTracks?.forEach((t) =>
-            pc.addTrack(t, localStreamRef.current),
-          );
+          localStreamRef.current
+            ?.getTracks?.()
+            .forEach((t) => pc.addTrack(t, localStreamRef.current));
         }
 
         pc = ensurePC();
+
         const answer = await pc.createAnswer(SDP_ANSWER_OPTS);
         await pc.setLocalDescription(answer);
 
@@ -591,6 +501,7 @@ export function useCall({
         log("ANSWER sent");
 
         const queued = earlyIceRef.current.splice(0);
+
         for (const c of queued) {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(c));
@@ -630,9 +541,9 @@ export function useCall({
 
       if (isClosed(pcRef.current)) {
         pc = ensurePC();
-        localStreamRef.current?.getTracks?.forEach((t) =>
-          pc.addTrack(t, localStreamRef.current),
-        );
+        localStreamRef.current
+          ?.getTracks?.()
+          .forEach((t) => pc.addTrack(t, localStreamRef.current));
       }
 
       setIsCaller(true);
@@ -656,6 +567,7 @@ export function useCall({
       log("CallSession created", sessionId);
 
       pc = ensurePC();
+
       const offer = await pc.createOffer(SDP_OFFER_OPTS);
       await pc.setLocalDescription(offer);
 
@@ -694,6 +606,7 @@ export function useCall({
 
   const hangUp = useCallback(async () => {
     if (endingRef.current) return;
+
     endingRef.current = true;
 
     setStatus("ENDED");
@@ -702,56 +615,63 @@ export function useCall({
 
     const sid = callSessionIdRef.current;
 
-    stopTracksAndPC();
-
-    await postEndedSystemMessage({
-      canceled: !connectedOnceRef.current,
-      connected: connectedOnceRef.current,
-    });
-
     try {
-      await createCallSignal({
+      await hangUpCall({
         conversationId,
         callSessionId: sid,
         senderId: me?.sub,
-        type: "BYE",
-        payload: { endedBy: me?.sub },
+        conversationMemberIds,
+        memberIdsFromRoute,
+        connected: connectedOnceRef.current,
+        startedAt: startedAtRef.current,
       });
     } catch (e) {
-      log("send BYE failed", e);
+      log("hangUpCall failed", e?.message || e);
     }
 
+    stopTracksAndPC();
     leaveToChat();
   }, [
     conversationId,
+    conversationMemberIds,
+    memberIdsFromRoute,
     me?.sub,
     clearRingTimer,
     clearRingingPoll,
     stopTracksAndPC,
-    postEndedSystemMessage,
     leaveToChat,
   ]);
 
   const toggleMute = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return;
-    stream.getAudioTracks().forEach((t) => (t.enabled = !t.enabled));
+
+    stream.getAudioTracks().forEach((t) => {
+      t.enabled = !t.enabled;
+    });
+
     setMuted((m) => !m);
   }, []);
 
   const toggleVideo = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return;
-    stream.getVideoTracks().forEach((t) => (t.enabled = !t.enabled));
+
+    stream.getVideoTracks().forEach((t) => {
+      t.enabled = !t.enabled;
+    });
+
     setVideoEnabled((v) => !v);
   }, []);
 
   useEffect(() => {
     return () => {
       log("unmount cleanup");
+
       try {
         subRef.current?.unsubscribe?.();
       } catch {}
+
       stopTracksAndPC();
     };
   }, [stopTracksAndPC]);

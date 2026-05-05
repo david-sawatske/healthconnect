@@ -1,5 +1,6 @@
 export function parseOfferPayload(payload) {
   let parsed = null;
+
   try {
     parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
   } catch {}

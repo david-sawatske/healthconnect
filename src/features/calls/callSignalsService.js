@@ -121,11 +121,13 @@ export async function updateCallSession({ id, status, startedAt, endedAt }) {
 
 export async function getCallSession(id) {
   if (!id) return null;
+
   const res = await client.graphql({
     query: GET_CALL_SESSION,
     variables: { id },
     authMode: "userPool",
   });
+
   return res?.data?.getCallSession ?? null;
 }
 
@@ -183,10 +185,11 @@ export async function postCallEndedSystemMessage({
   memberIds,
   body,
 }) {
-  if (!conversationId || !senderId || !Array.isArray(memberIds) || !body)
-    return;
+  if (!conversationId || !senderId || !Array.isArray(memberIds) || !body) {
+    return null;
+  }
 
-  await client.graphql({
+  const res = await client.graphql({
     query: CREATE_MESSAGE,
     variables: {
       input: {
@@ -199,46 +202,6 @@ export async function postCallEndedSystemMessage({
     },
     authMode: "userPool",
   });
-}
 
-export async function declineIncomingCall({
-  conversationId,
-  callSessionId,
-  senderId,
-  memberIds = [],
-  reason = "declined",
-}) {
-  if (!conversationId || !callSessionId || !senderId) return;
-
-  const visibleToAll = Array.from(new Set((memberIds || []).filter(Boolean)));
-
-  if (visibleToAll.length > 0) {
-    await postCallEndedSystemMessage({
-      conversationId,
-      senderId,
-      memberIds: visibleToAll,
-      body: `📞 Call declined • ${new Date().toLocaleTimeString([], {
-        hour: "numeric",
-        minute: "2-digit",
-      })}`,
-    });
-  }
-
-  try {
-    await createCallSignal({
-      conversationId,
-      callSessionId,
-      senderId,
-      type: "BYE",
-      payload: { reason, at: Date.now() },
-    });
-  } catch {}
-
-  try {
-    await updateCallSession({
-      id: callSessionId,
-      status: "ENDED",
-      endedAt: new Date().toISOString(),
-    });
-  } catch {}
+  return res?.data?.createMessage ?? null;
 }

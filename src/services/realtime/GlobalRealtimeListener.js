@@ -38,7 +38,20 @@ const ON_SIGNAL = /* GraphQL */ `
   }
 `;
 
+const TERMINAL_CALL_SIGNAL_TYPES = new Set([
+  "BYE",
+  "ENDED",
+  "CANCEL",
+  "TIMEOUT",
+  "DECLINE",
+  "DECLINED",
+]);
+
 const log = (...args) => console.log("[GLOBAL_REALTIME]", ...args);
+
+function isTerminalCallSignal(type) {
+  return TERMINAL_CALL_SIGNAL_TYPES.has(String(type || "").toUpperCase());
+}
 
 export default function GlobalRealtimeListener({
   navRef,
@@ -49,8 +62,10 @@ export default function GlobalRealtimeListener({
 
   const [conversationIds, setConversationIds] = useState([]);
   const subsRef = useRef([]);
+  const callRef = useRef(call);
 
-  const myId = currentUser?.id || null;
+  const myId =
+    currentUser?.id || currentUser?.sub || currentUser?.userId || null;
 
   const conversationIdSet = useMemo(
     () => new Set(conversationIds),
@@ -58,11 +73,15 @@ export default function GlobalRealtimeListener({
   );
 
   useEffect(() => {
+    callRef.current = call;
+  }, [call]);
+
+  useEffect(() => {
     let cancelled = false;
 
     (async () => {
       if (!myId) {
-        log("No currentUser.id yet; skipping conversationId fetch");
+        log("No currentUser id yet; skipping conversationId fetch");
         return;
       }
 
@@ -91,6 +110,7 @@ export default function GlobalRealtimeListener({
         s?.unsubscribe?.();
       } catch {}
     });
+
     subsRef.current = [];
 
     let cancelled = false;
@@ -142,10 +162,30 @@ export default function GlobalRealtimeListener({
               next: ({ data }) => {
                 if (cancelled) return;
 
-                const s = data?.onSignal;
-                if (!s) return;
+                const signal = data?.onSignal;
+                if (!signal) return;
 
-                handleIncomingOfferSignal({ signal: s, myId, call });
+                const isOwnSignal = signal.senderId === myId;
+
+                if (isTerminalCallSignal(signal.type)) {
+                  if (!isOwnSignal) {
+                    log("Remote terminal call signal received; hiding modal", {
+                      type: signal.type,
+                      conversationId: signal.conversationId,
+                      callSessionId: signal.callSessionId,
+                    });
+
+                    callRef.current?.hide?.();
+                  }
+
+                  return;
+                }
+
+                handleIncomingOfferSignal({
+                  signal,
+                  myId,
+                  call: callRef.current,
+                });
               },
               error: (err) =>
                 log("onSignal sub error", { conversationId, err }),
@@ -166,21 +206,16 @@ export default function GlobalRealtimeListener({
 
     return () => {
       cancelled = true;
+
       subsRef.current.forEach((s) => {
         try {
           s?.unsubscribe?.();
         } catch {}
       });
+
       subsRef.current = [];
     };
-  }, [
-    conversationIds,
-    navRef,
-    myId,
-    call,
-    onIncomingMessage,
-    conversationIdSet,
-  ]);
+  }, [conversationIds, navRef, myId, onIncomingMessage, conversationIdSet]);
 
   return null;
 }

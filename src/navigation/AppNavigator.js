@@ -7,7 +7,7 @@ import {
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { signOut } from "aws-amplify/auth";
+import { signOut, getCurrentUser } from "aws-amplify/auth";
 
 import AuthScreen from "../screens/AuthScreen";
 import HomeScreen from "../screens/HomeScreen";
@@ -25,8 +25,7 @@ import { useCall } from "../context/CallContext";
 import GlobalRealtimeListener from "../services/realtime/GlobalRealtimeListener";
 import GlobalIncomingBanner from "../components/GlobalIncomingBanner";
 import IncomingCallModal from "../components/IncomingCallModal";
-import { declineIncomingCall } from "../features/calls/callSignalsService";
-import { getCurrentUser } from "aws-amplify/auth";
+import { declineIncomingCall } from "../features/calls/callLifecycleService";
 
 const Stack = createNativeStackNavigator();
 export const navRef = createNavigationContainerRef();
@@ -54,6 +53,7 @@ export default function AppNavigator() {
 
   const clearBanner = React.useCallback(() => {
     setIncomingMsg(null);
+
     if (hideTimerRef.current) {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
@@ -64,6 +64,7 @@ export default function AppNavigator() {
     if (!incomingMsg) return;
 
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+
     hideTimerRef.current = setTimeout(() => {
       setIncomingMsg(null);
       hideTimerRef.current = null;
@@ -116,26 +117,12 @@ export default function AppNavigator() {
     const u = await getCurrentUser().catch(() => null);
     const senderId = u?.userId;
 
-    const explicitMemberIds = Array.isArray(incoming?.memberIds)
-      ? incoming.memberIds
-      : [];
-
-    const derivedMemberIds =
-      typeof incoming?.conversationId === "string" &&
-      incoming.conversationId.startsWith("DM:")
-        ? incoming.conversationId.split(":").slice(1).filter(Boolean)
-        : [];
-
-    const memberIds = Array.from(
-      new Set([...explicitMemberIds, ...derivedMemberIds].filter(Boolean)),
-    );
-
     try {
       await declineIncomingCall({
         conversationId: incoming?.conversationId,
         callSessionId: incoming?.callSessionId,
         senderId,
-        memberIds,
+        memberIds: incoming?.memberIds || [],
         reason: "declined",
       });
     } catch (e) {
