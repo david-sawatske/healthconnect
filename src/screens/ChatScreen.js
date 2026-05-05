@@ -28,6 +28,10 @@ const devLog = (...args) => {
   if (__DEV__) console.log("[CHAT_SCREEN]", ...args);
 };
 
+const WEB_CALL_UNAVAILABLE_TITLE = "Video calls are mobile-only";
+const WEB_CALL_UNAVAILABLE_MESSAGE =
+  "This web demo highlights role-based workflows, care-team messaging, invite flows, realtime updates, and demo data. Native video calling is available in the iOS and Android app builds and is intentionally disabled in the browser preview.";
+
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const { currentUser } = useCurrentUser();
@@ -149,6 +153,28 @@ export default function ChatScreen({ route, navigation }) {
     }
   }, [send]);
 
+  const handleStartCall = useCallback(() => {
+    devLog("phone button pressed", {
+      platform: Platform.OS,
+      conversationId,
+      myId,
+    });
+
+    if (Platform.OS === "web") {
+      globalThis.alert?.(
+        `${WEB_CALL_UNAVAILABLE_TITLE}\n\n${WEB_CALL_UNAVAILABLE_MESSAGE}`,
+      );
+      return;
+    }
+
+    navigation?.navigate?.("Call", {
+      conversation: conversationParam || {
+        id: conversationId,
+        memberIds,
+      },
+    });
+  }, [conversationId, conversationParam, memberIds, navigation, myId]);
+
   const renderItem = ({ item, index }) => {
     const isSystem = item.type === "SYSTEM";
     const mine = item.senderId === myId;
@@ -265,21 +291,18 @@ export default function ChatScreen({ route, navigation }) {
       >
         <View style={styles.inputRow}>
           <TouchableOpacity
-            accessibilityLabel="Start a video call"
+            accessibilityLabel={
+              Platform.OS === "web"
+                ? "Video calls are mobile-only in this web demo"
+                : "Start a video call"
+            }
             style={[
               styles.iconButton,
               styles.callButton,
               !canStartCall && styles.iconButtonDisabled,
             ]}
             disabled={!canStartCall}
-            onPress={() =>
-              navigation?.navigate?.("Call", {
-                conversation: conversationParam || {
-                  id: conversationId,
-                  memberIds,
-                },
-              })
-            }
+            onPress={handleStartCall}
             activeOpacity={0.85}
           >
             <Text style={[styles.iconButtonText, styles.callButtonText]}>
