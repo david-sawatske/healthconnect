@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Alert, Platform } from "react-native";
+import { Button, Alert, Platform, StyleSheet } from "react-native";
 import {
   NavigationContainer,
   createNavigationContainerRef,
@@ -126,7 +126,9 @@ export default function AppNavigator() {
       return;
     }
 
-    const { declineIncomingCall } = require("../features/calls/callLifecycleService");
+    const {
+      declineIncomingCall,
+    } = require("../features/calls/callLifecycleService");
 
     const u = await getCurrentUser().catch(() => null);
     const senderId = u?.userId;
@@ -147,59 +149,80 @@ export default function AppNavigator() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <NavigationContainer ref={navRef}>
-        <Stack.Navigator
-          initialRouteName="Auth"
-          screenOptions={({ navigation, route }) => ({
-            headerRight:
-              route.name === "Auth"
-                ? undefined
-                : () => <LogoutButton navigation={navigation} />,
-          })}
-        >
-          <Stack.Screen name="Auth" component={AuthScreen} />
-          <Stack.Screen name="Home" component={HomeScreen} />
-          <Stack.Screen name="Chat" component={ChatScreen} />
+    <SafeAreaView style={styles.root}>
+      <SafeAreaView style={styles.appFrame}>
+        <NavigationContainer ref={navRef}>
+          <Stack.Navigator
+            initialRouteName="Auth"
+            screenOptions={({ navigation, route }) => ({
+              headerRight:
+                route.name === "Auth"
+                  ? undefined
+                  : () => <LogoutButton navigation={navigation} />,
+            })}
+          >
+            <Stack.Screen name="Auth" component={AuthScreen} />
+            <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen name="Chat" component={ChatScreen} />
 
-          {Platform.OS !== "web" && CallScreen ? (
+            {Platform.OS !== "web" && CallScreen ? (
+              <Stack.Screen
+                name="Call"
+                component={CallScreen}
+                options={{ headerShown: false }}
+              />
+            ) : null}
+
+            <Stack.Screen name="ProviderHome" component={ProviderHomeScreen} />
             <Stack.Screen
-              name="Call"
-              component={CallScreen}
+              name="PatientDetail"
+              component={PatientDetailScreen}
               options={{ headerShown: false }}
             />
-          ) : null}
+            <Stack.Screen name="AdvocateHome" component={AdvocateHomeScreen} />
+            <Stack.Screen name="PatientHome" component={PatientHomeScreen} />
+            <Stack.Screen name="AdminHome" component={AdminHomeScreen} />
+          </Stack.Navigator>
 
-          <Stack.Screen name="ProviderHome" component={ProviderHomeScreen} />
-          <Stack.Screen
-            name="PatientDetail"
-            component={PatientDetailScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen name="AdvocateHome" component={AdvocateHomeScreen} />
-          <Stack.Screen name="PatientHome" component={PatientHomeScreen} />
-          <Stack.Screen name="AdminHome" component={AdminHomeScreen} />
-        </Stack.Navigator>
+          <StatusBar style="auto" />
+        </NavigationContainer>
 
-        <StatusBar style="auto" />
-      </NavigationContainer>
+        <GlobalRealtimeListener
+          navRef={navRef}
+          currentUser={currentUser}
+          onIncomingMessage={(payload) => setIncomingMsg(payload)}
+        />
 
-      <GlobalRealtimeListener
-        navRef={navRef}
-        currentUser={currentUser}
-        onIncomingMessage={(payload) => setIncomingMsg(payload)}
-      />
+        <GlobalIncomingBanner
+          visible={!!incomingMsg}
+          title="New message"
+          body={incomingMsg?.preview || ""}
+          onPress={onPressBanner}
+        />
 
-      <GlobalIncomingBanner
-        visible={!!incomingMsg}
-        title="New message"
-        body={incomingMsg?.preview || ""}
-        onPress={onPressBanner}
-      />
-
-      {Platform.OS !== "web" && IncomingCallModal ? (
-        <IncomingCallModal onAccept={onAccept} onDecline={onDecline} />
-      ) : null}
+        {Platform.OS !== "web" && IncomingCallModal ? (
+          <IncomingCallModal onAccept={onAccept} onDecline={onDecline} />
+        ) : null}
+      </SafeAreaView>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: Platform.OS === "web" ? "#E5E7EB" : undefined,
+    alignItems: Platform.OS === "web" ? "center" : undefined,
+    justifyContent: Platform.OS === "web" ? "center" : undefined,
+  },
+
+  appFrame: {
+    flex: 1,
+    width: Platform.OS === "web" ? "100%" : undefined,
+    maxWidth: Platform.OS === "web" ? 430 : undefined,
+    minHeight: Platform.OS === "web" ? "100vh" : undefined,
+    maxHeight: Platform.OS === "web" ? 932 : undefined,
+    backgroundColor: "#F7F8FA",
+    overflow: Platform.OS === "web" ? "hidden" : "visible",
+  },
+});

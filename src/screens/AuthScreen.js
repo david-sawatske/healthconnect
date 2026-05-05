@@ -15,12 +15,15 @@ import {
   FlatList,
   useWindowDimensions,
   Image,
+  Platform,
 } from "react-native";
 import { signIn, getCurrentUser } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/api";
 import { theme } from "../ui/theme";
 
 const client = generateClient();
+
+const isWeb = Platform.OS === "web";
 
 const devLog = (...args) => {
   if (__DEV__) console.log("[AUTH_SCREEN]", ...args);
@@ -90,6 +93,8 @@ export default function AuthScreen({ navigation }) {
   const [loggingInRole, setLoggingInRole] = useState(null);
   const [currentIndex, setCurrentIndex] = useState(0);
 
+  const listRef = useRef(null);
+
   const viewabilityConfig = useRef({
     viewAreaCoveragePercentThreshold: 60,
   }).current;
@@ -101,16 +106,21 @@ export default function AuthScreen({ navigation }) {
 
   const { width: screenWidth } = useWindowDimensions();
 
-  const carouselCardWidth = useMemo(() => {
-    const maxWidth = 340;
-    const minWidth = 260;
-    const idealWidth = Math.round(screenWidth * 0.7);
-    return Math.max(minWidth, Math.min(maxWidth, idealWidth));
+  const appFrameWidth = useMemo(() => {
+    return isWeb ? Math.min(screenWidth, 430) : screenWidth;
   }, [screenWidth]);
+
+  const carouselCardWidth = useMemo(() => {
+    const maxWidth = isWeb ? 320 : 340;
+    const minWidth = isWeb ? 250 : 260;
+    const idealWidth = Math.round(appFrameWidth * (isWeb ? 0.78 : 0.7));
+
+    return Math.max(minWidth, Math.min(maxWidth, idealWidth));
+  }, [appFrameWidth]);
 
   const carouselGap = theme.space.sm;
   const snapInterval = carouselCardWidth + carouselGap;
-  const sidePadding = Math.max(0, (screenWidth - carouselCardWidth) / 2);
+  const sidePadding = Math.max(0, (appFrameWidth - carouselCardWidth) / 2);
 
   const roleAccent = useMemo(
     () => ({
@@ -125,6 +135,20 @@ export default function AuthScreen({ navigation }) {
   const availableDemoUsers = useMemo(() => {
     return DEMO_USERS.filter((user) => user.username && user.password);
   }, []);
+
+  const scrollToRole = useCallback(
+    (index) => {
+      if (!listRef.current) return;
+
+      setCurrentIndex(index);
+
+      listRef.current.scrollToOffset({
+        offset: snapInterval * index,
+        animated: true,
+      });
+    },
+    [snapInterval],
+  );
 
   const routeByUserRecord = useCallback(async () => {
     try {
@@ -272,6 +296,7 @@ export default function AuthScreen({ navigation }) {
           ) : (
             <View style={styles.carouselWrap}>
               <FlatList
+                ref={listRef}
                 data={availableDemoUsers}
                 keyExtractor={(item) => item.key}
                 horizontal
@@ -324,7 +349,13 @@ export default function AuthScreen({ navigation }) {
                           <Text style={styles.rolePillText}>{item.key}</Text>
                         </View>
 
-                        <Text style={styles.roleMeta}>{item.username}</Text>
+                        <Text
+                          style={styles.roleMeta}
+                          numberOfLines={1}
+                          ellipsizeMode="middle"
+                        >
+                          {item.username}
+                        </Text>
 
                         <View style={styles.featureList}>
                           {item.key === "Patient" ? (
@@ -400,13 +431,20 @@ export default function AuthScreen({ navigation }) {
 
               <View style={styles.dotsWrap}>
                 {availableDemoUsers.map((_, index) => (
-                  <View
+                  <TouchableOpacity
                     key={String(index)}
-                    style={[
-                      styles.dot,
-                      index === currentIndex && styles.dotActive,
-                    ]}
-                  />
+                    onPress={() => scrollToRole(index)}
+                    disabled={!isWeb && index === currentIndex}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.dot,
+                        index === currentIndex && styles.dotActive,
+                      ]}
+                    />
+                  </TouchableOpacity>
                 ))}
               </View>
             </View>
@@ -436,9 +474,9 @@ export default function AuthScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: theme.space.lg,
-    paddingTop: theme.space.md,
-    paddingBottom: theme.space.lg,
+    paddingHorizontal: isWeb ? theme.space.md : theme.space.lg,
+    paddingTop: isWeb ? theme.space.sm : theme.space.md,
+    paddingBottom: isWeb ? theme.space.md : theme.space.lg,
     backgroundColor: theme.colors.bg,
   },
 
@@ -449,39 +487,43 @@ const styles = StyleSheet.create({
 
   header: {
     alignItems: "center",
-    marginBottom: theme.space.lg,
+    marginBottom: isWeb ? theme.space.sm : theme.space.lg,
   },
 
   brandWrap: {
     alignItems: "center",
-    marginBottom: theme.space.sm,
+    marginBottom: isWeb ? theme.space.xs : theme.space.sm,
   },
 
   brandTitle: {
     ...theme.type.h1,
+    fontSize: isWeb ? 26 : theme.type.h1.fontSize,
+    lineHeight: isWeb ? 32 : theme.type.h1.lineHeight,
     textAlign: "center",
   },
 
   brandTagline: {
     ...theme.type.subtext,
+    fontSize: isWeb ? 16 : theme.type.subtext.fontSize,
+    lineHeight: isWeb ? 22 : theme.type.subtext.lineHeight,
     textAlign: "center",
-    marginTop: theme.space.xs,
+    marginTop: isWeb ? 2 : theme.space.xs,
   },
 
   logoWrap: {
     alignSelf: "center",
     backgroundColor: theme.colors.card,
     borderRadius: theme.radius.lg,
-    padding: theme.space.sm,
+    padding: isWeb ? 10 : theme.space.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    marginBottom: theme.space.md,
+    marginBottom: isWeb ? theme.space.sm : theme.space.md,
     ...theme.shadow.floating,
   },
 
   logo: {
-    width: 96,
-    height: 96,
+    width: isWeb ? 76 : 96,
+    height: isWeb ? 76 : 96,
   },
 
   modePill: {
@@ -489,8 +531,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.infoBg,
     borderRadius: theme.radius.pill,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginBottom: theme.space.xs,
+    paddingVertical: isWeb ? 5 : 6,
+    marginBottom: isWeb ? 4 : theme.space.xs,
   },
 
   modePillText: {
@@ -507,11 +549,13 @@ const styles = StyleSheet.create({
 
   caption: {
     ...theme.type.subtext,
+    fontSize: isWeb ? 15 : theme.type.subtext.fontSize,
+    lineHeight: isWeb ? 20 : theme.type.subtext.lineHeight,
     textAlign: "center",
   },
 
   carouselWrap: {
-    marginTop: theme.space.sm,
+    marginTop: isWeb ? 0 : theme.space.sm,
   },
 
   carouselContent: {
@@ -524,7 +568,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.radius.lg,
-    padding: theme.space.md,
+    padding: isWeb ? theme.space.sm : theme.space.md,
     overflow: "hidden",
     ...theme.shadow.card,
   },
@@ -546,12 +590,12 @@ const styles = StyleSheet.create({
   },
 
   cardContent: {
-    paddingTop: theme.space.lg,
-    minHeight: 210,
+    paddingTop: isWeb ? theme.space.md : theme.space.lg,
+    minHeight: isWeb ? 172 : 210,
   },
 
   roleName: {
-    fontSize: 13,
+    fontSize: isWeb ? 12 : 13,
     fontWeight: "600",
     color: theme.colors.muted,
     letterSpacing: 0.2,
@@ -560,8 +604,8 @@ const styles = StyleSheet.create({
 
   rolePill: {
     position: "absolute",
-    top: 12,
-    right: 12,
+    top: isWeb ? 8 : 12,
+    right: isWeb ? 8 : 12,
     backgroundColor: theme.colors.pillInfoBg,
     borderRadius: theme.radius.pill,
     paddingHorizontal: 10,
@@ -576,23 +620,25 @@ const styles = StyleSheet.create({
 
   roleMeta: {
     ...theme.type.small,
+    fontSize: isWeb ? 12 : theme.type.small.fontSize,
     marginTop: theme.space.xs,
-    marginBottom: theme.space.sm,
+    marginBottom: isWeb ? theme.space.xs : theme.space.sm,
   },
 
   featureList: {
-    marginTop: theme.space.xs,
+    marginTop: isWeb ? 2 : theme.space.xs,
   },
 
   bullet: {
     ...theme.type.small,
+    fontSize: isWeb ? 12 : theme.type.small.fontSize,
     color: theme.colors.muted,
-    lineHeight: 18,
-    marginTop: 6,
+    lineHeight: isWeb ? 16 : 18,
+    marginTop: isWeb ? 4 : 6,
   },
 
   loadingWrap: {
-    marginTop: theme.space.md,
+    marginTop: isWeb ? theme.space.sm : theme.space.md,
     alignItems: "flex-start",
   },
 
@@ -606,8 +652,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    marginTop: theme.space.sm,
-    marginBottom: theme.space.md,
+    marginTop: isWeb ? theme.space.xs : theme.space.sm,
+    marginBottom: isWeb ? theme.space.sm : theme.space.md,
   },
 
   dot: {
@@ -615,7 +661,7 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 999,
     backgroundColor: theme.colors.border,
-    marginHorizontal: 4,
+    marginHorizontal: 5,
   },
 
   dotActive: {
@@ -662,7 +708,7 @@ const styles = StyleSheet.create({
 
   footerPill: {
     alignSelf: "center",
-    marginTop: theme.space.lg,
+    marginTop: isWeb ? theme.space.sm : theme.space.lg,
     backgroundColor: theme.colors.card,
     borderRadius: theme.radius.pill,
     paddingHorizontal: 14,
