@@ -133,7 +133,7 @@ export default function AppNavigator() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
+    <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
       <NavigationContainer ref={navRef}>
         <Stack.Navigator
           initialRouteName="Auth"
