@@ -1,9 +1,12 @@
 import React, { useState } from "react";
 import { View, Button, Alert, ActivityIndicator } from "react-native";
-import { post } from "aws-amplify/api";
+import {
+  seedBasicAdminData,
+  formatSeedResultSummary,
+} from "../features/admin/adminService";
 
 const devLog = (...args) => {
-  if (__DEV__) console.devLog("[ADMIN_HOME]", ...args);
+  if (__DEV__) console.log("[ADMIN_HOME]", ...args);
 };
 
 export default function AdminHomeScreen() {
@@ -11,42 +14,15 @@ export default function AdminHomeScreen() {
 
   const seedBasic = async () => {
     setLoading(true);
+
     try {
-      const op = await post({
-        apiName: "seeding",
-        path: "/admin",
-        options: { body: { mode: "seed", scenario: "basic" } },
-      });
+      const result = await seedBasicAdminData();
 
-      const response = await op.response;
+      devLog("seed result =", result);
 
-      devLog("status =", response.statusCode);
-      devLog("headers =", response.headers);
-
-      const body = response.body;
-
-      let json;
-      if (body && typeof body.json === "function") {
-        json = await body.json();
-      } else if (body && typeof body.text === "function") {
-        const txt = await body.text();
-        json = JSON.parse(txt);
-      } else {
-        json = { note: "No body or unknown body shape", response };
-      }
-
-      Alert.alert("Seed complete", JSON.stringify(json, null, 2));
+      Alert.alert("Seed complete", formatSeedResultSummary(result.data));
     } catch (e) {
-      devLog("error =", e);
-
-      try {
-        const resp = await e?.response;
-        if (resp?.body?.text) {
-          const txt = await resp.body.text();
-          devLog("error body =", txt);
-        }
-      } catch {}
-
+      devLog("seed failed =", e);
       Alert.alert("Seed failed", e?.message ?? String(e));
     } finally {
       setLoading(false);
