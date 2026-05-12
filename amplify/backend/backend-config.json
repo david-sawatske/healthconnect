@@ -108,7 +108,15 @@
   "function": {
     "adminManageUsers": {
       "build": true,
-      "dependsOn": [],
+      "dependsOn": [
+        {
+          "attributes": [
+            "UserPoolId"
+          ],
+          "category": "auth",
+          "resourceName": "healthconnect97a44150"
+        }
+      ],
       "providerPlugin": "awscloudformation",
       "service": "Lambda"
     },

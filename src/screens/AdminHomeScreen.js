@@ -10,6 +10,15 @@ const devLog = (...args) => {
   if (__DEV__) console.log("[ADMIN_HOME]", ...args);
 };
 
+const TEST_CREATE_USER_PAYLOAD = {
+  action: "CREATE_USER",
+  user: {
+    role: "PATIENT",
+    name: "Test Patient",
+    email: "test.patient@example.com",
+  },
+};
+
 export default function AdminHomeScreen() {
   const [loading, setLoading] = useState(false);
   const [testingUsersApi, setTestingUsersApi] = useState(false);
@@ -31,25 +40,33 @@ export default function AdminHomeScreen() {
     }
   };
 
-  const testUsersApi = async () => {
+  const testCreateUser = async () => {
     setTestingUsersApi(true);
 
     try {
-      const result = await testAdminUsersApi();
+      const result = await testAdminUsersApi(TEST_CREATE_USER_PAYLOAD);
 
       devLog("admin users api result =", result);
 
+      const body = result?.body || result?.data || {};
+
       Alert.alert(
-        "Admin Users API",
-        result?.body?.message ||
-          result?.data?.message ||
-          "adminManageUsers Lambda responded successfully.",
+        "CREATE_USER test",
+        [
+          body?.message || "adminManageUsers Lambda responded successfully.",
+          body?.user?.displayName ? `Name: ${body.user.displayName}` : null,
+          body?.user?.email ? `Email: ${body.user.email}` : null,
+          body?.user?.role ? `Role: ${body.user.role}` : null,
+          `TABLE_USER configured: ${body?.tableUserConfigured ? "yes" : "no"}`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
       );
     } catch (e) {
       devLog("admin users api failed =", e);
 
       Alert.alert(
-        "Admin Users API failed",
+        "CREATE_USER test failed",
         e?.message ?? "Unable to call /admin/users.",
       );
     } finally {
@@ -68,8 +85,8 @@ export default function AdminHomeScreen() {
       <Button title="Seed (basic)" onPress={seedBasic} disabled={busy} />
 
       <Button
-        title={testingUsersApi ? "Testing..." : "Test Admin Users API"}
-        onPress={testUsersApi}
+        title={testingUsersApi ? "Testing..." : "Test CREATE_USER"}
+        onPress={testCreateUser}
         disabled={busy}
       />
 

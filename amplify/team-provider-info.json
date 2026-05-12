@@ -56,15 +56,15 @@
           "s3Key": "amplify-builds/createAdvocateInviteGuarded-486b59586e394d78424b-build.zip"
         },
         "adminManageUsers": {
-          "tableUser": "PH",
-          "tableProviderPatient": "PH",
-          "tableConversation": "PH",
-          "tableConversationParticipant": "PH",
-          "tableMessage": "PH",
-          "tableAdvocateInvite": "PH",
-          "tableAdvocateAssignment": "PH",
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
-          "s3Key": "amplify-builds/adminManageUsers-5a346f6d65552b336555-build.zip"
+          "s3Key": "amplify-builds/adminManageUsers-654b67634931376c3769-build.zip",
+          "tableUser": "User-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableProviderPatient": "ProviderPatient-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableConversation": "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableConversationParticipant": "ConversationParticipant-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableMessage": "Message-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableAdvocateInvite": "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev",
+          "tableAdvocateAssignment": "AdvocateAssignment-5izqvjgcw5e5zdbimlgzknen3m-dev"
         }
       },
       "storage": {

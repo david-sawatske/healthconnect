@@ -29,5 +29,14 @@
       "cloudFormationParameterName": "tableAdvocateAssignment",
       "environmentVariableName": "TABLE_ADVOCATE_ASSIGNMENT"
     }
-  ]
+  ],
+  "permissions": {
+    "auth": {
+      "healthconnect97a44150": [
+        "create",
+        "read",
+        "update"
+      ]
+    }
+  }
 }

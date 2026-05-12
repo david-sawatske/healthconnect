@@ -1,6 +1,11 @@
 [
   {
-    "Action": [],
-    "Resource": []
+    "Action": [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem"
+    ],
+    "Resource": [
+      "arn:aws:dynamodb:us-east-1:996180473601:table/User-5izqvjgcw5e5zdbimlgzknen3m-dev"
+    ]
   }
 ]
