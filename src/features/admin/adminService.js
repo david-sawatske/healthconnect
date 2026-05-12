@@ -202,7 +202,7 @@ export const formatSeedResultSummary = (data) => {
     .join("\n");
 };
 
-export const testAdminUsersApi = async (body = { action: "PING" }) => {
+export const callAdminUsersApi = async (body = { action: "PING" }) => {
   try {
     const op = await post({
       apiName: "seeding",
@@ -220,7 +220,7 @@ export const testAdminUsersApi = async (body = { action: "PING" }) => {
       body: responseBody,
     };
   } catch (error) {
-    devLog("testAdminUsersApi error =", error);
+    devLog("callAdminUsersApi error =", error);
 
     const message = await unwrapRestErrorMessage(
       error,
@@ -229,6 +229,51 @@ export const testAdminUsersApi = async (body = { action: "PING" }) => {
 
     throw new Error(message);
   }
+};
+
+export const createAdminUser = async ({ role, name, email }) => {
+  const result = await callAdminUsersApi({
+    action: "CREATE_USER",
+    user: {
+      role,
+      name,
+      email,
+    },
+  });
+
+  const body = result?.body || {};
+
+  if (!body?.ok) {
+    throw new Error(body?.error || body?.message || "Unable to create user.");
+  }
+
+  return body;
+};
+
+export const formatCreateUserSummary = (data) => {
+  if (!data) {
+    return "User created, but no response details were returned.";
+  }
+
+  const user = data?.user || {};
+
+  return [
+    data?.message || "User created successfully.",
+    "",
+    user?.displayName ? `Name: ${user.displayName}` : null,
+    user?.email ? `Email: ${user.email}` : null,
+    user?.role ? `Role: ${user.role}` : null,
+    user?.id ? `User ID: ${user.id}` : null,
+    "",
+    data?.cognitoUserCreated !== undefined
+      ? `Cognito user created: ${data.cognitoUserCreated ? "yes" : "already existed"}`
+      : null,
+    data?.tableUserConfigured !== undefined
+      ? `User table configured: ${data.tableUserConfigured ? "yes" : "no"}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
 };
 
 export const fetchAdminUsersByRole = async (role) => {

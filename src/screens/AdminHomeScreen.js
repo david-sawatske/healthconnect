@@ -6,31 +6,30 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import {
   connectPatientProvider,
+  createAdminUser,
   fetchAdminPatients,
   fetchAdminProviders,
   fetchProviderPatientsForPatient,
   formatConnectPatientProviderSummary,
+  formatCreateUserSummary,
   formatSeedResultSummary,
   seedBasicAdminData,
-  testAdminUsersApi,
 } from "../features/admin/adminService";
 
 const devLog = (...args) => {
   if (__DEV__) console.log("[ADMIN_HOME]", ...args);
 };
 
-const TEST_CREATE_USER_PAYLOAD = {
-  action: "CREATE_USER",
-  user: {
-    role: "PATIENT",
-    name: "Test Patient",
-    email: "test.patient@example.com",
-  },
-};
+const CREATE_USER_ROLES = [
+  { label: "Patient", value: "PATIENT" },
+  { label: "Provider", value: "PROVIDER" },
+  { label: "Advocate", value: "ADVOCATE" },
+];
 
 const FLOW_STEP = {
   PATIENT: "PATIENT",
@@ -143,10 +142,14 @@ function CollapsedSelection({ label, user }) {
 
 export default function AdminHomeScreen() {
   const [loadingSeed, setLoadingSeed] = useState(false);
-  const [testingUsersApi, setTestingUsersApi] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingConnections, setLoadingConnections] = useState(false);
   const [connecting, setConnecting] = useState(false);
+
+  const [createUserRole, setCreateUserRole] = useState("PATIENT");
+  const [createUserName, setCreateUserName] = useState("");
+  const [createUserEmail, setCreateUserEmail] = useState("");
 
   const [patients, setPatients] = useState([]);
   const [providers, setProviders] = useState([]);
@@ -158,7 +161,7 @@ export default function AdminHomeScreen() {
 
   const busy =
     loadingSeed ||
-    testingUsersApi ||
+    creatingUser ||
     loadingUsers ||
     loadingConnections ||
     connecting;
@@ -289,39 +292,41 @@ export default function AdminHomeScreen() {
     }
   };
 
-  const testCreateUser = async () => {
-    setTestingUsersApi(true);
+  const handleCreateUser = async () => {
+    const name = createUserName.trim();
+    const email = createUserEmail.trim().toLowerCase();
+
+    if (!name || !email) {
+      Alert.alert(
+        "Missing details",
+        "Enter a name and email before creating a user.",
+      );
+      return;
+    }
+
+    setCreatingUser(true);
 
     try {
-      const result = await testAdminUsersApi(TEST_CREATE_USER_PAYLOAD);
+      const result = await createAdminUser({
+        role: createUserRole,
+        name,
+        email,
+      });
 
-      devLog("admin users api result =", result);
+      devLog("create user result =", result);
 
-      const body = result?.body || result?.data || {};
+      Alert.alert("User created", formatCreateUserSummary(result));
 
-      Alert.alert(
-        "CREATE_USER test",
-        [
-          body?.message || "adminManageUsers Lambda responded successfully.",
-          body?.user?.displayName ? `Name: ${body.user.displayName}` : null,
-          body?.user?.email ? `Email: ${body.user.email}` : null,
-          body?.user?.role ? `Role: ${body.user.role}` : null,
-          `TABLE_USER configured: ${body?.tableUserConfigured ? "yes" : "no"}`,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      );
+      setCreateUserName("");
+      setCreateUserEmail("");
 
       await loadUsers();
     } catch (e) {
-      devLog("admin users api failed =", e);
+      devLog("create user failed =", e);
 
-      Alert.alert(
-        "CREATE_USER test failed",
-        e?.message ?? "Unable to call /admin/users.",
-      );
+      Alert.alert("Create user failed", e?.message ?? "Unable to create user.");
     } finally {
-      setTestingUsersApi(false);
+      setCreatingUser(false);
     }
   };
 
@@ -371,6 +376,77 @@ export default function AdminHomeScreen() {
     } finally {
       setConnecting(false);
     }
+  };
+
+  const renderCreateUserForm = () => {
+    const canCreateUser =
+      createUserName.trim() && createUserEmail.trim() && !busy;
+
+    return (
+      <View style={styles.createUserStack}>
+        <View style={styles.roleRow}>
+          {CREATE_USER_ROLES.map((role) => {
+            const selected = createUserRole === role.value;
+
+            return (
+              <Pressable
+                key={role.value}
+                onPress={() => setCreateUserRole(role.value)}
+                disabled={busy}
+                style={[
+                  styles.rolePill,
+                  selected ? styles.rolePillSelected : null,
+                  busy ? styles.disabled : null,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.rolePillText,
+                    selected ? styles.rolePillTextSelected : null,
+                  ]}
+                >
+                  {role.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={styles.inputStack}>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Name</Text>
+            <TextInput
+              value={createUserName}
+              onChangeText={setCreateUserName}
+              placeholder="Example: Morgan Reed"
+              autoCapitalize="words"
+              editable={!busy}
+              style={styles.textInput}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              value={createUserEmail}
+              onChangeText={setCreateUserEmail}
+              placeholder="example@email.com"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              editable={!busy}
+              style={styles.textInput}
+            />
+          </View>
+        </View>
+
+        <Button
+          title={creatingUser ? "Creating..." : "Create User"}
+          onPress={handleCreateUser}
+          disabled={!canCreateUser}
+        />
+      </View>
+    );
   };
 
   const renderPatientStep = () => {
@@ -486,7 +562,7 @@ export default function AdminHomeScreen() {
 
             {!loadingConnections && !providers.length ? (
               <Text style={styles.emptyText}>
-                No providers found. Run Seed (basic) first.
+                No providers found. Run Seed (basic) first or create a provider.
               </Text>
             ) : null}
           </View>
@@ -561,7 +637,7 @@ export default function AdminHomeScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Admin Tools</Text>
         <Text style={styles.subtitle}>
-          Manage demo data and connect patients to providers.
+          Manage demo data, create users, and connect patients to providers.
         </Text>
       </View>
 
@@ -574,13 +650,19 @@ export default function AdminHomeScreen() {
             onPress={seedBasic}
             disabled={busy}
           />
-
-          <Button
-            title={testingUsersApi ? "Testing..." : "Test CREATE_USER"}
-            onPress={testCreateUser}
-            disabled={busy}
-          />
         </View>
+      </View>
+
+      <View style={styles.section}>
+        <View style={styles.sectionHeaderText}>
+          <Text style={styles.sectionTitle}>Create User</Text>
+          <Text style={styles.sectionDescription}>
+            Add a patient, provider, or advocate profile through the admin user
+            API.
+          </Text>
+        </View>
+
+        {renderCreateUserForm()}
       </View>
 
       <View style={styles.section}>
@@ -677,6 +759,56 @@ const styles = {
   },
   buttonStack: {
     gap: 10,
+  },
+  createUserStack: {
+    gap: 12,
+  },
+  roleRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  rolePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  rolePillSelected: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+  rolePillText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#374151",
+  },
+  rolePillTextSelected: {
+    color: "#FFFFFF",
+  },
+  inputStack: {
+    gap: 10,
+  },
+  inputGroup: {
+    gap: 6,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#374151",
+  },
+  textInput: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: "#FFFFFF",
+    fontSize: 15,
+    color: "#111827",
   },
   refresh: {
     paddingHorizontal: 10,

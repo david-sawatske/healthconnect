@@ -79,15 +79,19 @@ exports.handler = async (event) => {
 };
 
 async function createUser(body) {
-  const email = normalizeEmail(body.email);
-  const displayName = requireNonEmptyString("displayName", body.displayName);
-  const role = requireValidRole(body.role);
+  const userInput = body?.user || {};
+
+  const email = normalizeEmail(userInput.email);
+  const displayName = requireNonEmptyString(
+    "user.name",
+    userInput.name || userInput.displayName,
+  );
+  const role = requireValidRole(userInput.role);
   const now = new Date().toISOString();
 
   const cognitoResult = await ensureCognitoUserByEmail({
     email,
     displayName,
-    role,
   });
 
   const userId = cognitoResult.sub;
@@ -203,7 +207,7 @@ async function connectPatientProvider(body) {
   };
 }
 
-async function ensureCognitoUserByEmail({ email, displayName, role }) {
+async function ensureCognitoUserByEmail({ email, displayName }) {
   const existing = await findCognitoUserByEmail(email);
 
   if (existing) {
@@ -224,7 +228,6 @@ async function ensureCognitoUserByEmail({ email, displayName, role }) {
         { Name: "email", Value: email },
         { Name: "email_verified", Value: "true" },
         { Name: "name", Value: displayName },
-        { Name: "custom:role", Value: role },
       ],
     }),
   );
