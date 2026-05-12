@@ -9,7 +9,8 @@
       "UnauthRoleName": "amplify-healthconnect-dev-79cce-unauthRole",
       "StackName": "amplify-healthconnect-dev-79cce",
       "StackId": "arn:aws:cloudformation:us-east-1:996180473601:stack/amplify-healthconnect-dev-79cce/a5152180-73ac-11f0-9ce4-0afffc47a04b",
-      "AmplifyAppId": "d2hd0jl3l5wcrg"
+      "AmplifyAppId": "d2hd0jl3l5wcrg",
+      "APIGatewayAuthURL": "https://s3.amazonaws.com/amplify-healthconnect-dev-79cce-deployment/amplify-cfn-templates/api/APIGatewayAuthStack.json"
     },
     "categories": {
       "auth": {
@@ -53,6 +54,17 @@
           "tableConversation": "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
           "s3Key": "amplify-builds/createAdvocateInviteGuarded-486b59586e394d78424b-build.zip"
+        },
+        "adminManageUsers": {
+          "tableUser": "PH",
+          "tableProviderPatient": "PH",
+          "tableConversation": "PH",
+          "tableConversationParticipant": "PH",
+          "tableMessage": "PH",
+          "tableAdvocateInvite": "PH",
+          "tableAdvocateAssignment": "PH",
+          "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
+          "s3Key": "amplify-builds/adminManageUsers-5a346f6d65552b336555-build.zip"
         }
       },
       "storage": {

@@ -1,9 +1,21 @@
 {
   "version": 1,
   "paths": {
-    "/admin": {
-      "name": "/admin",
+    "/admin/seeding": {
+      "name": "/admin/seeding",
       "lambdaFunction": "adminSeedData",
+      "permissions": {
+        "groups": {
+          "Admin": [
+            "create"
+          ]
+        },
+        "setting": "private"
+      }
+    },
+    "/admin/users": {
+      "name": "/admin/users",
+      "lambdaFunction": "adminManageUsers",
       "permissions": {
         "groups": {
           "Admin": [

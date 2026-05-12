@@ -47,6 +47,14 @@
           ],
           "category": "auth",
           "resourceName": "userPoolGroups"
+        },
+        {
+          "attributes": [
+            "Name",
+            "Arn"
+          ],
+          "category": "function",
+          "resourceName": "adminManageUsers"
         }
       ],
       "providerPlugin": "awscloudformation",
@@ -98,6 +106,12 @@
     }
   },
   "function": {
+    "adminManageUsers": {
+      "build": true,
+      "dependsOn": [],
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
+    },
     "adminSeedData": {
       "build": true,
       "dependsOn": [
@@ -144,6 +158,78 @@
     }
   },
   "parameters": {
+    "AMPLIFY_function_adminManageUsers_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableConversationParticipant": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableMessage": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableProviderPatient": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableUser": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
     "AMPLIFY_function_adminSeedData_demoAdvocateEmail": {
       "usedBy": [
         {

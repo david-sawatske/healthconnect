@@ -50,7 +50,7 @@ export const seedAdminData = async ({
   try {
     const op = await post({
       apiName: "seeding",
-      path: "/admin",
+      path: "/admin/seeding",
       options: {
         body: {
           mode,
@@ -140,3 +140,33 @@ export const formatSeedResultSummary = (data) => {
     .filter((line) => line !== null)
     .join("\n");
 };
+
+export async function testAdminUsersApi() {
+  try {
+    const op = await post({
+      apiName: "seeding",
+      path: "/admin/users",
+      options: {
+        body: {
+          action: "PING",
+        },
+      },
+    });
+
+    const response = await op.response;
+
+    let json = null;
+
+    if (response.body && typeof response.body.json === "function") {
+      json = await response.body.json();
+    }
+
+    return {
+      statusCode: response.statusCode,
+      body: json,
+    };
+  } catch (error) {
+    console.log("[ADMIN_SERVICE] testAdminUsersApi error =", error);
+    throw error;
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "lambdaLayers": [],
+  "environmentVariableList": [
+    {
+      "cloudFormationParameterName": "tableUser",
+      "environmentVariableName": "TABLE_USER"
+    },
+    {
+      "cloudFormationParameterName": "tableProviderPatient",
+      "environmentVariableName": "TABLE_PROVIDER_PATIENT"
+    },
+    {
+      "cloudFormationParameterName": "tableConversation",
+      "environmentVariableName": "TABLE_CONVERSATION"
+    },
+    {
+      "cloudFormationParameterName": "tableConversationParticipant",
+      "environmentVariableName": "TABLE_CONVERSATION_PARTICIPANT"
+    },
+    {
+      "cloudFormationParameterName": "tableMessage",
+      "environmentVariableName": "TABLE_MESSAGE"
+    },
+    {
+      "cloudFormationParameterName": "tableAdvocateInvite",
+      "environmentVariableName": "TABLE_ADVOCATE_INVITE"
+    },
+    {
+      "cloudFormationParameterName": "tableAdvocateAssignment",
+      "environmentVariableName": "TABLE_ADVOCATE_ASSIGNMENT"
+    }
+  ]
+}
