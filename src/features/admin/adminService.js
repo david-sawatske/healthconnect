@@ -27,6 +27,29 @@ const LIST_USERS_BY_ROLE = /* GraphQL */ `
   }
 `;
 
+const LIST_PROVIDER_PATIENTS_FOR_PATIENT = /* GraphQL */ `
+  query ListProviderPatientsForPatient(
+    $filter: ModelProviderPatientFilterInput
+    $limit: Int
+    $nextToken: String
+  ) {
+    listProviderPatients(
+      filter: $filter
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        providerId
+        patientId
+        createdAt
+        updatedAt
+      }
+      nextToken
+    }
+  }
+`;
+
 const parseRestResponseBody = async (body) => {
   if (body && typeof body.json === "function") {
     return body.json();
@@ -253,6 +276,44 @@ export const fetchAdminPatients = () => {
 
 export const fetchAdminProviders = () => {
   return fetchAdminUsersByRole("PROVIDER");
+};
+
+export const fetchProviderPatientsForPatient = async (patientId) => {
+  if (!patientId) {
+    return [];
+  }
+
+  const relationships = [];
+  let nextToken = null;
+
+  try {
+    do {
+      const result = await client.graphql({
+        query: LIST_PROVIDER_PATIENTS_FOR_PATIENT,
+        variables: {
+          filter: {
+            patientId: {
+              eq: patientId,
+            },
+          },
+          limit: 100,
+          nextToken,
+        },
+        authMode: "userPool",
+      });
+
+      const page = result?.data?.listProviderPatients;
+
+      relationships.push(...(page?.items || []).filter(Boolean));
+      nextToken = page?.nextToken || null;
+    } while (nextToken);
+
+    return relationships;
+  } catch (error) {
+    devLog("fetchProviderPatientsForPatient error =", error);
+
+    throw new Error("Unable to load existing provider connections.");
+  }
 };
 
 export async function connectPatientProvider({ patientId, providerId }) {

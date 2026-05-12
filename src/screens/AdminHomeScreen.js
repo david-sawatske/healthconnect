@@ -12,6 +12,7 @@ import {
   connectPatientProvider,
   fetchAdminPatients,
   fetchAdminProviders,
+  fetchProviderPatientsForPatient,
   formatConnectPatientProviderSummary,
   formatSeedResultSummary,
   seedBasicAdminData,
@@ -31,6 +32,12 @@ const TEST_CREATE_USER_PAYLOAD = {
   },
 };
 
+const FLOW_STEP = {
+  PATIENT: "PATIENT",
+  PROVIDER: "PROVIDER",
+  REVIEW: "REVIEW",
+};
+
 const getUserLabel = (user) => {
   return user?.displayName || user?.email || user?.id || "Unknown user";
 };
@@ -40,7 +47,47 @@ const getUserSubLabel = (user) => {
   return parts.join(" • ");
 };
 
-function UserSelectCard({ user, selected, disabled, onPress }) {
+function StepHeader({ number, title, complete, active, onEdit }) {
+  return (
+    <View style={styles.stepHeader}>
+      <View style={styles.stepTitleRow}>
+        <View
+          style={[
+            styles.stepBadge,
+            complete ? styles.stepBadgeComplete : null,
+            active ? styles.stepBadgeActive : null,
+          ]}
+        >
+          <Text
+            style={[
+              styles.stepBadgeText,
+              complete || active ? styles.stepBadgeTextActive : null,
+            ]}
+          >
+            {complete ? "✓" : number}
+          </Text>
+        </View>
+
+        <Text style={styles.stepTitle}>{title}</Text>
+      </View>
+
+      {complete && onEdit ? (
+        <Pressable onPress={onEdit} style={styles.editButton}>
+          <Text style={styles.editButtonText}>Change</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+function UserSelectCard({
+  user,
+  selected,
+  disabled,
+  disabledReason,
+  badgeText,
+  onPress,
+}) {
   return (
     <Pressable
       onPress={onPress}
@@ -48,21 +95,49 @@ function UserSelectCard({ user, selected, disabled, onPress }) {
       style={[
         styles.userCard,
         selected ? styles.userCardSelected : null,
-        disabled ? styles.disabled : null,
+        disabled ? styles.userCardDisabled : null,
       ]}
     >
       <View style={styles.userCardHeader}>
         <Text style={styles.userName}>{getUserLabel(user)}</Text>
 
-        {selected ? (
-          <View style={styles.selectedPill}>
-            <Text style={styles.selectedPillText}>Selected</Text>
+        {badgeText ? (
+          <View
+            style={[
+              styles.cardBadge,
+              selected ? styles.cardBadgeSelected : null,
+              disabled ? styles.cardBadgeDisabled : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.cardBadgeText,
+                selected ? styles.cardBadgeTextSelected : null,
+                disabled ? styles.cardBadgeTextDisabled : null,
+              ]}
+            >
+              {badgeText}
+            </Text>
           </View>
         ) : null}
       </View>
 
       <Text style={styles.userMeta}>{getUserSubLabel(user)}</Text>
+
+      {disabledReason ? (
+        <Text style={styles.disabledReason}>{disabledReason}</Text>
+      ) : null}
     </Pressable>
+  );
+}
+
+function CollapsedSelection({ label, user }) {
+  return (
+    <View style={styles.collapsedBox}>
+      <Text style={styles.collapsedLabel}>{label}</Text>
+      <Text style={styles.collapsedValue}>{getUserLabel(user)}</Text>
+      <Text style={styles.collapsedMeta}>{getUserSubLabel(user)}</Text>
+    </View>
   );
 }
 
@@ -70,13 +145,23 @@ export default function AdminHomeScreen() {
   const [loadingSeed, setLoadingSeed] = useState(false);
   const [testingUsersApi, setTestingUsersApi] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingConnections, setLoadingConnections] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
   const [patients, setPatients] = useState([]);
   const [providers, setProviders] = useState([]);
+  const [providerPatients, setProviderPatients] = useState([]);
 
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   const [selectedProviderId, setSelectedProviderId] = useState(null);
+  const [flowStep, setFlowStep] = useState(FLOW_STEP.PATIENT);
+
+  const busy =
+    loadingSeed ||
+    testingUsersApi ||
+    loadingUsers ||
+    loadingConnections ||
+    connecting;
 
   const selectedPatient = useMemo(() => {
     return patients.find((patient) => patient.id === selectedPatientId) || null;
@@ -88,8 +173,21 @@ export default function AdminHomeScreen() {
     );
   }, [providers, selectedProviderId]);
 
-  const busy = loadingSeed || testingUsersApi || loadingUsers || connecting;
-  const canConnect = selectedPatientId && selectedProviderId && !busy;
+  const connectedProviderIds = useMemo(() => {
+    return new Set(
+      providerPatients
+        .map((relationship) => relationship?.providerId)
+        .filter(Boolean),
+    );
+  }, [providerPatients]);
+
+  const patientStepComplete = Boolean(selectedPatient);
+  const providerStepComplete = Boolean(selectedProvider);
+  const canSubmit =
+    selectedPatientId &&
+    selectedProviderId &&
+    !connectedProviderIds.has(selectedProviderId) &&
+    !busy;
 
   const loadUsers = async () => {
     setLoadingUsers(true);
@@ -102,25 +200,6 @@ export default function AdminHomeScreen() {
 
       setPatients(patientResults);
       setProviders(providerResults);
-
-      setSelectedPatientId((currentId) => {
-        if (currentId && patientResults.some((user) => user.id === currentId)) {
-          return currentId;
-        }
-
-        return patientResults[0]?.id || null;
-      });
-
-      setSelectedProviderId((currentId) => {
-        if (
-          currentId &&
-          providerResults.some((user) => user.id === currentId)
-        ) {
-          return currentId;
-        }
-
-        return providerResults[0]?.id || null;
-      });
     } catch (e) {
       devLog("load users failed =", e);
       Alert.alert("Unable to load users", e?.message ?? String(e));
@@ -129,9 +208,66 @@ export default function AdminHomeScreen() {
     }
   };
 
+  const loadConnectionsForPatient = async (patientId) => {
+    if (!patientId) {
+      setProviderPatients([]);
+      return;
+    }
+
+    setLoadingConnections(true);
+
+    try {
+      const relationships = await fetchProviderPatientsForPatient(patientId);
+      setProviderPatients(relationships);
+    } catch (e) {
+      devLog("load provider connections failed =", e);
+      setProviderPatients([]);
+      Alert.alert(
+        "Unable to load connections",
+        e?.message ?? "Unable to load existing provider connections.",
+      );
+    } finally {
+      setLoadingConnections(false);
+    }
+  };
+
   useEffect(() => {
     loadUsers();
   }, []);
+
+  const resetConnectionFlow = () => {
+    setSelectedPatientId(null);
+    setSelectedProviderId(null);
+    setProviderPatients([]);
+    setFlowStep(FLOW_STEP.PATIENT);
+  };
+
+  const handleSelectPatient = async (patientId) => {
+    setSelectedPatientId(patientId);
+    setSelectedProviderId(null);
+    setProviderPatients([]);
+    setFlowStep(FLOW_STEP.PROVIDER);
+
+    await loadConnectionsForPatient(patientId);
+  };
+
+  const handleChangePatient = () => {
+    setSelectedProviderId(null);
+    setProviderPatients([]);
+    setFlowStep(FLOW_STEP.PATIENT);
+  };
+
+  const handleSelectProvider = (providerId) => {
+    if (connectedProviderIds.has(providerId)) return;
+
+    setSelectedProviderId(providerId);
+    setFlowStep(FLOW_STEP.REVIEW);
+  };
+
+  const handleChangeProvider = () => {
+    setSelectedProviderId(null);
+    setFlowStep(FLOW_STEP.PROVIDER);
+  };
 
   const seedBasic = async () => {
     setLoadingSeed(true);
@@ -143,6 +279,7 @@ export default function AdminHomeScreen() {
 
       Alert.alert("Seed complete", formatSeedResultSummary(result.data));
 
+      resetConnectionFlow();
       await loadUsers();
     } catch (e) {
       devLog("seed failed =", e);
@@ -197,6 +334,14 @@ export default function AdminHomeScreen() {
       return;
     }
 
+    if (connectedProviderIds.has(selectedProviderId)) {
+      Alert.alert(
+        "Already connected",
+        "This patient is already connected to the selected provider.",
+      );
+      return;
+    }
+
     setConnecting(true);
 
     try {
@@ -211,6 +356,11 @@ export default function AdminHomeScreen() {
         "Patient connected",
         formatConnectPatientProviderSummary(result),
       );
+
+      setSelectedProviderId(null);
+      setFlowStep(FLOW_STEP.PROVIDER);
+
+      await loadConnectionsForPatient(selectedPatientId);
     } catch (e) {
       devLog("connect patient/provider failed =", e);
 
@@ -221,6 +371,185 @@ export default function AdminHomeScreen() {
     } finally {
       setConnecting(false);
     }
+  };
+
+  const renderPatientStep = () => {
+    const isActive = flowStep === FLOW_STEP.PATIENT;
+
+    return (
+      <View style={styles.stepCard}>
+        <StepHeader
+          number="1"
+          title="Select patient"
+          complete={patientStepComplete}
+          active={isActive}
+          onEdit={patientStepComplete ? handleChangePatient : null}
+        />
+
+        {!isActive && selectedPatient ? (
+          <CollapsedSelection label="Patient" user={selectedPatient} />
+        ) : null}
+
+        {isActive ? (
+          <View style={styles.listStack}>
+            {patients.length ? (
+              patients.map((patient) => (
+                <UserSelectCard
+                  key={patient.id}
+                  user={patient}
+                  selected={patient.id === selectedPatientId}
+                  disabled={busy}
+                  badgeText={
+                    patient.id === selectedPatientId ? "Selected" : null
+                  }
+                  onPress={() => handleSelectPatient(patient.id)}
+                />
+              ))
+            ) : (
+              <Text style={styles.emptyText}>
+                No patients found. Run Seed (basic) first or create a patient.
+              </Text>
+            )}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderProviderStep = () => {
+    const isActive = flowStep === FLOW_STEP.PROVIDER;
+    const isLocked = !selectedPatient;
+
+    return (
+      <View style={[styles.stepCard, isLocked ? styles.stepCardLocked : null]}>
+        <StepHeader
+          number="2"
+          title="Select provider"
+          complete={providerStepComplete}
+          active={isActive}
+          onEdit={
+            providerStepComplete && selectedPatient
+              ? handleChangeProvider
+              : null
+          }
+        />
+
+        {isLocked ? (
+          <Text style={styles.lockedText}>Select a patient first.</Text>
+        ) : null}
+
+        {!isActive && selectedProvider ? (
+          <CollapsedSelection label="Provider" user={selectedProvider} />
+        ) : null}
+
+        {isActive && selectedPatient ? (
+          <View style={styles.listStack}>
+            {loadingConnections ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator />
+                <Text style={styles.loadingText}>
+                  Loading existing provider connections...
+                </Text>
+              </View>
+            ) : null}
+
+            {!loadingConnections && providers.length
+              ? providers.map((provider) => {
+                  const alreadyConnected = connectedProviderIds.has(
+                    provider.id,
+                  );
+                  const isSelected = provider.id === selectedProviderId;
+
+                  return (
+                    <UserSelectCard
+                      key={provider.id}
+                      user={provider}
+                      selected={isSelected}
+                      disabled={busy || alreadyConnected}
+                      disabledReason={
+                        alreadyConnected
+                          ? "Already connected to this patient"
+                          : null
+                      }
+                      badgeText={
+                        alreadyConnected
+                          ? "Connected"
+                          : isSelected
+                            ? "Selected"
+                            : "Available"
+                      }
+                      onPress={() => handleSelectProvider(provider.id)}
+                    />
+                  );
+                })
+              : null}
+
+            {!loadingConnections && !providers.length ? (
+              <Text style={styles.emptyText}>
+                No providers found. Run Seed (basic) first.
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderReviewStep = () => {
+    const isActive = flowStep === FLOW_STEP.REVIEW;
+    const isLocked = !selectedPatient || !selectedProvider;
+
+    return (
+      <View style={[styles.stepCard, isLocked ? styles.stepCardLocked : null]}>
+        <StepHeader
+          number="3"
+          title="Review and connect"
+          complete={false}
+          active={isActive}
+        />
+
+        {isLocked ? (
+          <Text style={styles.lockedText}>
+            Select a patient and available provider first.
+          </Text>
+        ) : null}
+
+        {isActive && selectedPatient && selectedProvider ? (
+          <View style={styles.reviewStack}>
+            <View style={styles.summaryBox}>
+              <Text style={styles.summaryTitle}>Connection summary</Text>
+
+              <Text style={styles.summaryLine}>
+                Patient:{" "}
+                <Text style={styles.summaryStrong}>
+                  {getUserLabel(selectedPatient)}
+                </Text>
+              </Text>
+
+              <Text style={styles.summaryLine}>
+                Provider:{" "}
+                <Text style={styles.summaryStrong}>
+                  {getUserLabel(selectedProvider)}
+                </Text>
+              </Text>
+
+              <Text style={styles.summaryNote}>
+                This will create or ensure the provider/patient relationship,
+                canonical care-team chat, and both chat participants.
+              </Text>
+            </View>
+
+            <Button
+              title={
+                connecting ? "Connecting..." : "Connect Patient to Provider"
+              }
+              onPress={handleConnectPatientProvider}
+              disabled={!canSubmit}
+            />
+          </View>
+        ) : null}
+      </View>
+    );
   };
 
   return (
@@ -259,12 +588,16 @@ export default function AdminHomeScreen() {
           <View style={styles.sectionHeaderText}>
             <Text style={styles.sectionTitle}>Connect Patient to Provider</Text>
             <Text style={styles.sectionDescription}>
-              Creates the provider/patient relationship and ensures the
-              care-team chat exists.
+              Select a patient, choose an available provider, then create the
+              care-team connection.
             </Text>
           </View>
 
-          <Pressable onPress={loadUsers} disabled={busy} style={styles.refresh}>
+          <Pressable
+            onPress={loadUsers}
+            disabled={busy}
+            style={[styles.refresh, busy ? styles.disabled : null]}
+          >
             <Text style={styles.refreshText}>Refresh</Text>
           </Pressable>
         </View>
@@ -277,59 +610,15 @@ export default function AdminHomeScreen() {
             </Text>
           </View>
         ) : (
-          <>
-            <View style={styles.pickerSection}>
-              <Text style={styles.pickerTitle}>1. Select patient</Text>
-
-              {patients.length ? (
-                patients.map((patient) => (
-                  <UserSelectCard
-                    key={patient.id}
-                    user={patient}
-                    selected={patient.id === selectedPatientId}
-                    disabled={busy}
-                    onPress={() => setSelectedPatientId(patient.id)}
-                  />
-                ))
-              ) : (
-                <Text style={styles.emptyText}>
-                  No patients found. Run Seed (basic) first or create a patient.
-                </Text>
-              )}
-            </View>
-
-            <View style={styles.pickerSection}>
-              <Text style={styles.pickerTitle}>2. Select provider</Text>
-
-              {providers.length ? (
-                providers.map((provider) => (
-                  <UserSelectCard
-                    key={provider.id}
-                    user={provider}
-                    selected={provider.id === selectedProviderId}
-                    disabled={busy}
-                    onPress={() => setSelectedProviderId(provider.id)}
-                  />
-                ))
-              ) : (
-                <Text style={styles.emptyText}>
-                  No providers found. Run Seed (basic) first.
-                </Text>
-              )}
-            </View>
-
-            <Button
-              title={
-                connecting ? "Connecting..." : "Connect Patient to Provider"
-              }
-              onPress={handleConnectPatientProvider}
-              disabled={!canConnect}
-            />
-          </>
+          <View style={styles.flowStack}>
+            {renderPatientStep()}
+            {renderProviderStep()}
+            {renderReviewStep()}
+          </View>
         )}
       </View>
 
-      {busy && !loadingUsers ? (
+      {busy && !loadingUsers && !loadingConnections ? (
         <ActivityIndicator style={styles.bottomLoader} />
       ) : null}
     </ScrollView>
@@ -400,23 +689,76 @@ const styles = {
     fontSize: 13,
     fontWeight: "700",
   },
-  loadingBox: {
-    paddingVertical: 24,
+  flowStack: {
+    gap: 12,
+  },
+  stepCard: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 16,
+    padding: 12,
+    gap: 12,
+    backgroundColor: "#FFFFFF",
+  },
+  stepCardLocked: {
+    backgroundColor: "#F9FAFB",
+  },
+  stepHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  stepTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  stepBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
-  loadingText: {
-    fontSize: 14,
+  stepBadgeActive: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+  stepBadgeComplete: {
+    backgroundColor: "#DBEAFE",
+    borderColor: "#93C5FD",
+  },
+  stepBadgeText: {
+    fontSize: 13,
+    fontWeight: "900",
     color: "#6B7280",
   },
-  pickerSection: {
-    gap: 8,
+  stepBadgeTextActive: {
+    color: "#FFFFFF",
   },
-  pickerTitle: {
-    fontSize: 15,
+  stepTitle: {
+    fontSize: 16,
     fontWeight: "800",
     color: "#111827",
+  },
+  editButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#F3F4F6",
+  },
+  editButtonText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#374151",
+  },
+  listStack: {
+    gap: 8,
   },
   userCard: {
     padding: 12,
@@ -429,6 +771,10 @@ const styles = {
   userCardSelected: {
     borderColor: "#2563EB",
     backgroundColor: "#EFF6FF",
+  },
+  userCardDisabled: {
+    opacity: 0.58,
+    backgroundColor: "#F9FAFB",
   },
   userCardHeader: {
     flexDirection: "row",
@@ -447,19 +793,72 @@ const styles = {
     lineHeight: 16,
     color: "#6B7280",
   },
-  selectedPill: {
+  cardBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
+    backgroundColor: "#ECFDF5",
+  },
+  cardBadgeSelected: {
     backgroundColor: "#2563EB",
   },
-  selectedPillText: {
-    color: "#FFFFFF",
+  cardBadgeDisabled: {
+    backgroundColor: "#E5E7EB",
+  },
+  cardBadgeText: {
+    color: "#15803D",
     fontSize: 11,
     fontWeight: "800",
   },
-  disabled: {
-    opacity: 0.6,
+  cardBadgeTextSelected: {
+    color: "#FFFFFF",
+  },
+  cardBadgeTextDisabled: {
+    color: "#6B7280",
+  },
+  disabledReason: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#6B7280",
+  },
+  collapsedBox: {
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "#F9FAFB",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    gap: 2,
+  },
+  collapsedLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#6B7280",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  collapsedValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  collapsedMeta: {
+    fontSize: 12,
+    color: "#6B7280",
+  },
+  lockedText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: "#6B7280",
+  },
+  loadingBox: {
+    paddingVertical: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: "#6B7280",
   },
   emptyText: {
     fontSize: 14,
@@ -471,7 +870,41 @@ const styles = {
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
+  reviewStack: {
+    gap: 12,
+  },
+  summaryBox: {
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "#F9FAFB",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    gap: 4,
+  },
+  summaryTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 2,
+  },
+  summaryLine: {
+    fontSize: 14,
+    color: "#6B7280",
+  },
+  summaryStrong: {
+    color: "#111827",
+    fontWeight: "700",
+  },
+  summaryNote: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#6B7280",
+  },
   bottomLoader: {
     marginTop: 4,
+  },
+  disabled: {
+    opacity: 0.6,
   },
 };
