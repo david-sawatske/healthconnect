@@ -1,21 +1,8 @@
 /* Amplify Params - DO NOT EDIT
-	AUTH_HEALTHCONNECT97A44150_USERPOOLID
-	ENV
-	REGION
-	TABLE_USER
-	TABLE_PROVIDER_PATIENT
-	TABLE_CONVERSATION
-	TABLE_CONVERSATION_PARTICIPANT
-	TABLE_MESSAGE
-	TABLE_ADVOCATE_INVITE
-	TABLE_ADVOCATE_ASSIGNMENT
+  AUTH_HEALTHCONNECT97A44150_USERPOOLID
+  ENV
+  REGION
 Amplify Params - DO NOT EDIT */
-
-const {
-  CognitoIdentityProviderClient,
-  AdminCreateUserCommand,
-  AdminGetUserCommand,
-} = require("@aws-sdk/client-cognito-identity-provider");
 
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const {
@@ -23,469 +10,662 @@ const {
   GetCommand,
   PutCommand,
 } = require("@aws-sdk/lib-dynamodb");
+const {
+  CognitoIdentityProviderClient,
+  AdminCreateUserCommand,
+  AdminGetUserCommand,
+  ListUsersCommand,
+} = require("@aws-sdk/client-cognito-identity-provider");
 
-const ADMIN_GROUP = "Admin";
-const ADMIN_GROUP_ROLE_NAME = "AdminGroupRole";
+const ddb = DynamoDBDocumentClient.from(
+  new DynamoDBClient({ region: process.env.REGION }),
+  { marshallOptions: { removeUndefinedValues: true } },
+);
 
-const ALLOWED_CREATE_USER_ROLES = new Set(["PATIENT", "PROVIDER", "ADVOCATE"]);
-
-const region = process.env.REGION || process.env.AWS_REGION;
-
-const cognito = new CognitoIdentityProviderClient({ region });
-
-const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
-
-const isMissingOrPlaceholder = (value) =>
-  !value || value === "PH" || value.startsWith("PLACEHOLDER");
-
-const isConfiguredEnvValue = (value) => !isMissingOrPlaceholder(value);
-
-const jsonResponse = (statusCode, body) => ({
-  statusCode,
-  headers: {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "*",
-    "Access-Control-Allow-Methods": "OPTIONS,POST",
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify(body),
+const cognito = new CognitoIdentityProviderClient({
+  region: process.env.REGION,
 });
 
-const ok = (body = {}) =>
-  jsonResponse(200, {
-    ok: true,
-    ...body,
-  });
+const {
+  AUTH_HEALTHCONNECT97A44150_USERPOOLID,
+  TABLE_USER,
+  TABLE_PROVIDER_PATIENT,
+  TABLE_CONVERSATION,
+  TABLE_CONVERSATION_PARTICIPANT,
+} = process.env;
 
-const badRequest = (message, details = undefined) =>
-  jsonResponse(400, {
-    ok: false,
-    error: "BAD_REQUEST",
-    message,
-    ...(details ? { details } : {}),
-  });
+const VALID_ROLES = new Set(["ADMIN", "PATIENT", "PROVIDER", "ADVOCATE"]);
 
-const forbidden = (message = "Admin access required") =>
-  jsonResponse(403, {
-    ok: false,
-    error: "FORBIDDEN",
-    message,
-  });
+requireEnv(
+  "AUTH_HEALTHCONNECT97A44150_USERPOOLID",
+  AUTH_HEALTHCONNECT97A44150_USERPOOLID,
+);
+requireEnv("TABLE_USER", TABLE_USER);
+requireEnv("TABLE_PROVIDER_PATIENT", TABLE_PROVIDER_PATIENT);
+requireEnv("TABLE_CONVERSATION", TABLE_CONVERSATION);
+requireEnv("TABLE_CONVERSATION_PARTICIPANT", TABLE_CONVERSATION_PARTICIPANT);
 
-const serverError = (message = "Internal server error") =>
-  jsonResponse(500, {
-    ok: false,
-    error: "SERVER_ERROR",
-    message,
-  });
-
-const parseBody = (event) => {
-  if (!event?.body) return {};
-
-  if (typeof event.body === "object") {
-    return event.body;
-  }
+exports.handler = async (event) => {
+  console.log("[ADMIN_MANAGE_USERS] event.raw =", JSON.stringify(event));
 
   try {
-    return JSON.parse(event.body);
-  } catch {
-    throw new Error("Request body must be valid JSON");
-  }
-};
+    requireAdminCaller(event);
 
-const getCallerGroups = (event) => {
-  const claims =
-    event?.requestContext?.authorizer?.claims ||
-    event?.requestContext?.authorizer?.jwt?.claims ||
-    {};
+    const body = parseBody(event);
+    const action = requireNonEmptyString("action", body.action);
 
-  const rawGroups =
-    claims["cognito:groups"] || claims["custom:groups"] || claims.groups || [];
-
-  if (Array.isArray(rawGroups)) return rawGroups;
-
-  if (typeof rawGroups === "string") {
-    return rawGroups
-      .split(",")
-      .map((group) => group.trim())
-      .filter(Boolean);
-  }
-
-  return [];
-};
-
-const getCallerUserArn = (event) =>
-  event?.requestContext?.identity?.userArn || "";
-
-const isAdminIamRoleCaller = (event) => {
-  const userArn = getCallerUserArn(event);
-
-  return (
-    typeof userArn === "string" &&
-    userArn.includes(":assumed-role/") &&
-    userArn.includes(ADMIN_GROUP_ROLE_NAME)
-  );
-};
-
-const isAdminCaller = (event) => {
-  const groups = getCallerGroups(event);
-
-  return groups.includes(ADMIN_GROUP) || isAdminIamRoleCaller(event);
-};
-
-const normalizeEmail = (email) => {
-  if (typeof email !== "string") return "";
-  return email.trim().toLowerCase();
-};
-
-const normalizeName = (name) => {
-  if (typeof name !== "string") return "";
-  return name.trim();
-};
-
-const validateCreateUserInput = (body) => {
-  const user = body?.user;
-
-  if (!user || typeof user !== "object") {
-    return {
-      valid: false,
-      message: "user object is required",
-    };
-  }
-
-  const role = user.role;
-  const email = normalizeEmail(user.email);
-  const displayName = normalizeName(user.name);
-
-  if (!ALLOWED_CREATE_USER_ROLES.has(role)) {
-    return {
-      valid: false,
-      message: "user.role must be PATIENT, PROVIDER, or ADVOCATE",
-    };
-  }
-
-  if (!displayName) {
-    return {
-      valid: false,
-      message: "user.name is required",
-    };
-  }
-
-  if (!email) {
-    return {
-      valid: false,
-      message: "user.email is required",
-    };
-  }
-
-  if (!email.includes("@")) {
-    return {
-      valid: false,
-      message: "user.email must be a valid email address",
-    };
-  }
-
-  return {
-    valid: true,
-    user: {
-      role,
-      email,
-      displayName,
-    },
-  };
-};
-
-const getUserPoolId = () => {
-  const userPoolId = process.env.AUTH_HEALTHCONNECT97A44150_USERPOOLID;
-
-  if (isMissingOrPlaceholder(userPoolId)) {
-    throw new Error("AUTH_HEALTHCONNECT97A44150_USERPOOLID is not configured");
-  }
-
-  return userPoolId;
-};
-
-const getUserTableName = () => {
-  const tableName = process.env.TABLE_USER;
-
-  if (isMissingOrPlaceholder(tableName)) {
-    throw new Error("TABLE_USER is not configured with a real table name");
-  }
-
-  return tableName;
-};
-
-const getAttributeValue = (attributes = [], name) => {
-  const attr = attributes.find((item) => item.Name === name);
-  return attr?.Value || null;
-};
-
-const toCognitoUserSummaryFromAdminGetUser = (result, email) => ({
-  username: result.Username,
-  sub: getAttributeValue(result.UserAttributes, "sub"),
-  email: getAttributeValue(result.UserAttributes, "email") || email,
-  status: result.UserStatus,
-  enabled: result.Enabled,
-});
-
-const toCognitoUserSummaryFromAdminCreateUser = (result, email) => ({
-  username: result.User?.Username,
-  sub: getAttributeValue(result.User?.Attributes, "sub"),
-  email: getAttributeValue(result.User?.Attributes, "email") || email,
-  status: result.User?.UserStatus,
-  enabled: result.User?.Enabled,
-});
-
-const getCognitoUserByEmail = async (email) => {
-  const userPoolId = getUserPoolId();
-
-  try {
-    const result = await cognito.send(
-      new AdminGetUserCommand({
-        UserPoolId: userPoolId,
-        Username: email,
-      }),
-    );
-
-    return toCognitoUserSummaryFromAdminGetUser(result, email);
-  } catch (error) {
-    if (error?.name === "UserNotFoundException") {
-      return null;
+    if (action === "CREATE_USER") {
+      const result = await createUser(body);
+      return json(200, result);
     }
 
-    throw error;
+    if (action === "CONNECT_PATIENT_PROVIDER") {
+      const result = await connectPatientProvider(body);
+      return json(200, result);
+    }
+
+    return json(400, {
+      ok: false,
+      error: `Unsupported action: ${action}`,
+    });
+  } catch (e) {
+    console.error("[ADMIN_MANAGE_USERS] ERROR", e);
+
+    return json(e.statusCode || 500, {
+      ok: false,
+      error: e?.message ?? String(e),
+    });
   }
 };
 
-const createCognitoUser = async ({ email, displayName }) => {
-  const userPoolId = getUserPoolId();
+async function createUser(body) {
+  const email = normalizeEmail(body.email);
+  const displayName = requireNonEmptyString("displayName", body.displayName);
+  const role = requireValidRole(body.role);
+  const now = new Date().toISOString();
 
-  const result = await cognito.send(
+  const cognitoResult = await ensureCognitoUserByEmail({
+    email,
+    displayName,
+    role,
+  });
+
+  const userId = cognitoResult.sub;
+
+  const existingProfile = await ddb.send(
+    new GetCommand({
+      TableName: TABLE_USER,
+      Key: { id: userId },
+    }),
+  );
+
+  const existingUser = existingProfile.Item;
+
+  const user = {
+    id: userId,
+    email,
+    displayName,
+    role,
+    avatarKey: existingUser?.avatarKey ?? null,
+    createdAt: existingUser?.createdAt ?? now,
+    updatedAt: now,
+  };
+
+  await ddb.send(
+    new PutCommand({
+      TableName: TABLE_USER,
+      Item: user,
+    }),
+  );
+
+  return {
+    ok: true,
+    action: "CREATE_USER",
+    message: "User created successfully.",
+    cognitoUserCreated: cognitoResult.created,
+    userProfileCreated: !existingUser,
+    tableUserConfigured: true,
+    cognitoUser: {
+      sub: cognitoResult.sub,
+      username: cognitoResult.username,
+      email,
+      status: cognitoResult.status,
+      enabled: cognitoResult.enabled,
+    },
+    user,
+  };
+}
+
+async function connectPatientProvider(body) {
+  const patientId = requireNonEmptyString("patientId", body.patientId);
+  const providerId = requireNonEmptyString("providerId", body.providerId);
+
+  if (patientId === providerId) {
+    throw httpError(400, "patientId and providerId must be different.");
+  }
+
+  const now = new Date().toISOString();
+
+  const patient = await getUserByIdOrThrow(patientId, "PATIENT");
+  const provider = await getUserByIdOrThrow(providerId, "PROVIDER");
+
+  const providerPatient = await ensureProviderPatient({
+    patientId,
+    providerId,
+    now,
+  });
+
+  const conversation = await ensureCareTeamConversation({
+    patientId,
+    providerId,
+    now,
+  });
+
+  const patientParticipant = await ensureConversationParticipant({
+    conversationId: conversation.id,
+    userId: patientId,
+    now,
+  });
+
+  const providerParticipant = await ensureConversationParticipant({
+    conversationId: conversation.id,
+    userId: providerId,
+    now,
+  });
+
+  return {
+    ok: true,
+    action: "CONNECT_PATIENT_PROVIDER",
+    message: "Patient connected to provider successfully.",
+    patient: toPublicUser(patient),
+    provider: toPublicUser(provider),
+    providerPatient: {
+      id: providerPatient.id,
+      created: providerPatient.created,
+    },
+    conversation: {
+      id: conversation.id,
+      created: conversation.created,
+      title: conversation.item.title ?? null,
+      isGroup: conversation.item.isGroup,
+      memberIds: conversation.item.memberIds,
+    },
+    participants: {
+      patient: {
+        id: patientParticipant.id,
+        created: patientParticipant.created,
+      },
+      provider: {
+        id: providerParticipant.id,
+        created: providerParticipant.created,
+      },
+    },
+  };
+}
+
+async function ensureCognitoUserByEmail({ email, displayName, role }) {
+  const existing = await findCognitoUserByEmail(email);
+
+  if (existing) {
+    return {
+      created: false,
+      username: existing.username,
+      sub: existing.sub,
+      status: existing.status,
+      enabled: existing.enabled,
+    };
+  }
+
+  const createRes = await cognito.send(
     new AdminCreateUserCommand({
-      UserPoolId: userPoolId,
+      UserPoolId: AUTH_HEALTHCONNECT97A44150_USERPOOLID,
       Username: email,
-      MessageAction: "SUPPRESS",
       UserAttributes: [
-        {
-          Name: "email",
-          Value: email,
-        },
-        {
-          Name: "email_verified",
-          Value: "true",
-        },
-        {
-          Name: "name",
-          Value: displayName,
-        },
+        { Name: "email", Value: email },
+        { Name: "email_verified", Value: "true" },
+        { Name: "name", Value: displayName },
+        { Name: "custom:role", Value: role },
       ],
     }),
   );
 
-  return toCognitoUserSummaryFromAdminCreateUser(result, email);
-};
+  const createdUser = createRes.User;
+  const username = createdUser?.Username;
 
-const ensureCognitoUser = async ({ email, displayName }) => {
-  const existingUser = await getCognitoUserByEmail(email);
-
-  if (existingUser) {
-    return {
-      created: false,
-      user: existingUser,
-    };
+  if (!username) {
+    throw httpError(500, "Cognito user was created but no username was returned.");
   }
 
-  try {
-    const createdUser = await createCognitoUser({ email, displayName });
+  const fullUser = await cognito.send(
+    new AdminGetUserCommand({
+      UserPoolId: AUTH_HEALTHCONNECT97A44150_USERPOOLID,
+      Username: username,
+    }),
+  );
 
-    return {
-      created: true,
-      user: createdUser,
-    };
-  } catch (error) {
-    if (error?.name === "UsernameExistsException") {
-      const user = await getCognitoUserByEmail(email);
+  const sub = getCognitoAttribute(fullUser.UserAttributes, "sub");
 
-      if (user) {
-        return {
-          created: false,
-          user,
-        };
-      }
-    }
-
-    throw error;
+  if (!sub) {
+    throw httpError(500, "Cognito user was created but no sub was found.");
   }
-};
 
-const getUserProfile = async (id) => {
-  const tableName = getUserTableName();
+  return {
+    created: true,
+    username,
+    sub,
+    status: fullUser.UserStatus,
+    enabled: fullUser.Enabled,
+  };
+}
 
-  const result = await dynamo.send(
+async function findCognitoUserByEmail(email) {
+  const res = await cognito.send(
+    new ListUsersCommand({
+      UserPoolId: AUTH_HEALTHCONNECT97A44150_USERPOOLID,
+      Filter: `email = "${email}"`,
+      Limit: 1,
+    }),
+  );
+
+  const user = (res.Users || [])[0];
+
+  if (!user) return null;
+
+  const sub = getCognitoAttribute(user.Attributes, "sub");
+
+  if (!sub) {
+    throw httpError(500, `Existing Cognito user for ${email} has no sub.`);
+  }
+
+  return {
+    username: user.Username,
+    sub,
+    status: user.UserStatus,
+    enabled: user.Enabled,
+  };
+}
+
+async function getUserByIdOrThrow(userId, expectedRole) {
+  const res = await ddb.send(
     new GetCommand({
-      TableName: tableName,
+      TableName: TABLE_USER,
+      Key: { id: userId },
+    }),
+  );
+
+  const user = res.Item;
+
+  if (!user) {
+    throw httpError(404, `User not found: ${userId}`);
+  }
+
+  if (user.role !== expectedRole) {
+    throw httpError(
+      400,
+      `Expected user ${userId} to have role ${expectedRole}, but found ${
+        user.role || "UNKNOWN"
+      }.`,
+    );
+  }
+
+  return user;
+}
+
+async function ensureProviderPatient({ patientId, providerId, now }) {
+  const id = providerPatientId({ patientId, providerId });
+
+  const existing = await ddb.send(
+    new GetCommand({
+      TableName: TABLE_PROVIDER_PATIENT,
       Key: { id },
     }),
   );
 
-  return result.Item || null;
-};
-
-const ensureUserProfile = async ({ cognitoUser, userInput }) => {
-  const tableName = getUserTableName();
-  const now = new Date().toISOString();
-
-  if (!cognitoUser?.sub) {
-    throw new Error("Cognito user sub is required to create User profile");
+  if (existing.Item) {
+    return {
+      id,
+      created: false,
+      item: existing.Item,
+    };
   }
 
-  const existingProfile = await getUserProfile(cognitoUser.sub);
+  const item = {
+    id,
+    providerId,
+    patientId,
+    createdAt: now,
+    updatedAt: now,
+  };
 
-  const userProfile = existingProfile
-    ? {
-        ...existingProfile,
-        email: userInput.email,
-        displayName: userInput.displayName,
-        role: userInput.role,
-        avatarKey: Object.prototype.hasOwnProperty.call(
-          existingProfile,
-          "avatarKey",
-        )
-          ? existingProfile.avatarKey
-          : null,
-        updatedAt: now,
-      }
-    : {
-        id: cognitoUser.sub,
-        email: userInput.email,
-        displayName: userInput.displayName,
-        role: userInput.role,
-        avatarKey: null,
-        createdAt: now,
-        updatedAt: now,
-      };
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE_PROVIDER_PATIENT,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(id)",
+      }),
+    );
 
-  await dynamo.send(
-    new PutCommand({
-      TableName: tableName,
-      Item: userProfile,
+    return {
+      id,
+      created: true,
+      item,
+    };
+  } catch (e) {
+    if (e.name !== "ConditionalCheckFailedException") throw e;
+
+    const reread = await ddb.send(
+      new GetCommand({
+        TableName: TABLE_PROVIDER_PATIENT,
+        Key: { id },
+      }),
+    );
+
+    return {
+      id,
+      created: false,
+      item: reread.Item,
+    };
+  }
+}
+
+async function ensureCareTeamConversation({ patientId, providerId, now }) {
+  const id = careTeamConversationId({ patientId, providerId });
+
+  const existing = await ddb.send(
+    new GetCommand({
+      TableName: TABLE_CONVERSATION,
+      Key: { id },
     }),
   );
 
-  return {
-    created: !existingProfile,
-    user: userProfile,
-  };
-};
+  if (existing.Item) {
+    const normalized = await ensureConversationHasMembers({
+      conversation: existing.Item,
+      requiredMemberIds: [patientId, providerId],
+      now,
+    });
 
-const getConfigStatus = () => ({
-  tableUserConfigured: isConfiguredEnvValue(process.env.TABLE_USER),
-  userPoolConfigured: isConfiguredEnvValue(
-    process.env.AUTH_HEALTHCONNECT97A44150_USERPOOLID,
-  ),
-});
-
-const handleCreateUser = async (body) => {
-  const validation = validateCreateUserInput(body);
-
-  if (!validation.valid) {
-    return badRequest(validation.message);
+    return {
+      id,
+      created: false,
+      item: normalized,
+    };
   }
 
-  const cognitoResult = await ensureCognitoUser(validation.user);
-
-  const profileResult = await ensureUserProfile({
-    cognitoUser: cognitoResult.user,
-    userInput: validation.user,
-  });
-
-  return ok({
-    action: "CREATE_USER",
-    message: profileResult.created
-      ? "User created successfully."
-      : "User already existed. Profile updated successfully.",
-    user: profileResult.user,
-    cognitoUserCreated: cognitoResult.created,
-    userProfileCreated: profileResult.created,
-    cognitoUser: cognitoResult.user,
-    ...getConfigStatus(),
-  });
-};
-
-/**
- * @type {import('@types/aws-lambda').APIGatewayProxyHandler}
- */
-exports.handler = async (event) => {
-  console.log("[adminManageUsers] route =", {
-    path: event?.path,
-    httpMethod: event?.httpMethod,
-    resource: event?.resource,
-  });
+  const item = {
+    id,
+    title: "Care Team Chat",
+    isGroup: true,
+    memberIds: [patientId, providerId],
+    createdBy: providerId,
+    lastMessageAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
 
   try {
-    if (event?.httpMethod === "OPTIONS") {
-      return jsonResponse(200, { ok: true });
-    }
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE_CONVERSATION,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(id)",
+      }),
+    );
 
-    if (!isAdminCaller(event)) {
-      console.warn("[adminManageUsers] forbidden: caller is not Admin", {
-        groups: getCallerGroups(event),
-        isAdminIamRoleCaller: isAdminIamRoleCaller(event),
-        authorizerKeys: Object.keys(event?.requestContext?.authorizer || {}),
-        identity: {
-          cognitoIdentityId: event?.requestContext?.identity?.cognitoIdentityId,
-          cognitoAuthenticationType:
-            event?.requestContext?.identity?.cognitoAuthenticationType,
-          cognitoAuthenticationProvider:
-            event?.requestContext?.identity?.cognitoAuthenticationProvider,
-          userArn: event?.requestContext?.identity?.userArn,
-          accountId: event?.requestContext?.identity?.accountId,
-        },
-      });
+    return {
+      id,
+      created: true,
+      item,
+    };
+  } catch (e) {
+    if (e.name !== "ConditionalCheckFailedException") throw e;
 
-      return forbidden();
-    }
+    const reread = await ddb.send(
+      new GetCommand({
+        TableName: TABLE_CONVERSATION,
+        Key: { id },
+      }),
+    );
 
-    const body = parseBody(event);
-    const action = body?.action;
-
-    if (action === "PING") {
-      return ok({
-        action: "PING",
-        message: "adminManageUsers Lambda is working",
-        ...getConfigStatus(),
-      });
-    }
-
-    if (action === "CREATE_USER") {
-      return handleCreateUser(body);
-    }
-
-    return badRequest("Unsupported action", {
-      supportedActions: ["PING", "CREATE_USER"],
-    });
-  } catch (error) {
-    console.error("[adminManageUsers] failed", {
-      name: error?.name,
-      message: error?.message,
-      stack: error?.stack,
-      code: error?.code,
-      statusCode: error?.$metadata?.httpStatusCode,
-      requestId: error?.$metadata?.requestId,
+    const normalized = await ensureConversationHasMembers({
+      conversation: reread.Item,
+      requiredMemberIds: [patientId, providerId],
+      now,
     });
 
-    if (error.message === "Request body must be valid JSON") {
-      return badRequest(error.message);
-    }
-
-    if (
-      error.message ===
-        "AUTH_HEALTHCONNECT97A44150_USERPOOLID is not configured" ||
-      error.message === "TABLE_USER is not configured with a real table name"
-    ) {
-      return serverError(error.message);
-    }
-
-    return serverError(error?.message || "Internal server error");
+    return {
+      id,
+      created: false,
+      item: normalized,
+    };
   }
-};
+}
+
+async function ensureConversationHasMembers({
+                                              conversation,
+                                              requiredMemberIds,
+                                              now,
+                                            }) {
+  if (!conversation) {
+    throw httpError(500, "Conversation could not be loaded after creation race.");
+  }
+
+  const existingMemberIds = Array.isArray(conversation.memberIds)
+    ? conversation.memberIds
+    : [];
+
+  const nextMemberIds = uniqueStrings([
+    ...existingMemberIds,
+    ...requiredMemberIds,
+  ]);
+
+  const alreadyHasAllMembers =
+    nextMemberIds.length === existingMemberIds.length &&
+    nextMemberIds.every((id) => existingMemberIds.includes(id));
+
+  if (alreadyHasAllMembers) {
+    return conversation;
+  }
+
+  const updated = {
+    ...conversation,
+    memberIds: nextMemberIds,
+    updatedAt: now,
+  };
+
+  await ddb.send(
+    new PutCommand({
+      TableName: TABLE_CONVERSATION,
+      Item: updated,
+    }),
+  );
+
+  return updated;
+}
+
+async function ensureConversationParticipant({ conversationId, userId, now }) {
+  const id = conversationParticipantId({ conversationId, userId });
+
+  const existing = await ddb.send(
+    new GetCommand({
+      TableName: TABLE_CONVERSATION_PARTICIPANT,
+      Key: { id },
+    }),
+  );
+
+  if (existing.Item) {
+    return {
+      id,
+      created: false,
+      item: existing.Item,
+    };
+  }
+
+  const item = {
+    id,
+    userId,
+    conversationId,
+    lastReadAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE_CONVERSATION_PARTICIPANT,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(id)",
+      }),
+    );
+
+    return {
+      id,
+      created: true,
+      item,
+    };
+  } catch (e) {
+    if (e.name !== "ConditionalCheckFailedException") throw e;
+
+    const reread = await ddb.send(
+      new GetCommand({
+        TableName: TABLE_CONVERSATION_PARTICIPANT,
+        Key: { id },
+      }),
+    );
+
+    return {
+      id,
+      created: false,
+      item: reread.Item,
+    };
+  }
+}
+
+function requireAdminCaller(event) {
+  const identity = event?.requestContext?.identity || {};
+  const userArn = identity.userArn || identity.arn || "";
+  const caller = identity.caller || "";
+  const user = identity.user || "";
+
+  const rawIdentity = JSON.stringify({
+    userArn,
+    caller,
+    user,
+  });
+
+  const isAdminGroupRole =
+    rawIdentity.includes(":assumed-role/AdminGroupRole/") ||
+    rawIdentity.includes(":role/AdminGroupRole") ||
+    rawIdentity.includes("AdminGroupRole");
+
+  if (!isAdminGroupRole) {
+    throw httpError(403, "Admin access required.");
+  }
+}
+
+function parseBody(event) {
+  if (!event?.body) return {};
+
+  if (typeof event.body === "string") {
+    try {
+      return JSON.parse(event.body);
+    } catch {
+      throw httpError(400, "Request body must be valid JSON.");
+    }
+  }
+
+  return event.body;
+}
+
+function requireEnv(name, value) {
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+
+  return value;
+}
+
+function requireNonEmptyString(name, value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw httpError(400, `${name} is required.`);
+  }
+
+  return value.trim();
+}
+
+function normalizeEmail(value) {
+  const email = requireNonEmptyString("email", value).toLowerCase();
+
+  if (!email.includes("@")) {
+    throw httpError(400, "email must be a valid email address.");
+  }
+
+  return email;
+}
+
+function requireValidRole(value) {
+  const role = requireNonEmptyString("role", value).toUpperCase();
+
+  if (!VALID_ROLES.has(role)) {
+    throw httpError(
+      400,
+      `role must be one of: ${Array.from(VALID_ROLES).join(", ")}.`,
+    );
+  }
+
+  return role;
+}
+
+function getCognitoAttribute(attributes = [], name) {
+  return attributes.find((attr) => attr.Name === name)?.Value || null;
+}
+
+function careTeamConversationId({ patientId, providerId }) {
+  return `CARE_TEAM:${patientId}:${providerId}`;
+}
+
+function providerPatientId({ providerId, patientId }) {
+  return `PP:${providerId}:${patientId}`;
+}
+
+function conversationParticipantId({ conversationId, userId }) {
+  return `${conversationId}:${userId}`;
+}
+
+function uniqueStrings(values) {
+  return Array.from(
+    new Set(
+      values.filter((value) => typeof value === "string" && value.trim()),
+    ),
+  );
+}
+
+function toPublicUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role,
+  };
+}
+
+function httpError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function json(statusCode, obj) {
+  return {
+    statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "*",
+      "Access-Control-Allow-Methods": "OPTIONS,POST",
+    },
+    body: JSON.stringify(obj),
+  };
+}

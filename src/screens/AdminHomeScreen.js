@@ -4,6 +4,7 @@ import {
   seedBasicAdminData,
   formatSeedResultSummary,
   testAdminUsersApi,
+  connectPatientProvider,
 } from "../features/admin/adminService";
 
 const devLog = (...args) => {
@@ -19,9 +20,17 @@ const TEST_CREATE_USER_PAYLOAD = {
   },
 };
 
+// Seeded demo users.
+// These IDs should exist after running Seed (basic).
+const TEST_CONNECT_PATIENT_PROVIDER_PAYLOAD = {
+  patientId: "demo-patient2",
+  providerId: "demo-provider2",
+};
+
 export default function AdminHomeScreen() {
   const [loading, setLoading] = useState(false);
   const [testingUsersApi, setTestingUsersApi] = useState(false);
+  const [testingConnect, setTestingConnect] = useState(false);
 
   const seedBasic = async () => {
     setLoading(true);
@@ -74,7 +83,65 @@ export default function AdminHomeScreen() {
     }
   };
 
-  const busy = loading || testingUsersApi;
+  const testConnectPatientProvider = async () => {
+    setTestingConnect(true);
+
+    try {
+      const result = await connectPatientProvider(
+        TEST_CONNECT_PATIENT_PROVIDER_PAYLOAD,
+      );
+
+      devLog("connect patient/provider result =", result);
+
+      const body = result?.body || result?.data || result || {};
+
+      Alert.alert(
+        "CONNECT_PATIENT_PROVIDER test",
+        [
+          body?.message || "Patient/provider connection completed.",
+          body?.patient?.displayName
+            ? `Patient: ${body.patient.displayName}`
+            : `Patient ID: ${TEST_CONNECT_PATIENT_PROVIDER_PAYLOAD.patientId}`,
+          body?.provider?.displayName
+            ? `Provider: ${body.provider.displayName}`
+            : `Provider ID: ${TEST_CONNECT_PATIENT_PROVIDER_PAYLOAD.providerId}`,
+          body?.providerPatient?.id
+            ? `ProviderPatient: ${body.providerPatient.id}`
+            : null,
+          `Relationship created: ${
+            body?.providerPatient?.created ? "yes" : "already existed"
+          }`,
+          body?.conversation?.id
+            ? `Conversation: ${body.conversation.id}`
+            : null,
+          `Conversation created: ${
+            body?.conversation?.created ? "yes" : "already existed"
+          }`,
+          `Patient participant: ${
+            body?.participants?.patient?.created ? "created" : "already existed"
+          }`,
+          `Provider participant: ${
+            body?.participants?.provider?.created
+              ? "created"
+              : "already existed"
+          }`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    } catch (e) {
+      devLog("connect patient/provider failed =", e);
+
+      Alert.alert(
+        "CONNECT_PATIENT_PROVIDER test failed",
+        e?.message ?? "Unable to connect patient/provider.",
+      );
+    } finally {
+      setTestingConnect(false);
+    }
+  };
+
+  const busy = loading || testingUsersApi || testingConnect;
 
   return (
     <View style={{ padding: 16, gap: 12 }}>
@@ -87,6 +154,14 @@ export default function AdminHomeScreen() {
       <Button
         title={testingUsersApi ? "Testing..." : "Test CREATE_USER"}
         onPress={testCreateUser}
+        disabled={busy}
+      />
+
+      <Button
+        title={
+          testingConnect ? "Connecting..." : "Test CONNECT_PATIENT_PROVIDER"
+        }
+        onPress={testConnectPatientProvider}
         disabled={busy}
       />
 

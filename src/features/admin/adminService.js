@@ -158,3 +158,26 @@ export const testAdminUsersApi = async (body = { action: "PING" }) => {
     body: responseBody,
   };
 };
+
+export async function connectPatientProvider({ patientId, providerId }) {
+  const op = post({
+    apiName: "seeding",
+    path: "/admin/users",
+    options: {
+      body: {
+        action: "CONNECT_PATIENT_PROVIDER",
+        patientId,
+        providerId,
+      },
+    },
+  });
+
+  const response = await op.response;
+  const body = await response.body.json();
+
+  if (!body?.ok) {
+    throw new Error(body?.error || "Failed to connect patient to provider.");
+  }
+
+  return body;
+}
