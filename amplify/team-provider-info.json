@@ -57,7 +57,7 @@
         },
         "adminManageUsers": {
           "deploymentBucketName": "amplify-healthconnect-dev-79cce-deployment",
-          "s3Key": "amplify-builds/adminManageUsers-6a7a473346473679554a-build.zip",
+          "s3Key": "amplify-builds/adminManageUsers-4874776f584b5a4e7943-build.zip",
           "tableUser": "User-5izqvjgcw5e5zdbimlgzknen3m-dev",
           "tableProviderPatient": "ProviderPatient-5izqvjgcw5e5zdbimlgzknen3m-dev",
           "tableConversation": "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",

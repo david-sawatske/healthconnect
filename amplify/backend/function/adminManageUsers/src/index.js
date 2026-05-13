@@ -169,6 +169,7 @@ async function connectPatientProvider(body) {
   const conversation = await ensureCareTeamConversation({
     patientId,
     providerId,
+    providerName: provider.displayName || provider.email || "Provider",
     now,
   });
 
@@ -496,8 +497,14 @@ async function ensureProviderPatient({ patientId, providerId, now }) {
   }
 }
 
-async function ensureCareTeamConversation({ patientId, providerId, now }) {
+async function ensureCareTeamConversation({
+  patientId,
+  providerId,
+  providerName,
+  now,
+}) {
   const id = careTeamConversationId({ patientId, providerId });
+  const title = careTeamTitle(providerName);
 
   const existing = await ddb.send(
     new GetCommand({
@@ -510,6 +517,7 @@ async function ensureCareTeamConversation({ patientId, providerId, now }) {
     const normalized = await ensureConversationHasMembers({
       conversation: existing.Item,
       requiredMemberIds: [patientId, providerId],
+      title,
       now,
     });
 
@@ -522,7 +530,7 @@ async function ensureCareTeamConversation({ patientId, providerId, now }) {
 
   const item = {
     id,
-    title: "Care Team Chat",
+    title,
     isGroup: true,
     memberIds: [patientId, providerId],
     createdBy: providerId,
@@ -558,6 +566,7 @@ async function ensureCareTeamConversation({ patientId, providerId, now }) {
     const normalized = await ensureConversationHasMembers({
       conversation: reread.Item,
       requiredMemberIds: [patientId, providerId],
+      title,
       now,
     });
 
@@ -643,6 +652,7 @@ async function ensureAdvocateInvite({
 async function ensureConversationHasMembers({
   conversation,
   requiredMemberIds,
+  title,
   now,
 }) {
   if (!conversation) {
@@ -661,16 +671,24 @@ async function ensureConversationHasMembers({
     ...requiredMemberIds,
   ]);
 
+  const nextTitle =
+    typeof title === "string" && title.trim()
+      ? title.trim()
+      : (conversation.title ?? null);
+
   const alreadyHasAllMembers =
     nextMemberIds.length === existingMemberIds.length &&
     nextMemberIds.every((id) => existingMemberIds.includes(id));
 
-  if (alreadyHasAllMembers) {
+  const alreadyHasCorrectTitle = conversation.title === nextTitle;
+
+  if (alreadyHasAllMembers && alreadyHasCorrectTitle) {
     return conversation;
   }
 
   const updated = {
     ...conversation,
+    title: nextTitle,
     memberIds: nextMemberIds,
     updatedAt: now,
   };
@@ -825,6 +843,15 @@ function getCognitoAttribute(attributes = [], name) {
 
 function careTeamConversationId({ patientId, providerId }) {
   return `CARE_TEAM:${patientId}:${providerId}`;
+}
+
+function careTeamTitle(providerName) {
+  const cleanProviderName =
+    typeof providerName === "string" && providerName.trim()
+      ? providerName.trim()
+      : "Provider";
+
+  return `Care Team: ${cleanProviderName}`;
 }
 
 function providerPatientId({ providerId, patientId }) {
