@@ -202,6 +202,9 @@ const PatientHomeScreen = () => {
 
   const username = currentUser?.displayName || "Patient";
 
+  const careTeamBottomPadding = insets.bottom + theme.space.lg;
+  const conversationsBottomPadding = insets.bottom + theme.space.lg;
+
   const getLastActivityTs = useCallback((c) => {
     return c?.lastMessageAt || c?.updatedAt || c?.createdAt || 0;
   }, []);
@@ -619,8 +622,6 @@ const PatientHomeScreen = () => {
   const hasConversations = conversations.length > 0;
   const showGlobalLoader = loadingCurrentUser && !hasConversations;
 
-  const hasAnyCareTeams = careTeams.length > 0;
-
   const Header = (
     <>
       <View style={styles.header}>
@@ -675,139 +676,118 @@ const PatientHomeScreen = () => {
     </>
   );
 
-  const renderCareTeam = () => {
-    const renderTeamItem = ({ item: team }) => {
-      const providerName =
-        team.providerUser?.displayName ||
-        team.providerUser?.email ||
-        "Provider";
+  const CareTeamListHeader = (
+    <>
+      {Header}
 
-      const advocateIds = (team.advocates || [])
-        .map((a) => a.id)
-        .filter(Boolean);
-      const canMessageTeam = !!team.providerId && advocateIds.length > 0;
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>My Care Team</Text>
+        {careTeamLoading ? (
+          <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
+        ) : null}
+      </View>
 
-      const isExpanded = expandedProviders.has(team.providerId);
-      const advocateCount = team.advocates?.length || 0;
+      {careTeamError ? (
+        <Text style={styles.sectionErrorText}>{careTeamError}</Text>
+      ) : null}
+    </>
+  );
 
-      return (
-        <View style={styles.providerCard}>
-          <View style={styles.providerTopRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.providerName} numberOfLines={1}>
-                {providerName}
-              </Text>
-            </View>
+  const renderCareTeamItem = ({ item: team }) => {
+    const providerName =
+      team.providerUser?.displayName || team.providerUser?.email || "Provider";
 
-            <Text style={[styles.badge, styles.providerBadge]}>Provider</Text>
-          </View>
+    const advocateIds = (team.advocates || []).map((a) => a.id).filter(Boolean);
+    const canMessageTeam = !!team.providerId && advocateIds.length > 0;
 
-          <View style={styles.actionsRow}>
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() =>
-                handleOpenCareTeamChat(
-                  team.providerUser || {
-                    id: team.providerId,
-                    displayName: providerName,
-                  },
-                )
-              }
-            >
-              <Text style={styles.primaryBtnText}>Message</Text>
-            </TouchableOpacity>
-
-            {canMessageTeam ? (
-              <TouchableOpacity
-                style={styles.secondaryBtn}
-                onPress={() =>
-                  handleOpenCareTeamGroupChat({
-                    providerId: team.providerId,
-                    providerName,
-                    advocateIds,
-                  })
-                }
-              >
-                <Text style={styles.secondaryBtnText}>Care Team Chat</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.disabledPill}>
-                <Text style={styles.disabledPillText}>
-                  Add advocate to enable group
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {advocateCount > 0 ? (
-            <TouchableOpacity
-              style={styles.advocatesHeaderRow}
-              onPress={() => toggleProviderExpanded(team.providerId)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.advocatesHeaderRowText}>
-                Advocates ({advocateCount})
-              </Text>
-
-              <Text style={styles.chevronText}>{isExpanded ? "▴" : "▾"}</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {isExpanded && advocateCount > 0 ? (
-            <View style={styles.advocatesWrap}>
-              {team.advocates.map((adv) => (
-                <TouchableOpacity
-                  key={adv.id}
-                  style={styles.advocateRow}
-                  onPress={() => handleOpenCareTeamChat(adv)}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.advocateName} numberOfLines={1}>
-                      {adv.displayName || adv.email || "Advocate"}
-                    </Text>
-                    <Text style={styles.advocateHint} numberOfLines={1}>
-                      Tap to message
-                    </Text>
-                  </View>
-
-                  <Text style={[styles.badge, styles.advocateBadge]}>
-                    Advocate
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : null}
-        </View>
-      );
-    };
+    const isExpanded = expandedProviders.has(team.providerId);
+    const advocateCount = team.advocates?.length || 0;
 
     return (
-      <View style={{ paddingBottom: 0 }}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>My Care Team</Text>
-          {careTeamLoading ? (
-            <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
-          ) : null}
+      <View style={styles.providerCard}>
+        <View style={styles.providerTopRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.providerName} numberOfLines={1}>
+              {providerName}
+            </Text>
+          </View>
+
+          <Text style={[styles.badge, styles.providerBadge]}>Provider</Text>
         </View>
 
-        {careTeamError ? (
-          <Text style={styles.sectionErrorText}>{careTeamError}</Text>
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() =>
+              handleOpenCareTeamChat(
+                team.providerUser || {
+                  id: team.providerId,
+                  displayName: providerName,
+                },
+              )
+            }
+          >
+            <Text style={styles.primaryBtnText}>Message</Text>
+          </TouchableOpacity>
+
+          {canMessageTeam ? (
+            <TouchableOpacity
+              style={styles.secondaryBtn}
+              onPress={() =>
+                handleOpenCareTeamGroupChat({
+                  providerId: team.providerId,
+                  providerName,
+                  advocateIds,
+                })
+              }
+            >
+              <Text style={styles.secondaryBtnText}>Care Team Chat</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.disabledPill}>
+              <Text style={styles.disabledPillText}>
+                Add advocate to enable group
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {advocateCount > 0 ? (
+          <TouchableOpacity
+            style={styles.advocatesHeaderRow}
+            onPress={() => toggleProviderExpanded(team.providerId)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.advocatesHeaderRowText}>
+              Advocates ({advocateCount})
+            </Text>
+
+            <Text style={styles.chevronText}>{isExpanded ? "▴" : "▾"}</Text>
+          </TouchableOpacity>
         ) : null}
 
-        {hasAnyCareTeams ? (
-          <FlatList
-            data={careTeams}
-            keyExtractor={(t) => t.providerId}
-            renderItem={renderTeamItem}
-            contentContainerStyle={{ paddingBottom: 16 }}
-          />
-        ) : !careTeamLoading ? (
-          <View style={styles.emptyInfo}>
-            <Text style={styles.emptyInfoTitle}>No care team yet</Text>
-            <Text style={styles.emptyInfoBody}>
-              Once a provider assigns themselves or an advocate, they’ll appear
-              here.
-            </Text>
+        {isExpanded && advocateCount > 0 ? (
+          <View style={styles.advocatesWrap}>
+            {team.advocates.map((adv) => (
+              <TouchableOpacity
+                key={adv.id}
+                style={styles.advocateRow}
+                onPress={() => handleOpenCareTeamChat(adv)}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.advocateName} numberOfLines={1}>
+                    {adv.displayName || adv.email || "Advocate"}
+                  </Text>
+                  <Text style={styles.advocateHint} numberOfLines={1}>
+                    Tap to message
+                  </Text>
+                </View>
+
+                <Text style={[styles.badge, styles.advocateBadge]}>
+                  Advocate
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         ) : null}
       </View>
@@ -816,7 +796,7 @@ const PatientHomeScreen = () => {
 
   if (showGlobalLoader) {
     return (
-      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+      <View style={styles.container}>
         {Header}
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
@@ -828,15 +808,38 @@ const PatientHomeScreen = () => {
 
   if (activeTab === "careTeam") {
     return (
-      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-        {Header}
-        {renderCareTeam()}
+      <View style={styles.container}>
+        <FlatList
+          data={careTeams}
+          keyExtractor={(item) => item.providerId}
+          renderItem={renderCareTeamItem}
+          ListHeaderComponent={CareTeamListHeader}
+          contentContainerStyle={[
+            styles.careTeamListContent,
+            { paddingBottom: careTeamBottomPadding },
+          ]}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={
+            !careTeamLoading ? (
+              <View style={styles.emptyInfo}>
+                <Text style={styles.emptyInfoTitle}>No care team yet</Text>
+                <Text style={styles.emptyInfoBody}>
+                  Once a provider assigns themselves or an advocate, they’ll
+                  appear here.
+                </Text>
+              </View>
+            ) : null
+          }
+          showsVerticalScrollIndicator={false}
+        />
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+    <View style={styles.container}>
       <FlatList
         data={conversations}
         keyExtractor={(item) => item.id}
@@ -878,7 +881,10 @@ const PatientHomeScreen = () => {
             />
           );
         }}
-        contentContainerStyle={[styles.listContent, { paddingBottom: 16 }]}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: conversationsBottomPadding },
+        ]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -897,9 +903,18 @@ const PatientHomeScreen = () => {
             <ActivityIndicator style={{ marginVertical: 12 }} />
           ) : null
         }
+        showsVerticalScrollIndicator={false}
       />
+
       {loadingReads ? (
-        <View style={styles.readsSpinner}>
+        <View
+          style={[
+            styles.readsSpinner,
+            {
+              bottom: Math.max(insets.bottom + theme.space.sm, theme.space.sm),
+            },
+          ]}
+        >
           <ActivityIndicator size="small" />
         </View>
       ) : null}
@@ -983,6 +998,9 @@ const styles = StyleSheet.create({
   listContent: {
     paddingBottom: theme.space.sm,
   },
+  careTeamListContent: {
+    paddingBottom: theme.space.sm,
+  },
 
   centered: {
     flex: 1,
@@ -1013,7 +1031,6 @@ const styles = StyleSheet.create({
   readsSpinner: {
     position: "absolute",
     right: theme.space.sm,
-    bottom: theme.space.sm,
     backgroundColor: theme.colors.card,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border,

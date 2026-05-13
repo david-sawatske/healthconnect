@@ -1,12 +1,11 @@
 import React from "react";
-import { Button, Alert, Platform, StyleSheet } from "react-native";
+import { Button, Alert, Platform, StyleSheet, View } from "react-native";
 import {
   NavigationContainer,
   createNavigationContainerRef,
 } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { signOut, getCurrentUser } from "aws-amplify/auth";
 
 import AuthScreen from "../screens/AuthScreen";
@@ -149,8 +148,8 @@ export default function AppNavigator() {
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <SafeAreaView style={styles.appFrame}>
+    <View style={styles.root}>
+      <View style={styles.appFrame}>
         <NavigationContainer ref={navRef}>
           <Stack.Navigator
             initialRouteName="Auth"
@@ -203,8 +202,8 @@ export default function AppNavigator() {
         {Platform.OS !== "web" && IncomingCallModal ? (
           <IncomingCallModal onAccept={onAccept} onDecline={onDecline} />
         ) : null}
-      </SafeAreaView>
-    </SafeAreaView>
+      </View>
+    </View>
   );
 }
 
