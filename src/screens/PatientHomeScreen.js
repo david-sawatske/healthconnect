@@ -588,9 +588,7 @@ const PatientHomeScreen = () => {
           patientId: currentUser.id,
           providerId,
           advocateIds,
-          title: `Care Team: ${currentUser.displayName || "Patient"} • ${
-            providerName || "Provider"
-          }`,
+          title: `Care Team: ${providerName || "Provider"}`,
         });
 
         setConversations((prev) => {
@@ -615,7 +613,7 @@ const PatientHomeScreen = () => {
         );
       }
     },
-    [currentUser?.id, currentUser?.displayName, navigation, sortByLastActivity],
+    [currentUser?.id, navigation, sortByLastActivity],
   );
 
   const hasConversations = conversations.length > 0;

@@ -16,6 +16,8 @@ const {
   ListUsersCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 
+const SEED_VERSION = "conversation-title-cleanup-v3";
+
 const ddb = DynamoDBDocumentClient.from(
   new DynamoDBClient({ region: process.env.REGION }),
   { marshallOptions: { removeUndefinedValues: true } },
@@ -55,8 +57,13 @@ requireEnv("TABLE_CONVERSATION_PARTICIPANT", TABLE_CONVERSATION_PARTICIPANT);
 requireEnv("TABLE_MESSAGE", TABLE_MESSAGE);
 requireEnv("TABLE_ADVOCATE_INVITE", TABLE_ADVOCATE_INVITE);
 
+function careTeamTitle(providerName) {
+  return `Care Team: ${providerName || "Provider"}`;
+}
+
 exports.handler = async (event) => {
   console.log("[ADMIN_SEED] event.raw =", JSON.stringify(event));
+  console.log("[ADMIN_SEED] SEED_VERSION =", SEED_VERSION);
 
   try {
     const body =
@@ -96,6 +103,7 @@ exports.handler = async (event) => {
     const scanAllIds = async (tableName) => {
       const ids = [];
       let ExclusiveStartKey = undefined;
+
       do {
         const res = await ddb.send(
           new ScanCommand({
@@ -104,9 +112,14 @@ exports.handler = async (event) => {
             ExclusiveStartKey,
           }),
         );
-        for (const it of res.Items || []) if (it?.id) ids.push(it.id);
+
+        for (const it of res.Items || []) {
+          if (it?.id) ids.push(it.id);
+        }
+
         ExclusiveStartKey = res.LastEvaluatedKey;
       } while (ExclusiveStartKey);
+
       return ids;
     };
 
@@ -119,6 +132,7 @@ exports.handler = async (event) => {
           }),
         );
       }
+
       return ids.length;
     };
 
@@ -130,7 +144,12 @@ exports.handler = async (event) => {
     const withModelTimestamps = (item, defaultCreatedAt = now) => {
       const createdAt = item.createdAt ?? defaultCreatedAt;
       const updatedAt = item.updatedAt ?? createdAt;
-      return { ...item, createdAt, updatedAt };
+
+      return {
+        ...item,
+        createdAt,
+        updatedAt,
+      };
     };
 
     const seedMany = async (
@@ -140,6 +159,7 @@ exports.handler = async (event) => {
     ) => {
       for (const raw of items) {
         const item = requireTimestamps ? withModelTimestamps(raw) : raw;
+
         await ddb.send(
           new PutCommand({
             TableName: tableName,
@@ -147,6 +167,7 @@ exports.handler = async (event) => {
           }),
         );
       }
+
       return items.length;
     };
 
@@ -173,6 +194,15 @@ exports.handler = async (event) => {
     const patient3Id = "demo-patient3";
     const provider2Id = "demo-provider2";
     const advocate2Id = "demo-advocate2";
+
+    const patientName = "Jordan Patient";
+    const providerName = "Dr. Avery Provider";
+    const advocateName = "Casey Advocate";
+
+    const patient2Name = "Morgan Reed";
+    const patient3Name = "Taylor Nguyen";
+    const provider2Name = "Dr. Riley Chen";
+    const advocate2Name = "Alex Rivera";
 
     console.log("[ADMIN_SEED] resolved ids", {
       patientId,
@@ -250,6 +280,7 @@ exports.handler = async (event) => {
     const careTeam1Id = CARE_TEAM_ID(patientId, providerId);
     const careTeam2Id = CARE_TEAM_ID(patient2Id, providerId);
     const careTeam3Id = CARE_TEAM_ID(patient3Id, providerId);
+    const careTeam4Id = CARE_TEAM_ID(patientId, provider2Id);
 
     const dmPatientProviderId = DM_ID(patientId, providerId);
     const dmPatientAdvocateId = DM_ID(patientId, advocateId);
@@ -262,44 +293,43 @@ exports.handler = async (event) => {
         withModelTimestamps({
           id: patientId,
           email: "patient@example.com",
-          displayName: "Jordan Patient",
+          displayName: patientName,
           role: "PATIENT",
         }),
         withModelTimestamps({
           id: providerId,
           email: "provider@example.com",
-          displayName: "Dr. Avery Provider",
+          displayName: providerName,
           role: "PROVIDER",
         }),
         withModelTimestamps({
           id: advocateId,
           email: "advocate@example.com",
-          displayName: "Casey Advocate",
+          displayName: advocateName,
           role: "ADVOCATE",
         }),
-
         withModelTimestamps({
           id: patient2Id,
           email: "morgan.patient2@example.com",
-          displayName: "Morgan Reed",
+          displayName: patient2Name,
           role: "PATIENT",
         }),
         withModelTimestamps({
           id: patient3Id,
           email: "taylor.patient3@example.com",
-          displayName: "Taylor Nguyen",
+          displayName: patient3Name,
           role: "PATIENT",
         }),
         withModelTimestamps({
           id: provider2Id,
           email: "dr.provider2@example.com",
-          displayName: "Dr. Riley Chen",
+          displayName: provider2Name,
           role: "PROVIDER",
         }),
         withModelTimestamps({
           id: advocate2Id,
           email: "alex.advocate2@example.com",
-          displayName: "Alex Rivera",
+          displayName: advocate2Name,
           role: "ADVOCATE",
         }),
       ],
@@ -310,13 +340,11 @@ exports.handler = async (event) => {
           providerId,
           patientId,
         }),
-
         withModelTimestamps({
           id: providerPatientId({ providerId: provider2Id, patientId }),
           providerId: provider2Id,
           patientId,
         }),
-
         withModelTimestamps({
           id: providerPatientId({ providerId, patientId: patient2Id }),
           providerId,
@@ -345,7 +373,6 @@ exports.handler = async (event) => {
           advocateId,
           active: true,
         }),
-
         withModelTimestamps({
           id: advocateAssignmentId({
             providerId: provider2Id,
@@ -357,7 +384,6 @@ exports.handler = async (event) => {
           advocateId: advocate2Id,
           active: true,
         }),
-
         withModelTimestamps({
           id: advocateAssignmentId({
             providerId,
@@ -389,14 +415,14 @@ exports.handler = async (event) => {
 
     seedPlan.conversations = (() => {
       const conv = ({
-        id,
-        title,
-        isGroup,
-        createdBy,
-        memberIds,
-        createdAt,
-        lastMessageAt,
-      }) =>
+                      id,
+                      title,
+                      isGroup,
+                      createdBy,
+                      memberIds,
+                      createdAt,
+                      lastMessageAt,
+                    }) =>
         withModelTimestamps({
           id,
           title: title ?? null,
@@ -410,7 +436,7 @@ exports.handler = async (event) => {
 
       const convCareTeam = conv({
         id: careTeam1Id,
-        title: "Care Team Chat",
+        title: careTeamTitle(providerName),
         isGroup: true,
         createdBy: providerId,
         memberIds: [patientId, providerId, advocateId],
@@ -440,7 +466,7 @@ exports.handler = async (event) => {
 
       const convCareTeam2 = conv({
         id: careTeam2Id,
-        title: "Care Team — Morgan",
+        title: careTeamTitle(providerName),
         isGroup: true,
         createdBy: providerId,
         memberIds: [patient2Id, providerId, advocate2Id],
@@ -450,12 +476,22 @@ exports.handler = async (event) => {
 
       const convCareTeam3 = conv({
         id: careTeam3Id,
-        title: "Care Team — Taylor",
+        title: careTeamTitle(providerName),
         isGroup: true,
         createdBy: providerId,
         memberIds: [patient3Id, providerId, advocate2Id],
         createdAt: minutesAgo(900),
         lastMessageAt: minutesAgo(90),
+      });
+
+      const convCareTeam4 = conv({
+        id: careTeam4Id,
+        title: careTeamTitle(provider2Name),
+        isGroup: true,
+        createdBy: provider2Id,
+        memberIds: [patientId, provider2Id, advocate2Id],
+        createdAt: minutesAgo(360),
+        lastMessageAt: minutesAgo(35),
       });
 
       const convP2Provider = conv({
@@ -504,6 +540,7 @@ exports.handler = async (event) => {
         convPatientAdvocate,
         convCareTeam2,
         convCareTeam3,
+        convCareTeam4,
         convP2Provider,
         convP3Provider,
         convP2Advocate1,
@@ -511,6 +548,7 @@ exports.handler = async (event) => {
       ];
 
       const byId = Object.fromEntries(list.map((c) => [c.id, c]));
+
       return { list, byId };
     })();
 
@@ -568,6 +606,12 @@ exports.handler = async (event) => {
         [providerId]: minutesAgo(300),
         [advocate2Id]: minutesAgo(90),
         [patient3Id]: minutesAgo(95),
+      }),
+
+      ...participantsForConversation(seedPlan.conversations.byId[careTeam4Id], {
+        [patientId]: minutesAgo(35),
+        [provider2Id]: minutesAgo(35),
+        [advocate2Id]: minutesAgo(50),
       }),
 
       ...participantsForConversation(
@@ -832,6 +876,43 @@ exports.handler = async (event) => {
       ),
 
       message(
+        m("ct4-001"),
+        careTeam4Id,
+        provider2Id,
+        seedPlan.conversations.byId[careTeam4Id].memberIds,
+        "SYSTEM",
+        "Care team chat created.",
+        minutesAgo(355),
+      ),
+      message(
+        m("ct4-002"),
+        careTeam4Id,
+        provider2Id,
+        seedPlan.conversations.byId[careTeam4Id].memberIds,
+        "TEXT",
+        "Hi Jordan — I reviewed your notes and can provide a second opinion.",
+        minutesAgo(80),
+      ),
+      message(
+        m("ct4-003"),
+        careTeam4Id,
+        advocate2Id,
+        seedPlan.conversations.byId[careTeam4Id].memberIds,
+        "TEXT",
+        "I can help keep both care plans organized and follow up on scheduling.",
+        minutesAgo(50),
+      ),
+      message(
+        m("ct4-004"),
+        careTeam4Id,
+        patientId,
+        seedPlan.conversations.byId[careTeam4Id].memberIds,
+        "TEXT",
+        "Thank you — that helps clarify who is coordinating what.",
+        minutesAgo(35),
+      ),
+
+      message(
         m("p2p-001"),
         dmP2ProviderId,
         patient2Id,
@@ -944,6 +1025,37 @@ exports.handler = async (event) => {
       ),
     ];
 
+    const expectedCounts = {
+      users: 7,
+      providerPatients: 5,
+      advocateAssignments: 4,
+      conversations: 10,
+      conversationParticipants: 26,
+      messages: 38,
+    };
+
+    const actualCountsBeforeWrite = {
+      users: seedPlan.users.length,
+      providerPatients: seedPlan.providerPatients.length,
+      advocateAssignments: seedPlan.advocateAssignments.length,
+      conversations: seedPlan.conversations.list.length,
+      conversationParticipants: seedPlan.participants.length,
+      messages: seedPlan.messages.length,
+    };
+
+    console.log("[ADMIN_SEED] expectedCounts =", expectedCounts);
+    console.log(
+      "[ADMIN_SEED] actualCountsBeforeWrite =",
+      actualCountsBeforeWrite,
+    );
+    console.log(
+      "[ADMIN_SEED] conversation titles =",
+      seedPlan.conversations.list.map((c) => ({
+        id: c.id,
+        title: c.title,
+      })),
+    );
+
     const seedSummary = {
       users: 0,
       providerPatients: 0,
@@ -962,37 +1074,44 @@ exports.handler = async (event) => {
       TABLE_ADVOCATE_ASSIGNMENT,
       seedPlan.advocateAssignments,
     );
-
     seedSummary.conversations = await seedMany(
       TABLE_CONVERSATION,
       seedPlan.conversations.list,
     );
-
     seedSummary.conversationParticipants = await seedMany(
       TABLE_CONVERSATION_PARTICIPANT,
       seedPlan.participants,
     );
-
     seedSummary.messages = await seedMany(TABLE_MESSAGE, seedPlan.messages);
 
     return json(200, {
       ok: true,
+      seedVersion: SEED_VERSION,
       mode,
       scenario,
       resolvedIds: { patientId, providerId, advocateId },
       deleted: deleteSummary,
       seeded: seedSummary,
+      expectedCounts,
+      actualCountsBeforeWrite,
       ids: {
         providerPatientIds: seedPlan.providerPatients.map((p) => p.id),
         advocateAssignmentIds: seedPlan.advocateAssignments.map((a) => a.id),
         conversationIds: seedPlan.conversations.list.map((c) => c.id),
       },
+      conversationTitles: seedPlan.conversations.list.map((c) => ({
+        id: c.id,
+        title: c.title,
+      })),
       notes: {
+        seedVersion: SEED_VERSION,
         modelTimestamps: "All @model seed items include createdAt + updatedAt",
         schemaDrift: "No ConversationParticipant.role written",
         removedChat: '"System Updates" conversation fully removed',
         deterministicIds:
           "Care team uses CARE_TEAM:${patientId}:${providerId}; DMs use DM:${minId}:${maxId}; ProviderPatient uses PP:${providerId}:${patientId}; AdvocateAssignment uses PA:${patientId}:PR:${providerId}:ADV:${advocateId}",
+        conversationTitles:
+          "Care-team seed titles use provider-facing format: Care Team: ${providerName}",
       },
     });
   } catch (e) {
