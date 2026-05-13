@@ -35,15 +35,15 @@ export function CurrentUserProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const loadUser = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-
-      const auth = await getCurrentUser().catch(() => null);
-
+      const auth = await getCurrentUser();
       if (!auth?.userId) {
         setCurrentUser(null);
         return;
       }
+
+      console.log("[CURRENT_USER] auth.userId =", auth.userId);
 
       const { data } = await client.graphql({
         query: GET_USER,
@@ -51,7 +51,16 @@ export function CurrentUserProvider({ children }) {
         authMode: "userPool",
       });
 
-      setCurrentUser(data?.getUser ?? null);
+      const user = data?.getUser ?? null;
+
+      if (!user) {
+        console.log(
+          "[CURRENT_USER] No User record found for id (cognito sub):",
+          auth.userId,
+        );
+      }
+
+      setCurrentUser(user);
     } catch (err) {
       console.log("[CURRENT_USER] loadUser error", err);
       setCurrentUser(null);
@@ -59,7 +68,6 @@ export function CurrentUserProvider({ children }) {
       setLoading(false);
     }
   }, []);
-
   useEffect(() => {
     loadUser();
   }, [loadUser]);

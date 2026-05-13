@@ -31,7 +31,10 @@
     "react-native-webrtc": "^124.0.6",
     "react-native-worklets-core": "^1.6.2",
     "expo-document-picker": "~13.1.6",
-    "expo-haptics": "~14.1.4"
+    "expo-haptics": "~14.1.4",
+    "react-dom": "19.0.0",
+    "react-native-web": "^0.20.0",
+    "@expo/metro-runtime": "~5.0.5"
   },
   "devDependencies": {
     "@aws-amplify/backend": "^1.16.1",

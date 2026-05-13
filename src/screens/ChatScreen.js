@@ -1,486 +1,271 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useCallback } from "react";
 import {
   View,
   Text,
   TextInput,
-  Button,
   StyleSheet,
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  Image,
   TouchableOpacity,
   Alert,
-  Linking,
+  ActivityIndicator,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
-import * as DocumentPicker from "expo-document-picker";
-import { generateClient } from "aws-amplify/api";
-import { getUrl, uploadData } from "aws-amplify/storage";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCallSignals } from "../hooks/useCallSignals";
 import { useCurrentUser } from "../context/CurrentUserContext";
 
-const client = generateClient();
+import MediaBubble from "../components/MediaBubble";
+import { useChat } from "../features/chat/useChat";
+import {
+  bubbleStyleForRole,
+  badgeStyleForRole,
+} from "../features/chat/chatUiHelpers";
+import { theme } from "../ui/theme";
 
-const MessagesByConversation = /* GraphQL */ `
-  query MessagesByConversation(
-    $conversationId: ID!
-    $limit: Int
-    $nextToken: String
-  ) {
-    messagesByConversation(
-      conversationId: $conversationId
-      sortDirection: ASC
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        conversationId
-        senderId
-        memberIds
-        type
-        body
-        mediaKey
-        thumbnailKey
-        createdAt
-      }
-      nextToken
-    }
-  }
-`;
+const devLog = (...args) => {
+  if (__DEV__) console.log("[CHAT_SCREEN]", ...args);
+};
 
-const CreateMessage = /* GraphQL */ `
-  mutation CreateMessage($input: CreateMessageInput!) {
-    createMessage(input: $input) {
-      id
-      conversationId
-      senderId
-      memberIds
-      type
-      body
-      mediaKey
-      thumbnailKey
-      createdAt
-    }
-  }
-`;
+const WEB_CALL_UNAVAILABLE_TITLE = "Video calls are mobile-only";
+const WEB_CALL_UNAVAILABLE_MESSAGE =
+  "This web demo highlights role-based workflows, care-team messaging, invite flows, realtime updates, and demo data. Native video calling is available in the iOS and Android app builds and is intentionally disabled in the browser preview.";
 
-const OnCreateMessage = /* GraphQL */ `
-  subscription OnCreateMessage {
-    onCreateMessage {
-      id
-      conversationId
-      senderId
-      memberIds
-      body
-      mediaKey
-      thumbnailKey
-      type
-      createdAt
-    }
-  }
-`;
-
-const GetUser = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
-
-function extFromName(name = "") {
-  const m = name.toLowerCase().match(/\.(\w+)$/);
-  return m ? m[1] : "";
-}
-
-function guessType({ mimeType, name }) {
-  const ext = extFromName(name);
-  if (
-    (mimeType || "").startsWith("image/") ||
-    ["png", "jpg", "jpeg", "gif", "webp", "heic"].includes(ext)
-  )
-    return "IMAGE";
-  if (
-    (mimeType || "").startsWith("video/") ||
-    ["mp4", "mov", "m4v", "webm"].includes(ext)
-  )
-    return "VIDEO";
-  return "FILE";
-}
+const WEB_UPLOAD_UNAVAILABLE_TITLE = "File uploads are mobile-only";
+const WEB_UPLOAD_UNAVAILABLE_MESSAGE =
+  "This web demo focuses on role-based workflows, care-team messaging, invite flows, realtime updates, and demo data. File and media uploads are available in the iOS and Android app builds and are intentionally disabled in the browser preview.";
 
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const { currentUser } = useCurrentUser();
 
-  const conversation = route?.params?.conversation;
-  const conversationId = conversation?.id;
-  const memberIds = Array.isArray(conversation?.memberIds)
-    ? conversation.memberIds
-    : [];
-
-  const [messages, setMessages] = useState([]);
-  const [text, setText] = useState("");
-  const [usersById, setUsersById] = useState({});
-  const [sending, setSending] = useState(false);
-  const listRef = useRef(null);
+  const conversationParam = route?.params?.conversation || null;
+  const routeConversationId = route?.params?.conversationId || null;
+  const conversationId = conversationParam?.id || routeConversationId || null;
 
   const myId = currentUser?.id || null;
+  const listRef = useRef(null);
+
+  const {
+    memberIds,
+    messages,
+    text,
+    setText,
+    sending,
+    send,
+    attach,
+    roleForSender,
+    nameForSender,
+    refreshMessages,
+  } = useChat({
+    conversationId,
+    conversation: conversationParam,
+    currentUser,
+  });
 
   useCallSignals({ conversationId, currentUserId: myId });
-
-  useEffect(() => {
-    if (!conversationId) return;
-    console.log("[CHAT] user:", currentUser || null);
-    console.log(
-      "[CHAT] conversationId:",
-      conversationId,
-      "members:",
-      memberIds,
-    );
-  }, [conversationId]);
-
-  const fetchMessages = useCallback(async () => {
-    if (!conversationId) return;
-    try {
-      const res = await client.graphql({
-        query: MessagesByConversation,
-        variables: { conversationId, limit: 50 },
-        authMode: "userPool",
-      });
-      const items = res?.data?.messagesByConversation?.items ?? [];
-      setMessages(items);
-
-      requestAnimationFrame(() =>
-        listRef.current?.scrollToEnd?.({ animated: false }),
-      );
-    } catch (err) {
-      console.log("[CHAT] fetchMessages error:", err);
-    }
-  }, [conversationId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      if (!memberIds.length) return;
-      try {
-        const ids = [...new Set(memberIds)].filter(Boolean);
-        const results = await Promise.allSettled(
-          ids.map((id) =>
-            client.graphql({
-              query: GetUser,
-              variables: { id },
-              authMode: "userPool",
-            }),
-          ),
-        );
-        if (cancelled) return;
-        const map = {};
-        results.forEach((r) => {
-          if (r.status === "fulfilled") {
-            const u = r.value?.data?.getUser;
-            if (u?.id) map[u.id] = u;
-          }
-        });
-        setUsersById(map);
-      } catch (e) {
-        console.log("[CHAT] participant load error:", e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId, memberIds.join(",")]);
 
   useFocusEffect(
     useCallback(() => {
       if (!conversationId) return;
 
-      let sub;
-      let retryTimer;
-
-      fetchMessages();
-
-      retryTimer = setTimeout(() => {
-        fetchMessages();
-      }, 500);
-
-      sub = client
-        .graphql({ query: OnCreateMessage, authMode: "userPool" })
-        .subscribe({
-          next: ({ data }) => {
-            const msg = data?.onCreateMessage;
-            if (msg?.conversationId !== conversationId) return;
-
-            setMessages((prev) =>
-              prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
-            );
-
-            requestAnimationFrame(() =>
-              listRef.current?.scrollToEnd?.({ animated: true }),
-            );
-          },
-          error: (err) => console.log("[CHAT] subscription error:", err),
-        });
-
-      return () => {
-        try {
-          sub?.unsubscribe?.();
-        } catch (e) {
-        }
-        if (retryTimer) clearTimeout(retryTimer);
-      };
-    }, [conversationId, fetchMessages]),
+      refreshMessages();
+    }, [conversationId, refreshMessages]),
   );
 
-  const handleSend = async () => {
-    const body = text.trim();
-    if (!body || !conversationId || !myId) return;
-
-    try {
-      setSending(true);
-      const { data } = await client.graphql({
-        query: CreateMessage,
-        variables: {
-          input: {
-            conversationId,
-            senderId: myId,
-            memberIds: conversation.memberIds ?? [myId],
-            type: "TEXT",
-            body,
-          },
-        },
-        authMode: "userPool",
-      });
-
-      const created = data?.createMessage;
-      if (created) {
-        setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
-        );
-        requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true }),
-        );
-      }
-      setText("");
-    } catch (err) {
-      console.log("[CHAT] send error:", err);
-      Alert.alert("Error", "Failed to send message.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleAttach = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({ type: "*/*" });
-      if (result.canceled) return;
-
-      const file = result.assets?.[0];
-      if (!file?.uri || !myId || !conversationId) return;
-
-      const fileType = guessType({ mimeType: file.mimeType, name: file.name });
-      const key = `uploads/${conversationId}/${Date.now()}-${(
-        file.name || "file"
-      ).replace(/\s+/g, "_")}`;
-
-      const blob = await fetch(file.uri).then((r) => r.blob());
-
-      await uploadData({
-        key,
-        data: blob,
-        options: { contentType: file.mimeType || undefined },
-      }).result;
-
-      const { data } = await client.graphql({
-        query: CreateMessage,
-        variables: {
-          input: {
-            conversationId,
-            senderId: myId,
-            memberIds: conversation.memberIds ?? [myId],
-            type: fileType,
-            mediaKey: key,
-          },
-        },
-        authMode: "userPool",
-      });
-
-      const created = data?.createMessage;
-      if (created) {
-        setMessages((prev) =>
-          prev.some((m) => m.id === created.id) ? prev : [...prev, created],
-        );
-        requestAnimationFrame(() =>
-          listRef.current?.scrollToEnd?.({ animated: true }),
-        );
-      }
-    } catch (e) {
-      console.log("[CHAT] attach error:", e);
-      Alert.alert("Upload failed", "Could not upload attachment.");
-    }
-  };
-
-  const roleForSender = (senderId, type) => {
-    if (type === "SYSTEM") return "SYSTEM";
-    const r = usersById?.[senderId]?.role;
-    return r || (senderId === myId ? "USER" : "USER");
-  };
-
-  const nameForSender = (senderId, type) => {
-    if (type === "SYSTEM") return "System";
-    const u = usersById?.[senderId];
-    return u?.displayName || u?.email || (senderId === myId ? "You" : "Member");
-  };
-
-  const bubbleStyleForRole = (isMine, role, type) => {
-    if (type === "SYSTEM") return [styles.bubble, styles.system];
-    if (isMine) return [styles.bubble, styles.mine];
-    switch (role) {
-      case "PATIENT":
-        return [styles.bubble, styles.patient];
-      case "PROVIDER":
-        return [styles.bubble, styles.provider];
-      case "ADVOCATE":
-        return [styles.bubble, styles.advocate];
-      default:
-        return [styles.bubble, styles.theirs];
-    }
-  };
-
-  const badgeStyleForRole = (role, type) => {
-    if (type === "SYSTEM") return [styles.badge, styles.badgeSystem];
-    switch (role) {
-      case "PATIENT":
-        return [styles.badge, styles.badgePatient];
-      case "PROVIDER":
-        return [styles.badge, styles.badgeProvider];
-      case "ADVOCATE":
-        return [styles.badge, styles.badgeAdvocate];
-      default:
-        return [styles.badge, styles.badgeOther];
-    }
-  };
-
-  function MediaBubble({ mediaKey, type }) {
-    const [url, setUrl] = useState(null);
-
-    useEffect(() => {
-      let mounted = true;
-      (async () => {
-        try {
-          const u = await getUrl({
-            key: mediaKey,
-            options: { expiresIn: 300 },
-          });
-          if (mounted) setUrl(u?.url?.toString?.() || null);
-        } catch (e) {
-          console.log("[CHAT] getUrl error:", e);
-        }
-      })();
-      return () => {
-        mounted = false;
-      };
-    }, [mediaKey]);
-
-    if (!url) {
-      return <Text style={{ opacity: 0.6 }}>Loading attachment…</Text>;
-    }
-
-    if (type === "IMAGE") {
-      return (
-        <Image
-          source={{ uri: url }}
-          style={{
-            width: 220,
-            height: 220,
-            borderRadius: 8,
-            backgroundColor: "#ddd",
-            marginTop: 6,
-          }}
-          resizeMode="cover"
-        />
-      );
-    }
-
-    const label = type === "VIDEO" ? "Open video" : "Open file";
-    return (
-      <TouchableOpacity
-        onPress={() => Linking.openURL(url)}
-        style={styles.attachBtn}
-      >
-        <Text style={styles.attachBtnText}>{label}</Text>
-      </TouchableOpacity>
+  useEffect(() => {
+    if (!conversationId) return;
+    requestAnimationFrame(() =>
+      listRef.current?.scrollToEnd?.({ animated: false }),
     );
-  }
+  }, [conversationId]);
 
-  const renderItem = ({ item }) => {
-    const isSystem = item.type === "SYSTEM";
-    const mine = item.senderId === myId;
-    const role = roleForSender(item.senderId, item.type);
-    const name = nameForSender(item.senderId, item.type);
-
-    if (isSystem) {
-      return (
-        <View style={styles.systemRow}>
-          <Text style={styles.systemText}>{item.body}</Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={bubbleStyleForRole(mine, role, item.type)}>
-        <View style={styles.headerRow}>
-          <Text style={styles.sender}>{name}</Text>
-          <Text style={badgeStyleForRole(role, item.type)}>{role}</Text>
-        </View>
-
-        {item.type === "TEXT" && !!item.body && (
-          <Text style={styles.body}>{item.body}</Text>
-        )}
-
-        {(item.type === "IMAGE" ||
-          item.type === "VIDEO" ||
-          item.type === "FILE") &&
-          !!item.mediaKey && (
-            <MediaBubble mediaKey={item.mediaKey} type={item.type} />
-          )}
-
-        <Text style={styles.meta}>
-          {new Date(item.createdAt ?? Date.now()).toLocaleTimeString()}
-        </Text>
-      </View>
-    );
-  };
-
-  const roleLabelMap = {
-    PATIENT: "Patient",
-    PROVIDER: "Provider",
-    ADVOCATE: "Advocate",
-    ADMIN: "Admin",
-  };
+  const roleLabelMap = useMemo(
+    () => ({
+      PATIENT: "Patient",
+      PROVIDER: "Provider",
+      ADVOCATE: "Advocate",
+      ADMIN: "Admin",
+    }),
+    [],
+  );
 
   const myDisplayName = currentUser?.displayName || "You";
   const myRoleLabel =
     roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Member";
 
+  const formatTime = useCallback((ts) => {
+    const d = new Date(ts ?? Date.now());
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }, []);
+
+  const formatDayLabel = useCallback((ts) => {
+    const date = new Date(ts ?? Date.now());
+
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    const sameDay = (a, b) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+
+    if (sameDay(date, today)) return "Today";
+    if (sameDay(date, yesterday)) return "Yesterday";
+
+    return date.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }, []);
+
+  const dayKey = (ts) => {
+    const d = new Date(ts ?? 0);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  };
+
+  const scrollToBottom = (animated = true) => {
+    requestAnimationFrame(() => listRef.current?.scrollToEnd?.({ animated }));
+  };
+
+  const handleAttach = useCallback(async () => {
+    if (Platform.OS === "web") {
+      globalThis.alert?.(
+        `${WEB_UPLOAD_UNAVAILABLE_TITLE}\n\n${WEB_UPLOAD_UNAVAILABLE_MESSAGE}`,
+      );
+      return;
+    }
+
+    try {
+      await attach();
+      scrollToBottom(true);
+    } catch (error) {
+      devLog("attach failed", error);
+      Alert.alert(
+        "Upload failed",
+        "Your attachment could not be uploaded. Please try again.",
+      );
+    }
+  }, [attach]);
+
+  const handleSend = useCallback(async () => {
+    try {
+      await send();
+      scrollToBottom(true);
+    } catch (error) {
+      devLog("send failed", error);
+      Alert.alert(
+        "Message not sent",
+        "Your message could not be sent. Please try again.",
+      );
+    }
+  }, [send]);
+
+  const handleStartCall = useCallback(() => {
+    if (Platform.OS === "web") {
+      globalThis.alert?.(
+        `${WEB_CALL_UNAVAILABLE_TITLE}\n\n${WEB_CALL_UNAVAILABLE_MESSAGE}`,
+      );
+      return;
+    }
+
+    navigation?.navigate?.("Call", {
+      conversation: conversationParam || {
+        id: conversationId,
+        memberIds,
+      },
+    });
+  }, [conversationId, conversationParam, memberIds, navigation]);
+
+  const renderItem = ({ item, index }) => {
+    const isSystem = item.type === "SYSTEM";
+    const mine = item.senderId === myId;
+    const role = roleForSender(item.senderId, item.type);
+    const name = nameForSender(item.senderId, item.type);
+
+    const prev = messages?.[index - 1] ?? null;
+
+    const itemDay = dayKey(item.createdAt);
+    const prevDay = prev ? dayKey(prev.createdAt) : null;
+
+    const showDateSeparator = !prev || prevDay !== itemDay;
+
+    return (
+      <>
+        {showDateSeparator ? (
+          <View style={styles.dateSeparatorRow}>
+            <View style={styles.dateSeparator}>
+              <Text style={styles.dateSeparatorText}>
+                {formatDayLabel(item.createdAt)}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {isSystem ? (
+          <View style={styles.systemRow}>
+            <View style={styles.systemPill}>
+              <Text style={styles.systemText}>{item.body}</Text>
+            </View>
+          </View>
+        ) : (
+          <View
+            style={bubbleStyleForRole(styles, {
+              isMine: mine,
+              role,
+              type: item.type,
+            })}
+          >
+            <View style={styles.headerRow}>
+              <Text style={styles.sender}>{name}</Text>
+              <Text
+                style={badgeStyleForRole(styles, {
+                  role,
+                  type: item.type,
+                })}
+              >
+                {role}
+              </Text>
+            </View>
+
+            {item.type === "TEXT" && !!item.body ? (
+              <Text style={styles.body}>{item.body}</Text>
+            ) : null}
+
+            {(item.type === "IMAGE" ||
+              item.type === "VIDEO" ||
+              item.type === "FILE") &&
+            !!item.mediaKey ? (
+              <MediaBubble mediaKey={item.mediaKey} type={item.type} />
+            ) : null}
+
+            <Text style={styles.meta}>{formatTime(item.createdAt)}</Text>
+          </View>
+        )}
+      </>
+    );
+  };
+
+  const canSend = !!text.trim() && !sending && !!myId;
+  const canStartCall = !!conversationId && !!myId;
+
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: "#fff" }}
+      style={styles.screen}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={0}
     >
-      {/* 🧑‍⚕️ Current user pill */}
       <View
         style={[
           styles.mePillRow,
-          { paddingTop: insets.top ? insets.top / 4 : 6 },
+          {
+            paddingTop: insets.top
+              ? Math.max(theme.space.xs, insets.top / 4)
+              : theme.space.xs,
+          },
         ]}
       >
         <Text style={styles.mePillName}>{myDisplayName}</Text>
@@ -489,175 +274,363 @@ export default function ChatScreen({ route, navigation }) {
         </View>
       </View>
 
+      <View style={styles.divider} />
+
       <FlatList
         ref={listRef}
         data={messages}
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
-        contentContainerStyle={{ padding: 12, paddingTop: 4 }}
-        onContentSizeChange={() =>
-          listRef.current?.scrollToEnd?.({ animated: true })
-        }
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        onContentSizeChange={() => scrollToBottom(true)}
       />
 
       <View
         style={[
-          styles.inputRow,
+          styles.inputWrap,
           {
-            paddingBottom: Math.max(12, insets.bottom || 0),
-            backgroundColor: "#fff",
+            paddingBottom: Math.max(theme.space.sm, insets.bottom || 0),
           },
         ]}
       >
-        <TouchableOpacity
-          accessibilityLabel="Start a video call"
-          style={styles.call}
-          onPress={() => navigation?.navigate?.("Call", { conversation })}
-        >
-          <Text style={styles.callIcon}>📞</Text>
-        </TouchableOpacity>
+        <View style={styles.inputRow}>
+          <TouchableOpacity
+            accessibilityLabel={
+              Platform.OS === "web"
+                ? "Video calls are mobile-only in this web demo"
+                : "Start a video call"
+            }
+            style={[
+              styles.iconButton,
+              styles.callButton,
+              !canStartCall && styles.iconButtonDisabled,
+            ]}
+            disabled={!canStartCall}
+            onPress={handleStartCall}
+            activeOpacity={0.85}
+          >
+            <Text style={[styles.iconButtonText, styles.callButtonText]}>
+              📞
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.attach} onPress={handleAttach}>
-          <Text style={styles.attachIcon}>+</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityLabel={
+              Platform.OS === "web"
+                ? "File uploads are mobile-only in this web demo"
+                : "Attach media"
+            }
+            style={styles.iconButton}
+            onPress={handleAttach}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.iconButtonText}>＋</Text>
+          </TouchableOpacity>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Type a message…"
-          value={text}
-          onChangeText={setText}
-          onSubmitEditing={handleSend}
-          returnKeyType="send"
-        />
-        <Button
-          title={sending ? "Sending…" : "Send"}
-          onPress={handleSend}
-          disabled={!text.trim() || sending || !myId}
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Type a message…"
+            placeholderTextColor={theme.colors.subtext}
+            value={text}
+            onChangeText={setText}
+            onSubmitEditing={handleSend}
+            returnKeyType="send"
+          />
+
+          <TouchableOpacity
+            style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
+            onPress={handleSend}
+            disabled={!canSend}
+            activeOpacity={0.85}
+          >
+            {sending ? (
+              <ActivityIndicator
+                size="small"
+                color={theme.colors.primaryText}
+              />
+            ) : (
+              <Text
+                style={[
+                  styles.sendButtonText,
+                  !canSend && styles.sendButtonTextDisabled,
+                ]}
+              >
+                Send
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: theme.colors.bg,
+  },
+
+  divider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.border,
+  },
+
+  listContent: {
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+    paddingBottom: theme.space.sm,
+  },
+
+  dateSeparatorRow: {
+    alignItems: "center",
+    marginTop: theme.space.sm,
+    marginBottom: theme.space.xs,
+  },
+
+  dateSeparator: {
+    backgroundColor: theme.colors.disabledBg,
+    paddingVertical: theme.space.xs / 2,
+    paddingHorizontal: theme.space.xs + 4,
+    borderRadius: theme.radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+
+  dateSeparatorText: {
+    ...theme.type.small,
+    color: theme.colors.muted,
+    fontWeight: "600",
+  },
+
   bubble: {
     maxWidth: "85%",
-    padding: 10,
-    borderRadius: 12,
-    marginVertical: 6,
+    padding: theme.space.xs,
+    borderRadius: theme.radius.md,
+    marginVertical: theme.space.xs / 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.card,
   },
-  mine: { alignSelf: "flex-end", backgroundColor: "#e8e8e8" },
-  theirs: { alignSelf: "flex-start", backgroundColor: "#EEE" },
-  patient: { alignSelf: "flex-start", backgroundColor: "#ffe6e6" },
-  provider: { alignSelf: "flex-start", backgroundColor: "#e6f0ff" },
-  advocate: { alignSelf: "flex-start", backgroundColor: "#e6ffef" },
+
+  mine: {
+    alignSelf: "flex-end",
+    backgroundColor: theme.colors.infoBg,
+    borderColor: theme.colors.border,
+  },
+
+  theirs: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.card,
+    borderColor: theme.colors.border,
+  },
+
+  patient: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.pillPatientBg,
+    borderColor: theme.colors.border,
+  },
+
+  provider: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.providerBg,
+    borderColor: theme.colors.border,
+  },
+
+  advocate: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.colors.advocateBg,
+    borderColor: theme.colors.border,
+  },
 
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginBottom: 2,
+    gap: theme.space.xs,
+    marginBottom: theme.space.xs / 2,
   },
-  sender: { fontSize: 12, fontWeight: "600", opacity: 0.9 },
+
+  sender: {
+    ...theme.type.small,
+    fontWeight: "600",
+    color: theme.colors.muted,
+  },
+
   badge: {
     fontSize: 10,
-    paddingHorizontal: 8,
+    paddingHorizontal: theme.space.xs,
     paddingVertical: 2,
-    borderRadius: 999,
+    borderRadius: theme.radius.pill,
     overflow: "hidden",
+    color: theme.colors.text,
   },
-  badgePatient: { backgroundColor: "#ffb3b3" },
-  badgeProvider: { backgroundColor: "#b3ccff" },
-  badgeAdvocate: { backgroundColor: "#bff5ce" },
-  badgeOther: { backgroundColor: "#ddd" },
 
-  body: { fontSize: 16 },
-  meta: { fontSize: 11, opacity: 0.7, marginTop: 4, textAlign: "right" },
+  badgePatient: {
+    backgroundColor: theme.colors.pillPatientBg,
+    color: theme.colors.pillPatientText,
+  },
 
-  systemRow: { alignSelf: "center", marginVertical: 6, maxWidth: "90%" },
-  system: {
+  badgeProvider: {
+    backgroundColor: theme.colors.pillProviderBg,
+    color: theme.colors.pillProviderText,
+  },
+
+  badgeAdvocate: {
+    backgroundColor: theme.colors.pillAdvocateBg,
+    color: theme.colors.pillAdvocateText,
+  },
+
+  badgeOther: {
+    backgroundColor: theme.colors.disabledBg,
+    color: theme.colors.disabledText,
+  },
+
+  body: {
+    ...theme.type.body,
+    color: theme.colors.text,
+  },
+
+  meta: {
+    ...theme.type.small,
+    color: theme.colors.subtext,
+    marginTop: theme.space.xs / 2,
+    textAlign: "right",
+  },
+
+  systemRow: {
     alignSelf: "center",
-    backgroundColor: "transparent",
-    paddingVertical: 2,
+    marginVertical: theme.space.xs,
+    maxWidth: "92%",
   },
-  badgeSystem: { backgroundColor: "#eee" },
-  systemText: { fontSize: 12, opacity: 0.7, textAlign: "center" },
+
+  systemPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.infoBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+
+  systemText: {
+    ...theme.type.small,
+    color: theme.colors.infoText,
+    textAlign: "center",
+  },
 
   mePillRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
-    paddingBottom: 4,
-    gap: 8,
-    backgroundColor: "#fff",
+    paddingHorizontal: theme.space.sm,
+    paddingBottom: theme.space.xs,
+    gap: theme.space.xs,
+    backgroundColor: theme.colors.bg,
   },
+
   mePillName: {
-    fontSize: 14,
+    ...theme.type.subtext,
     fontWeight: "600",
-    color: "#111827",
+    color: theme.colors.text,
   },
+
   mePillRole: {
     paddingHorizontal: 10,
     paddingVertical: 2,
-    borderRadius: 999,
-    backgroundColor: "#E5E7EB",
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.disabledBg,
   },
+
   mePillRoleText: {
     fontSize: 11,
-    fontWeight: "500",
-    color: "#374151",
+    fontWeight: "600",
+    color: theme.colors.muted,
+  },
+
+  inputWrap: {
+    backgroundColor: theme.colors.bg,
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
   },
 
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    padding: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ddd",
+    gap: theme.space.xs,
+    padding: theme.space.xs,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
   },
+
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: theme.radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.bg,
+  },
+
+  callButton: {
+    backgroundColor: theme.colors.successBg,
+    borderColor: theme.colors.border,
+  },
+
+  iconButtonDisabled: {
+    opacity: 0.45,
+  },
+
+  iconButtonText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+
+  callButtonText: {
+    color: theme.colors.successText,
+  },
+
   input: {
     flex: 1,
-    padding: 10,
+    minHeight: 40,
+    paddingVertical: theme.space.xs,
+    paddingHorizontal: theme.space.xs + 4,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ccc",
-    borderRadius: 10,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.bg,
+    color: theme.colors.text,
+    ...theme.type.body,
   },
-  attach: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ccc",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fafafa",
-    marginRight: 8,
-  },
-  attachIcon: {
-    fontSize: 20,
-    fontWeight: "700",
-  },
-  attachBtn: {
-    marginTop: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: "#f2f2f2",
-    alignSelf: "flex-start",
-  },
-  attachBtnText: { fontSize: 13, fontWeight: "600" },
 
-  call: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#ccc",
+  sendButton: {
+    minHeight: 40,
+    paddingHorizontal: theme.space.sm,
+    borderRadius: theme.radius.md,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#e8fff0",
-    marginRight: 6,
+    backgroundColor: theme.colors.primary,
+    minWidth: 72,
   },
-  callIcon: { fontSize: 18, fontWeight: "700" },
+
+  sendButtonDisabled: {
+    backgroundColor: theme.colors.disabledBg,
+  },
+
+  sendButtonText: {
+    ...theme.type.body,
+    color: theme.colors.primaryText,
+    fontWeight: "600",
+  },
+
+  sendButtonTextDisabled: {
+    color: theme.colors.disabledText,
+  },
 });

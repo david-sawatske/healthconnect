@@ -23,6 +23,42 @@
       },
       "providerPlugin": "awscloudformation",
       "service": "AppSync"
+    },
+    "seeding": {
+      "dependsOn": [
+        {
+          "attributes": [
+            "Name",
+            "Arn"
+          ],
+          "category": "function",
+          "resourceName": "adminSeedData"
+        },
+        {
+          "attributes": [
+            "UserPoolId"
+          ],
+          "category": "auth",
+          "resourceName": "healthconnect97a44150"
+        },
+        {
+          "attributes": [
+            "AdminGroupRole"
+          ],
+          "category": "auth",
+          "resourceName": "userPoolGroups"
+        },
+        {
+          "attributes": [
+            "Name",
+            "Arn"
+          ],
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "API Gateway"
     }
   },
   "auth": {
@@ -70,6 +106,34 @@
     }
   },
   "function": {
+    "adminManageUsers": {
+      "build": true,
+      "dependsOn": [
+        {
+          "attributes": [
+            "UserPoolId"
+          ],
+          "category": "auth",
+          "resourceName": "healthconnect97a44150"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
+    },
+    "adminSeedData": {
+      "build": true,
+      "dependsOn": [
+        {
+          "attributes": [
+            "UserPoolId"
+          ],
+          "category": "auth",
+          "resourceName": "healthconnect97a44150"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
+    },
     "approveInvite": {
       "build": true,
       "dependsOn": [
@@ -84,6 +148,311 @@
       ],
       "providerPlugin": "awscloudformation",
       "service": "Lambda"
+    },
+    "createAdvocateInviteGuarded": {
+      "build": true,
+      "dependsOn": [
+        {
+          "attributes": [
+            "GraphQLAPIIdOutput",
+            "GraphQLAPIEndpointOutput"
+          ],
+          "category": "api",
+          "resourceName": "healthconnect"
+        }
+      ],
+      "providerPlugin": "awscloudformation",
+      "service": "Lambda"
+    }
+  },
+  "parameters": {
+    "AMPLIFY_function_adminManageUsers_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableConversationParticipant": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableMessage": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableProviderPatient": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminManageUsers_tableUser": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminManageUsers"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_demoAdvocateEmail": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_demoPatientEmail": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_demoProviderEmail": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_forceRedeploy": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableCallSession": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableCallSignal": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableConversationParticipant": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableMessage": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableProviderPatient": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_adminSeedData_tableUser": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "adminSeedData"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableConversationParticipant": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_approveInvite_tableMessage": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "approveInvite"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_deploymentBucketName": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_s3Key": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_tableAdvocateAssignment": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_tableAdvocateInvite": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
+    },
+    "AMPLIFY_function_createAdvocateInviteGuarded_tableConversation": {
+      "usedBy": [
+        {
+          "category": "function",
+          "resourceName": "createAdvocateInviteGuarded"
+        }
+      ]
     }
   },
   "storage": {

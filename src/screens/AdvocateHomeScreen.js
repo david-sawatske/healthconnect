@@ -1,23 +1,36 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
   StyleSheet,
   ActivityIndicator,
-  TouchableOpacity,
   FlatList,
   RefreshControl,
+  TouchableOpacity,
+  Modal,
   Alert,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
-import { ensureDirectConversation } from "../utils/conversations";
+import PatientListItem from "../components/PatientListItem";
+import RolePill from "../components/RolePill";
+import { DeclineAdvocateInvite } from "../graphql/advocateInvites";
+import { ApproveInviteServer } from "../graphql/customMutations";
+import { theme } from "../ui/theme";
 
 const client = generateClient();
 
-const log = (...args) => console.log("[ADVOCATE_HOME]", ...args);
+const devLog = (...args) => {
+  if (__DEV__) console.log("[ADVOCATE_HOME]", ...args);
+};
 
 const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
   query ListMyAdvocateAssignments(
@@ -43,12 +56,85 @@ const LIST_MY_ADVOCATE_ASSIGNMENTS = /* GraphQL */ `
   }
 `;
 
+const LIST_MY_PENDING_ADVOCATE_INVITES = /* GraphQL */ `
+  query ListMyPendingAdvocateInvites(
+    $advocateId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    listAdvocateInvites(
+      filter: { advocateId: { eq: $advocateId }, status: { eq: PENDING } }
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        patientId
+        advocateId
+        conversationId
+        status
+        createdBy
+        approvedBy
+        approvedAt
+        createdAt
+        updatedAt
+      }
+      nextToken
+    }
+  }
+`;
+
 const GET_USER = /* GraphQL */ `
   query GetUser($id: ID!) {
     getUser(id: $id) {
       id
       displayName
       role
+      email
+    }
+  }
+`;
+
+const LIST_MY_CONVERSATIONS = /* GraphQL */ `
+  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
+    listConversations(
+      filter: { memberIds: { contains: $sub } }
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        title
+        memberIds
+        isGroup
+        createdAt
+        updatedAt
+        lastMessageAt
+      }
+      nextToken
+    }
+  }
+`;
+
+const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
+  query ConversationParticipantsByUser(
+    $userId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    conversationParticipantsByUser(
+      userId: $userId
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        conversationId
+        userId
+        lastReadAt
+        updatedAt
+      }
+      nextToken
     }
   }
 `;
@@ -64,11 +150,9 @@ const batchFetchUsers = async (ids) => {
         variables: { id },
         authMode: "userPool",
       });
-      if (data?.getUser) {
-        results[id] = data.getUser;
-      }
+      if (data?.getUser) results[id] = data.getUser;
     } catch (err) {
-      log("Failed to fetch user:", id, err);
+      devLog("Failed to fetch user:", id, err);
     }
   }
 
@@ -80,22 +164,71 @@ const AdvocateHomeScreen = () => {
   const insets = useSafeAreaInsets();
   const { currentUser, loadingCurrentUser } = useCurrentUser();
 
+  const advocateId = currentUser?.id ?? null;
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const [assignments, setAssignments] = useState([]);
+  const [pendingInvites, setPendingInvites] = useState([]);
+  const [loadingPendingInvites, setLoadingPendingInvites] = useState(false);
   const [nextToken, setNextToken] = useState(null);
-
   const [error, setError] = useState(null);
+
   const [patients, setPatients] = useState([]);
+  const [inviteUsersById, setInviteUsersById] = useState({});
 
-  const advocateId = currentUser?.id ?? null;
+  const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
+  const [loadingReads, setLoadingReads] = useState(false);
 
-  const processAssignments = async (assignmentsList) => {
+  const [directConvoByPatientId, setDirectConvoByPatientId] = useState({});
+  const [careTeamConvoByPairKey, setCareTeamConvoByPairKey] = useState({});
+
+  const [selectedInvite, setSelectedInvite] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [inviteBusy, setInviteBusy] = useState(false);
+
+  const assignmentsRef = useRef([]);
+  const nextTokenRef = useRef(null);
+
+  const lastReadAtRef = useRef({});
+  const directConvoRef = useRef({});
+  const careTeamConvoRef = useRef({});
+
+  useEffect(() => {
+    assignmentsRef.current = assignments;
+  }, [assignments]);
+
+  useEffect(() => {
+    nextTokenRef.current = nextToken;
+  }, [nextToken]);
+
+  useEffect(() => {
+    lastReadAtRef.current = lastReadAtByConvoId;
+  }, [lastReadAtByConvoId]);
+
+  useEffect(() => {
+    directConvoRef.current = directConvoByPatientId;
+  }, [directConvoByPatientId]);
+
+  useEffect(() => {
+    careTeamConvoRef.current = careTeamConvoByPairKey;
+  }, [careTeamConvoByPairKey]);
+
+  const displayName = currentUser?.displayName ?? "Advocate";
+
+  const closeInviteModal = useCallback(() => {
+    if (inviteBusy) return;
+    setModalVisible(false);
+    setSelectedInvite(null);
+  }, [inviteBusy]);
+
+  const processAssignments = useCallback(async (assignmentsList) => {
     try {
-      const activeAssignments = assignmentsList.filter(
+      const activeAssignments = (assignmentsList || []).filter(
         (a) => a.active !== false,
       );
+
       const patientIds = activeAssignments.map((a) => a.patientId);
       const providerIds = activeAssignments.map((a) => a.providerId);
       const allIds = [...patientIds, ...providerIds];
@@ -103,26 +236,33 @@ const AdvocateHomeScreen = () => {
       const userMap = await batchFetchUsers(allIds);
 
       const map = {};
-      assignmentsList.forEach((a) => {
+      activeAssignments.forEach((a) => {
         const pId = a.patientId;
-        if (!pId) return;
+        const prId = a.providerId;
+        if (!pId || !prId) return;
 
-        if (!map[pId]) {
-          map[pId] = {
+        const key = `${pId}#${prId}`;
+        if (!map[key]) {
+          map[key] = {
             patientId: pId,
             patientName: userMap[pId]?.displayName ?? "Unknown Patient",
-            providerId: a.providerId,
-            providerName: userMap[a.providerId]?.displayName ?? "No Provider",
+            providerId: prId,
+            providerName: userMap[prId]?.displayName ?? "Unknown Provider",
             createdAt: a.createdAt,
           };
         }
       });
 
-      setPatients(Object.values(map));
+      const rows = Object.values(map).sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+
+      setPatients(rows);
     } catch (err) {
-      log("Error processing assignments:", err);
+      devLog("Error processing assignments:", err);
     }
-  };
+  }, []);
 
   const fetchAssignments = useCallback(
     async ({ reset = false } = {}) => {
@@ -132,7 +272,7 @@ const AdvocateHomeScreen = () => {
         const variables = {
           advocateId,
           limit: 50,
-          nextToken: reset ? null : nextToken,
+          nextToken: reset ? null : nextTokenRef.current,
         };
 
         const { data } = await client.graphql({
@@ -144,25 +284,198 @@ const AdvocateHomeScreen = () => {
         const result = data?.listAdvocateAssignments;
         const newItems = result?.items ?? [];
 
-        const merged = reset ? newItems : [...assignments, ...newItems];
+        const merged = reset
+          ? newItems
+          : [...(assignmentsRef.current || []), ...newItems];
+
+        assignmentsRef.current = merged;
+        nextTokenRef.current = result?.nextToken ?? null;
+
         setAssignments(merged);
         setNextToken(result?.nextToken ?? null);
         setError(null);
 
         await processAssignments(merged);
       } catch (err) {
-        log("Error fetching assignments:", err);
+        devLog("Error fetching assignments:", err);
         setError("Unable to load your patients.");
       }
     },
-    [advocateId, nextToken, assignments],
+    [advocateId, processAssignments],
   );
+
+  const fetchPendingInvites = useCallback(async () => {
+    if (!advocateId) return;
+
+    setLoadingPendingInvites(true);
+
+    try {
+      let nt = null;
+      const all = [];
+
+      do {
+        const { data } = await client.graphql({
+          query: LIST_MY_PENDING_ADVOCATE_INVITES,
+          variables: {
+            advocateId,
+            limit: 100,
+            nextToken: nt,
+          },
+          authMode: "userPool",
+        });
+
+        const res = data?.listAdvocateInvites;
+        const items = res?.items || [];
+        nt = res?.nextToken || null;
+
+        all.push(...items);
+      } while (nt);
+
+      setPendingInvites(all);
+
+      const userIds = all.flatMap((invite) => [
+        invite.patientId,
+        invite.createdBy,
+      ]);
+
+      if (userIds.length > 0) {
+        const userMap = await batchFetchUsers(userIds);
+        setInviteUsersById(userMap);
+      } else {
+        setInviteUsersById({});
+      }
+    } catch (err) {
+      devLog("Error fetching pending invites:", err);
+    } finally {
+      setLoadingPendingInvites(false);
+    }
+  }, [advocateId]);
+
+  const readsInFlightRef = useRef(false);
+
+  const fetchMyReadState = useCallback(async () => {
+    if (!advocateId) return;
+    if (readsInFlightRef.current) return;
+
+    readsInFlightRef.current = true;
+    setLoadingReads(true);
+
+    try {
+      let next = null;
+      const map = {};
+
+      do {
+        const { data } = await client.graphql({
+          query: CONVERSATION_PARTICIPANTS_BY_USER,
+          variables: {
+            userId: advocateId,
+            limit: 200,
+            nextToken: next,
+          },
+          authMode: "userPool",
+        });
+
+        const res = data?.conversationParticipantsByUser;
+        const items = res?.items || [];
+        next = res?.nextToken || null;
+
+        items.forEach((p) => {
+          if (p?.conversationId) map[p.conversationId] = p.lastReadAt || null;
+        });
+      } while (next);
+
+      lastReadAtRef.current = map;
+      setLastReadAtByConvoId(map);
+    } catch (err) {
+      devLog("fetchMyReadState error:", err);
+      lastReadAtRef.current = {};
+      setLastReadAtByConvoId({});
+    } finally {
+      setLoadingReads(false);
+      readsInFlightRef.current = false;
+    }
+  }, [advocateId]);
+
+  const convosInFlightRef = useRef(false);
+
+  const fetchMyConversationsAndIndex = useCallback(async () => {
+    if (!advocateId) return;
+    if (convosInFlightRef.current) return;
+
+    convosInFlightRef.current = true;
+
+    try {
+      let nt = null;
+      const all = [];
+
+      do {
+        const { data } = await client.graphql({
+          query: LIST_MY_CONVERSATIONS,
+          variables: { sub: advocateId, limit: 200, nextToken: nt },
+          authMode: "userPool",
+        });
+
+        const res = data?.listConversations;
+        const items = res?.items || [];
+        nt = res?.nextToken || null;
+
+        all.push(...items);
+      } while (nt);
+
+      const directMap = {};
+      const groupConvos = [];
+
+      all.forEach((c) => {
+        if (!c) return;
+
+        if (c.isGroup === true) {
+          groupConvos.push(c);
+          return;
+        }
+
+        const memberIds = Array.isArray(c.memberIds) ? c.memberIds : [];
+        const otherIds = memberIds.filter((id) => id && id !== advocateId);
+        const otherId = otherIds[0] || null;
+        if (!otherId) return;
+
+        const existing = directMap[otherId];
+        if (!existing) {
+          directMap[otherId] = c;
+          return;
+        }
+
+        const a = new Date(
+          existing.lastMessageAt || existing.updatedAt || 0,
+        ).getTime();
+        const b = new Date(c.lastMessageAt || c.updatedAt || 0).getTime();
+        if (b > a) directMap[otherId] = c;
+      });
+
+      const groupById = {};
+      groupConvos.forEach((c) => {
+        if (c?.id) groupById[c.id] = c;
+      });
+
+      directConvoRef.current = directMap;
+      setDirectConvoByPatientId(directMap);
+
+      const careTeamMap = { __groupById: groupById };
+      careTeamConvoRef.current = careTeamMap;
+      setCareTeamConvoByPairKey(careTeamMap);
+    } catch (err) {
+      devLog("fetchMyConversationsAndIndex error:", err);
+      directConvoRef.current = {};
+      careTeamConvoRef.current = {};
+      setDirectConvoByPatientId({});
+      setCareTeamConvoByPairKey({});
+    } finally {
+      convosInFlightRef.current = false;
+    }
+  }, [advocateId]);
 
   useEffect(() => {
     if (!advocateId) {
-      if (!loadingCurrentUser && loading) {
-        setLoading(false);
-      }
+      if (!loadingCurrentUser) setLoading(false);
       return;
     }
 
@@ -171,7 +484,12 @@ const AdvocateHomeScreen = () => {
     const bootstrap = async () => {
       try {
         setLoading(true);
-        await fetchAssignments({ reset: true });
+        await Promise.all([
+          fetchAssignments({ reset: true }),
+          fetchPendingInvites(),
+          fetchMyReadState(),
+          fetchMyConversationsAndIndex(),
+        ]);
       } finally {
         if (isMounted) setLoading(false);
       }
@@ -182,100 +500,209 @@ const AdvocateHomeScreen = () => {
     return () => {
       isMounted = false;
     };
-  }, [advocateId, loadingCurrentUser]);
+  }, [
+    advocateId,
+    loadingCurrentUser,
+    fetchAssignments,
+    fetchPendingInvites,
+    fetchMyReadState,
+    fetchMyConversationsAndIndex,
+  ]);
 
-  const onRefresh = () => {
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchAssignments({ reset: true })
+
+    Promise.all([
+      fetchAssignments({ reset: true }).catch(() => {}),
+      fetchPendingInvites().catch(() => {}),
+      fetchMyReadState().catch(() => {}),
+      fetchMyConversationsAndIndex().catch(() => {}),
+    ])
       .catch(() => {})
       .finally(() => setRefreshing(false));
-  };
+  }, [
+    fetchAssignments,
+    fetchPendingInvites,
+    fetchMyReadState,
+    fetchMyConversationsAndIndex,
+  ]);
 
   const loadMore = () => {
-    if (nextToken && !loading) {
+    if (nextTokenRef.current && !loading) {
       fetchAssignments({ reset: false }).catch(() => {});
     }
   };
 
-  const handleOpenPatient = (patient) => {
-    navigation.navigate("PatientDetail", {
-      patientId: patient.patientId,
-      patientName: patient.patientName,
-      providerId: patient.providerId,
-      advocateId,
-      fromRole: "ADVOCATE",
-    });
-  };
+  const focusStaleRef = useRef({ lastAt: 0 });
 
-  const handleMessagePatient = useCallback(
-    async (patient) => {
-      if (!patient?.patientId || !advocateId) {
-        Alert.alert("Error", "Missing user information to start a chat.");
-        return;
-      }
+  useFocusEffect(
+    useCallback(() => {
+      if (!advocateId) return;
 
-      try {
-        const conversation = await ensureDirectConversation({
-          currentUserId: advocateId,
-          memberIds: [advocateId, patient.patientId],
-          title: `${currentUser?.displayName || "Advocate"} ↔ ${
-            patient.patientName || "Patient"
-          }`,
-        });
+      const now = Date.now();
+      const STALE_MS = 15000;
 
-        navigation.navigate("Chat", {
-          conversationId: conversation.id,
-          conversation,
-          title:
-            conversation.title ||
-            patient.patientName ||
-            "Advocate–Patient Conversation",
-        });
-      } catch (err) {
-        log("handleMessagePatient error:", err);
-        Alert.alert(
-          "Unable to open chat",
-          "Something went wrong while opening the conversation.",
-        );
-      }
+      if (now - focusStaleRef.current.lastAt < STALE_MS) return;
+
+      focusStaleRef.current.lastAt = now;
+
+      fetchMyReadState();
+      fetchMyConversationsAndIndex();
+
+      return () => {};
+    }, [advocateId, fetchMyReadState, fetchMyConversationsAndIndex]),
+  );
+
+  const handleOpenPatient = useCallback(
+    (patient) => {
+      navigation.navigate("PatientDetail", {
+        patientId: patient.patientId,
+        patientName: patient.patientName,
+        providerId: patient.providerId,
+        advocateId,
+        fromRole: "ADVOCATE",
+      });
     },
-    [advocateId, currentUser?.displayName, navigation],
+    [navigation, advocateId],
   );
 
-  const renderPatientItem = ({ item }) => (
-    <View style={styles.patientCard}>
-      <TouchableOpacity
-        onPress={() => handleOpenPatient(item)}
-        style={styles.patientInfo}
-      >
-        <Text style={styles.patientName}>{item.patientName}</Text>
-        <Text style={styles.patientMeta}>Provider: {item.providerName}</Text>
-        <Text style={styles.patientMeta}>
-          Added: {new Date(item.createdAt).toLocaleString()}
-        </Text>
-      </TouchableOpacity>
+  const pendingInviteRows = useMemo(() => {
+    return [...pendingInvites]
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt || 0).getTime() -
+          new Date(a.createdAt || 0).getTime(),
+      )
+      .map((invite) => ({
+        ...invite,
+        patientName:
+          inviteUsersById[invite.patientId]?.displayName || "Unknown Patient",
+        providerName:
+          inviteUsersById[invite.createdBy]?.displayName || "Unknown Provider",
+      }));
+  }, [pendingInvites, inviteUsersById]);
 
-      <View style={styles.cardRight}>
-        <TouchableOpacity
-          style={styles.messageButton}
-          onPress={() => handleMessagePatient(item)}
-        >
-          <Text style={styles.messageButtonText}>Message</Text>
-        </TouchableOpacity>
+  const computeUnreadForRow = useCallback(
+    (row) => {
+      const directConvo = directConvoRef.current?.[row.patientId] || null;
+
+      const groupById = careTeamConvoRef.current?.__groupById || {};
+      const candidateGroups = Object.values(groupById);
+
+      const careTeamConvo =
+        candidateGroups.find((c) => {
+          const ids = Array.isArray(c?.memberIds) ? c.memberIds : [];
+          return (
+            c?.isGroup === true &&
+            ids.includes(advocateId) &&
+            ids.includes(row.patientId) &&
+            ids.includes(row.providerId)
+          );
+        }) || null;
+
+      const convos = [directConvo, careTeamConvo].filter(Boolean);
+
+      const unreadForConvo = (c) => {
+        const lastMsgAt = c?.lastMessageAt || null;
+        if (!lastMsgAt) return false;
+
+        const lastReadAt = lastReadAtRef.current?.[c.id] || null;
+
+        return (
+          !lastReadAt ||
+          new Date(lastReadAt).getTime() < new Date(lastMsgAt).getTime()
+        );
+      };
+
+      return convos.some(unreadForConvo);
+    },
+    [advocateId],
+  );
+
+  const handleAcceptInvite = useCallback(async () => {
+    if (!selectedInvite?.id) return;
+
+    try {
+      setInviteBusy(true);
+
+      const res = await client.graphql({
+        query: ApproveInviteServer,
+        variables: { inviteId: selectedInvite.id },
+        authMode: "userPool",
+      });
+
+      devLog("Approve invite success:", res);
+
+      setModalVisible(false);
+      setSelectedInvite(null);
+
+      await Promise.all([
+        fetchPendingInvites(),
+        fetchAssignments({ reset: true }),
+        fetchMyReadState(),
+        fetchMyConversationsAndIndex(),
+      ]);
+    } catch (err) {
+      devLog("Accept invite failed:", err);
+      Alert.alert("Error", "Failed to accept invite.");
+    } finally {
+      setInviteBusy(false);
+    }
+  }, [
+    selectedInvite,
+    fetchPendingInvites,
+    fetchAssignments,
+    fetchMyReadState,
+    fetchMyConversationsAndIndex,
+  ]);
+
+  const handleDeclineInvite = useCallback(async () => {
+    if (!selectedInvite?.id) return;
+
+    try {
+      setInviteBusy(true);
+
+      const res = await client.graphql({
+        query: DeclineAdvocateInvite,
+        variables: {
+          input: {
+            id: selectedInvite.id,
+            status: "DECLINED",
+          },
+        },
+        authMode: "userPool",
+      });
+
+      devLog("Decline invite success:", res);
+
+      setModalVisible(false);
+      setSelectedInvite(null);
+
+      await fetchPendingInvites();
+    } catch (err) {
+      devLog("Decline invite failed:", err);
+      Alert.alert("Error", "Failed to decline invite.");
+    } finally {
+      setInviteBusy(false);
+    }
+  }, [selectedInvite, fetchPendingInvites]);
+
+  const renderPatientItem = ({ item }) => {
+    const subtitle = `Provider: ${item.providerName || "Unknown Provider"}`;
+    const isUnread = computeUnreadForRow(item);
+
+    return (
+      <View style={{ marginBottom: theme.space.xs }}>
+        <PatientListItem
+          name={item.patientName || "Patient"}
+          subtitle={subtitle}
+          unread={isUnread}
+          onPress={() => handleOpenPatient(item)}
+          testID={`patient-${item.patientId}-${item.providerId}`}
+        />
       </View>
-    </View>
-  );
-
-  const roleLabelMap = {
-    PATIENT: "Patient",
-    PROVIDER: "Provider",
-    ADVOCATE: "Advocate",
-    ADMIN: "Admin",
+    );
   };
-
-  const displayName = currentUser?.displayName ?? "Advocate";
-  const roleLabel =
-    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Advocate";
 
   const showGlobalLoader =
     (loading || loadingCurrentUser) && !refreshing && !patients.length;
@@ -290,32 +717,59 @@ const AdvocateHomeScreen = () => {
   }
 
   return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top, paddingBottom: insets.bottom },
-      ]}
-    >
+    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View>
-            <Text style={styles.greeting}>Hi, {displayName}</Text>
-            <Text style={styles.subGreeting}>{roleLabel}</Text>
-          </View>
-          <View style={styles.rolePill}>
-            <Text style={styles.rolePillText}>{roleLabel}</Text>
-          </View>
+        <View>
+          <Text style={styles.greeting}>Hi, {displayName}</Text>
         </View>
-        <Text style={styles.headerSubtitle}>
-          Your assigned patients and their providers
-        </Text>
+
+        <RolePill role="ADVOCATE" />
       </View>
 
-      {error && (
+      {error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      )}
+      ) : null}
+
+      <View style={styles.pendingSection}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>Pending Invites</Text>
+          {loadingPendingInvites ? <ActivityIndicator size="small" /> : null}
+        </View>
+
+        {pendingInviteRows.length === 0 ? (
+          <Text style={styles.emptyText}>No pending invites right now.</Text>
+        ) : (
+          pendingInviteRows.map((invite) => (
+            <TouchableOpacity
+              key={invite.id}
+              style={styles.inviteCard}
+              onPress={() => {
+                setSelectedInvite(invite);
+                setModalVisible(true);
+              }}
+              activeOpacity={0.85}
+            >
+              <View style={styles.inviteCardTop}>
+                <Text style={styles.invitePatientName} numberOfLines={1}>
+                  {invite.patientName}
+                </Text>
+                <View style={styles.pendingPill}>
+                  <Text style={styles.pendingPillText}>Pending</Text>
+                </View>
+              </View>
+
+              <Text style={styles.inviteMeta} numberOfLines={1}>
+                Provider: {invite.providerName}
+              </Text>
+              <Text style={styles.inviteMeta} numberOfLines={1}>
+                Sent: {new Date(invite.createdAt).toLocaleDateString()}
+              </Text>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>My Patients</Text>
@@ -327,16 +781,75 @@ const AdvocateHomeScreen = () => {
         ) : (
           <FlatList
             data={patients}
-            keyExtractor={(item) => item.patientId}
+            keyExtractor={(item) => `${item.patientId}#${item.providerId}`}
             renderItem={renderPatientItem}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
             }
             onEndReached={loadMore}
             onEndReachedThreshold={0.4}
+            contentContainerStyle={{ paddingBottom: theme.space.sm }}
           />
         )}
       </View>
+
+      {loadingReads ? (
+        <View style={styles.readsSpinner}>
+          <ActivityIndicator size="small" />
+        </View>
+      ) : null}
+
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeInviteModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Care Team Invite</Text>
+
+            <Text style={styles.modalText}>
+              {selectedInvite?.patientName || "Unknown Patient"}
+            </Text>
+
+            <Text style={styles.modalSubtext}>
+              Invited by {selectedInvite?.providerName || "Unknown Provider"}
+            </Text>
+
+            {inviteBusy ? (
+              <ActivityIndicator style={styles.modalSpinner} />
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.acceptBtn}
+                  onPress={handleAcceptInvite}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.acceptText}>Accept</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.declineBtn}
+                  onPress={handleDeclineInvite}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.declineText}>Decline</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={closeInviteModal}
+              disabled={inviteBusy}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -346,106 +859,200 @@ export default AdvocateHomeScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F7FB",
-    paddingHorizontal: 16,
+    backgroundColor: theme.colors.bg,
+    paddingHorizontal: theme.space.sm,
   },
+
   header: {
-    marginBottom: 16,
-    marginTop: 8,
-  },
-  headerTopRow: {
+    marginBottom: theme.space.sm,
+    marginTop: theme.space.xs,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 4,
+    justifyContent: "space-between",
   },
+
   greeting: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
+    ...theme.type.h2,
   },
-  subGreeting: {
-    fontSize: 14,
-    color: "#6B7280",
-    marginTop: 2,
-  },
-  rolePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    backgroundColor: "#FFFFFF",
-  },
-  rolePillText: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: "#374151",
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: "#6B7280",
-  },
+
   errorBox: {
-    backgroundColor: "#FEE2E2",
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 12,
+    backgroundColor: theme.colors.dangerBg,
+    padding: theme.space.sm,
+    borderRadius: theme.radius.md,
+    marginBottom: theme.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
   },
+
   errorText: {
-    color: "#B91C1C",
+    ...theme.type.subtext,
+    color: theme.colors.dangerText,
   },
+
+  pendingSection: {
+    marginBottom: theme.space.md,
+  },
+
   section: {
     flex: 1,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 8,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: "#6B7280",
-  },
-  patientCard: {
-    backgroundColor: "#FFF",
-    padding: 12,
-    borderRadius: 10,
-    marginBottom: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+
+  sectionHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: theme.space.xs,
   },
-  patientInfo: {
+
+  sectionTitle: {
+    ...theme.type.h3,
+    marginBottom: theme.space.xs,
+  },
+
+  emptyText: {
+    ...theme.type.subtext,
+  },
+
+  loadingText: {
+    ...theme.type.subtext,
+    marginTop: theme.space.xs,
+  },
+
+  inviteCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: theme.space.xs,
+    ...theme.shadow.card,
+  },
+
+  inviteCardTop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  invitePatientName: {
     flex: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    color: theme.colors.text,
   },
-  patientName: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  patientMeta: {
-    fontSize: 12,
-    color: "#6B7280",
+
+  inviteMeta: {
     marginTop: 4,
+    fontSize: 12,
+    color: theme.colors.subtext,
   },
-  cardRight: {
-    marginLeft: 8,
-  },
-  messageButton: {
+
+  pendingPill: {
     paddingHorizontal: 10,
     paddingVertical: 6,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.infoBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+
+  pendingPillText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.infoText,
+  },
+
+  readsSpinner: {
+    position: "absolute",
+    right: theme.space.sm,
+    bottom: theme.space.sm,
+    backgroundColor: theme.colors.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
     borderRadius: 999,
-    backgroundColor: "#2563EB",
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
   },
-  messageButtonText: {
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    padding: 20,
+  },
+
+  modalCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.lg,
+    padding: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
+  },
+
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 8,
+    color: theme.colors.text,
+  },
+
+  modalText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+
+  modalSubtext: {
     fontSize: 13,
-    fontWeight: "600",
-    color: "#FFFFFF",
+    color: theme.colors.subtext,
+    marginTop: 4,
+    marginBottom: 16,
   },
-  loadingText: {
-    marginTop: 8,
-    color: "#6B7280",
+
+  modalSpinner: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+
+  acceptBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+
+  acceptText: {
+    color: theme.colors.primaryText || "#FFFFFF",
+    textAlign: "center",
+    fontWeight: "700",
+  },
+
+  declineBtn: {
+    backgroundColor: theme.colors.dangerBg,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+
+  declineText: {
+    color: theme.colors.dangerText,
+    textAlign: "center",
+    fontWeight: "700",
+  },
+
+  cancelBtn: {
+    marginTop: 12,
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+
+  cancelText: {
+    color: theme.colors.subtext,
+    fontWeight: "600",
   },
 });

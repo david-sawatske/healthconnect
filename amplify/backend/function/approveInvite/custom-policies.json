@@ -1,6 +1,13 @@
 [
   {
-    "Action": [],
-    "Resource": []
+    "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:PutItem"],
+    "Resource": [
+      "arn:aws:dynamodb:*:*:table/AdvocateInvite-*",
+      "arn:aws:dynamodb:*:*:table/Conversation-*",
+      "arn:aws:dynamodb:*:*:table/AdvocateAssignment-*",
+      "arn:aws:dynamodb:*:*:table/ConversationParticipant-*",
+      "arn:aws:dynamodb:*:*:table/Message-*"
+    ],
+    "Effect": "Allow"
   }
 ]

@@ -1,6 +1,6 @@
 import { a, defineData, type ClientSchema } from '@aws-amplify/backend';
 
-const schema = a.schema({}); // we'll add models later
+const schema = a.schema({});
 
 export type Schema = ClientSchema<typeof schema>;
 

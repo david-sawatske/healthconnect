@@ -6,28 +6,52 @@
 Amplify Params - DO NOT EDIT */
 "use strict";
 
+const crypto = require("crypto");
+
 const {
   DynamoDBClient,
   GetItemCommand,
-  UpdateItemCommand,
+  TransactWriteItemsCommand,
 } = require("@aws-sdk/client-dynamodb");
-const ddb = new DynamoDBClient({ region: process.env.AWS_REGION });
 
-const crypto = require("crypto");
-function uuid() {
-  return crypto.randomUUID
-    ? crypto.randomUUID()
-    : [4, 2, 2, 2, 6]
-        .map((n, i) => crypto.randomBytes(n).toString("hex"))
-        .join("-");
+const ddb = new DynamoDBClient({
+  region: process.env.AWS_REGION || process.env.REGION,
+});
+
+const {
+  TABLE_ADVOCATE_INVITE,
+  TABLE_CONVERSATION,
+  TABLE_ADVOCATE_ASSIGNMENT,
+  TABLE_CONVERSATION_PARTICIPANT,
+  TABLE_MESSAGE,
+} = process.env;
+
+function requireEnv(name, value) {
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
 }
 
-const INVITE_TABLE = "AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev";
-const CONVO_TABLE = "Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev";
+const INVITE_TABLE = requireEnv("TABLE_ADVOCATE_INVITE", TABLE_ADVOCATE_INVITE);
+const CONVO_TABLE = requireEnv("TABLE_CONVERSATION", TABLE_CONVERSATION);
+const ADVOCATE_ASSIGNMENT_TABLE = requireEnv(
+  "TABLE_ADVOCATE_ASSIGNMENT",
+  TABLE_ADVOCATE_ASSIGNMENT,
+);
+const CONVO_PARTICIPANT_TABLE = requireEnv(
+  "TABLE_CONVERSATION_PARTICIPANT",
+  TABLE_CONVERSATION_PARTICIPANT,
+);
+const MESSAGE_TABLE = requireEnv("TABLE_MESSAGE", TABLE_MESSAGE);
 
 function unmarshallStringArray(attr) {
   if (!attr || !attr.L) return [];
   return attr.L.map((x) => x.S);
+}
+
+function makeClientRequestToken(input) {
+  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 36);
 }
 
 exports.handler = async (event) => {
@@ -46,6 +70,7 @@ exports.handler = async (event) => {
         Key: { id: { S: inviteId } },
       }),
     );
+
     const inv = inviteRes.Item;
     if (!inv) throw new Error("Invite not found");
 
@@ -53,10 +78,13 @@ exports.handler = async (event) => {
     const patientId = inv.patientId?.S;
     const status = inv.status?.S;
     const conversationId = inv.conversationId?.S;
+    const providerId = inv.providerId?.S;
 
     if (advocateId !== sub) throw new Error("Unauthorized: wrong advocate");
     if (status !== "PENDING") throw new Error(`Invalid status: ${status}`);
     if (!conversationId) throw new Error("Invite missing conversationId");
+    if (!providerId) throw new Error("Invite missing providerId");
+    if (!patientId) throw new Error("Invite missing patientId");
 
     const convoRes = await ddb.send(
       new GetItemCommand({
@@ -64,6 +92,7 @@ exports.handler = async (event) => {
         Key: { id: { S: conversationId } },
       }),
     );
+
     const convo = convoRes.Item;
     if (!convo) throw new Error("Conversation not found");
 
@@ -71,54 +100,102 @@ exports.handler = async (event) => {
     const unique = Array.from(
       new Set([...(existingMembers || []), advocateId]),
     );
-    const memberIdsList = { L: unique.map((v) => ({ S: v })) };
+
+    const existingMemberIdsList = {
+      L: (existingMembers || []).map((v) => ({ S: v })),
+    };
+
+    const memberIdsList = {
+      L: unique.map((v) => ({ S: v })),
+    };
 
     const now = new Date().toISOString();
+    const assignmentId = `PA:${patientId}:PR:${providerId}:ADV:${advocateId}`;
+    const participantId = `${conversationId}:${advocateId}`;
+    const msgId = `SYS:INVITE_APPROVED:${inviteId}`;
+    const clientRequestToken = makeClientRequestToken(inviteId);
 
     await ddb.send(
-      new UpdateItemCommand({
-        TableName: CONVO_TABLE,
-        Key: { id: { S: conversationId } },
-        UpdateExpression: "SET memberIds = :m, updatedAt = :u",
-        ExpressionAttributeValues: {
-          ":m": memberIdsList,
-          ":u": { S: now },
-        },
-      }),
-    );
-
-    await ddb.send(
-      new UpdateItemCommand({
-        TableName: INVITE_TABLE,
-        Key: { id: { S: inviteId } },
-        ConditionExpression: "#s = :p",
-        UpdateExpression:
-          "SET #s = :a, approvedBy = :by, approvedAt = :t, updatedAt = :u",
-        ExpressionAttributeNames: { "#s": "status" },
-        ExpressionAttributeValues: {
-          ":p": { S: "PENDING" },
-          ":a": { S: "APPROVED" },
-          ":by": { S: advocateId },
-          ":t": { S: now },
-          ":u": { S: now },
-        },
-      }),
-    );
-
-    const msgId = uuid();
-    await ddb.send(
-      new (require("@aws-sdk/client-dynamodb").PutItemCommand)({
-        TableName: "Message-5izqvjgcw5e5zdbimlgzknen3m-dev",
-        Item: {
-          id: { S: msgId },
-          conversationId: { S: conversationId },
-          senderId: { S: "system" }, // informational
-          memberIds: { L: memberIdsList.L }, // current members (includes advocate)
-          type: { S: "SYSTEM" },
-          body: { S: "An advocate has joined the conversation." },
-          createdAt: { S: now },
-          updatedAt: { S: now },
-        },
+      new TransactWriteItemsCommand({
+        ClientRequestToken: clientRequestToken,
+        TransactItems: [
+          {
+            Update: {
+              TableName: INVITE_TABLE,
+              Key: { id: { S: inviteId } },
+              ConditionExpression: "#s = :p",
+              UpdateExpression:
+                "SET #s = :a, approvedBy = :by, approvedAt = :t, updatedAt = :u",
+              ExpressionAttributeNames: {
+                "#s": "status",
+              },
+              ExpressionAttributeValues: {
+                ":p": { S: "PENDING" },
+                ":a": { S: "APPROVED" },
+                ":by": { S: advocateId },
+                ":t": { S: now },
+                ":u": { S: now },
+              },
+            },
+          },
+          {
+            Update: {
+              TableName: CONVO_TABLE,
+              Key: { id: { S: conversationId } },
+              ConditionExpression: "memberIds = :expectedMembers",
+              UpdateExpression: "SET memberIds = :m, updatedAt = :u",
+              ExpressionAttributeValues: {
+                ":expectedMembers": existingMemberIdsList,
+                ":m": memberIdsList,
+                ":u": { S: now },
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: ADVOCATE_ASSIGNMENT_TABLE,
+              ConditionExpression: "attribute_not_exists(id)",
+              Item: {
+                id: { S: assignmentId },
+                patientId: { S: patientId },
+                providerId: { S: providerId },
+                advocateId: { S: advocateId },
+                active: { BOOL: true },
+                createdAt: { S: now },
+                updatedAt: { S: now },
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: CONVO_PARTICIPANT_TABLE,
+              ConditionExpression: "attribute_not_exists(id)",
+              Item: {
+                id: { S: participantId },
+                userId: { S: advocateId },
+                conversationId: { S: conversationId },
+                createdAt: { S: now },
+                updatedAt: { S: now },
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: MESSAGE_TABLE,
+              ConditionExpression: "attribute_not_exists(id)",
+              Item: {
+                id: { S: msgId },
+                conversationId: { S: conversationId },
+                senderId: { S: "system" },
+                memberIds: memberIdsList,
+                type: { S: "SYSTEM" },
+                body: { S: "An advocate has joined the conversation." },
+                createdAt: { S: now },
+                updatedAt: { S: now },
+              },
+            },
+          },
+        ],
       }),
     );
 

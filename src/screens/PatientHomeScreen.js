@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -9,16 +9,24 @@ import {
   RefreshControl,
   Alert,
 } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { generateClient } from "aws-amplify/api";
 import { useCurrentUser } from "../context/CurrentUserContext";
+import ConversationListItem from "../components/ConversationListItem";
+import RolePill from "../components/RolePill";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
-} from "../utils/conversations";
+} from "../features/chat/conversationService";
+
+import { theme } from "../ui/theme";
 
 const client = generateClient();
+
+const devLog = (...args) => {
+  if (__DEV__) console.log("[PATIENT_HOME]", ...args);
+};
 
 const LIST_MY_CONVERSATIONS = /* GraphQL */ `
   query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
@@ -32,8 +40,33 @@ const LIST_MY_CONVERSATIONS = /* GraphQL */ `
         title
         memberIds
         createdAt
+        updatedAt
         isGroup
         createdBy
+        lastMessageAt
+      }
+      nextToken
+    }
+  }
+`;
+
+const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
+  query ConversationParticipantsByUser(
+    $userId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    conversationParticipantsByUser(
+      userId: $userId
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        conversationId
+        userId
+        lastReadAt
+        updatedAt
       }
       nextToken
     }
@@ -65,35 +98,251 @@ const GET_USER = /* GraphQL */ `
   }
 `;
 
+const LAST_MESSAGE_BY_CONVERSATION = /* GraphQL */ `
+  query LastMessageByConversation($conversationId: ID!, $limit: Int) {
+    messagesByConversation(
+      conversationId: $conversationId
+      sortDirection: DESC
+      limit: $limit
+    ) {
+      items {
+        id
+        type
+        body
+        senderId
+        createdAt
+      }
+    }
+  }
+`;
+
 const PAGE_SIZE = 20;
+const PREVIEW_COUNT = 20;
+
+function uniq(arr) {
+  return [...new Set((arr || []).filter(Boolean))];
+}
+
+function getUserDisplay(user) {
+  return user?.displayName || user?.email || null;
+}
+
+function getConversationTitle({ conversation, currentUserId, usersById }) {
+  if (conversation?.title) return conversation.title;
+
+  const memberIds = Array.isArray(conversation?.memberIds)
+    ? conversation.memberIds
+    : [];
+
+  const otherIds = memberIds.filter((id) => id && id !== currentUserId);
+
+  if (!conversation?.isGroup) {
+    if (otherIds.length === 1) {
+      return getUserDisplay(usersById[otherIds[0]]) || "Conversation";
+    }
+    return "Conversation";
+  }
+
+  const names = otherIds
+    .map((id) => getUserDisplay(usersById[id]))
+    .filter(Boolean);
+
+  if (names.length) return names.join(", ");
+
+  return "Conversation";
+}
 
 const PatientHomeScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { currentUser, loadingCurrentUser } = useCurrentUser();
 
+  const [activeTab, setActiveTab] = useState("conversations");
+
   const [conversations, setConversations] = useState([]);
   const [nextToken, setNextToken] = useState(null);
 
   const [careTeamLoading, setCareTeamLoading] = useState(false);
   const [careTeamError, setCareTeamError] = useState(null);
-  const [providerUser, setProviderUser] = useState(null);
-  const [advocates, setAdvocates] = useState([]);
+  const [careTeams, setCareTeams] = useState([]);
 
   const [loadingConvos, setLoadingConvos] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
-  const roleLabelMap = {
-    PATIENT: "Patient",
-    PROVIDER: "Provider",
-    ADVOCATE: "Advocate",
-    ADMIN: "Admin",
-  };
+  const [lastMessageByConvo, setLastMessageByConvo] = useState({});
+  const [loadingLastByConvo, setLoadingLastByConvo] = useState({});
+
+  const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
+  const [loadingReads, setLoadingReads] = useState(false);
+  const [expandedProviders, setExpandedProviders] = useState(() => new Set());
+
+  const [usersById, setUsersById] = useState({});
+
+  const lastMessageRef = useRef({});
+  const loadingLastRef = useRef({});
+  const lastReadAtRef = useRef({});
+  const usersByIdRef = useRef({});
+
+  useEffect(() => {
+    lastMessageRef.current = lastMessageByConvo;
+  }, [lastMessageByConvo]);
+
+  useEffect(() => {
+    loadingLastRef.current = loadingLastByConvo;
+  }, [loadingLastByConvo]);
+
+  useEffect(() => {
+    lastReadAtRef.current = lastReadAtByConvoId;
+  }, [lastReadAtByConvoId]);
+
+  useEffect(() => {
+    usersByIdRef.current = usersById;
+  }, [usersById]);
 
   const username = currentUser?.displayName || "Patient";
-  const roleLabel =
-    roleLabelMap[currentUser?.role] ?? currentUser?.role ?? "Patient";
+
+  const getLastActivityTs = useCallback((c) => {
+    return c?.lastMessageAt || c?.updatedAt || c?.createdAt || 0;
+  }, []);
+
+  const sortByLastActivity = useCallback(
+    (arr) => {
+      return [...arr].sort((a, b) => {
+        const at = new Date(getLastActivityTs(a)).getTime();
+        const bt = new Date(getLastActivityTs(b)).getTime();
+        return bt - at;
+      });
+    },
+    [getLastActivityTs],
+  );
+
+  const fetchUserMapForIds = useCallback(async (ids) => {
+    const uniqueIds = uniq(ids).filter((id) => !usersByIdRef.current[id]);
+    if (!uniqueIds.length) return;
+
+    try {
+      const results = await Promise.all(
+        uniqueIds.map(async (id) => {
+          try {
+            const { data } = await client.graphql({
+              query: GET_USER,
+              variables: { id },
+              authMode: "userPool",
+            });
+            return data?.getUser || null;
+          } catch (err) {
+            console.log("[PATIENT_HOME] Error fetching user:", id, err);
+            return null;
+          }
+        }),
+      );
+
+      const map = {};
+      results.forEach((u) => {
+        if (u?.id) map[u.id] = u;
+      });
+
+      if (Object.keys(map).length) {
+        setUsersById((prev) => ({ ...prev, ...map }));
+      }
+    } catch (err) {
+      console.log("[PATIENT_HOME] fetchUserMapForIds error:", err);
+    }
+  }, []);
+
+  const fetchLastMessage = useCallback(async (conversationId) => {
+    if (!conversationId) return;
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        lastMessageRef.current,
+        conversationId,
+      )
+    ) {
+      return;
+    }
+    if (loadingLastRef.current?.[conversationId]) return;
+
+    loadingLastRef.current = {
+      ...loadingLastRef.current,
+      [conversationId]: true,
+    };
+    setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: true }));
+
+    try {
+      const { data } = await client.graphql({
+        query: LAST_MESSAGE_BY_CONVERSATION,
+        variables: { conversationId, limit: 1 },
+        authMode: "userPool",
+      });
+
+      const items = data?.messagesByConversation?.items || [];
+      const last = items[0] || null;
+
+      lastMessageRef.current = {
+        ...lastMessageRef.current,
+        [conversationId]: last,
+      };
+      setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: last }));
+    } catch (err) {
+      console.log(
+        "[PATIENT_HOME] fetchLastMessage error:",
+        conversationId,
+        err,
+      );
+      lastMessageRef.current = {
+        ...lastMessageRef.current,
+        [conversationId]: null,
+      };
+      setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: null }));
+    } finally {
+      loadingLastRef.current = {
+        ...loadingLastRef.current,
+        [conversationId]: false,
+      };
+      setLoadingLastByConvo((prev) => ({ ...prev, [conversationId]: false }));
+    }
+  }, []);
+
+  const fetchMyReadState = useCallback(async () => {
+    if (!currentUser?.id) return;
+
+    setLoadingReads(true);
+    try {
+      let next = null;
+      const map = {};
+
+      do {
+        const { data } = await client.graphql({
+          query: CONVERSATION_PARTICIPANTS_BY_USER,
+          variables: {
+            userId: currentUser.id,
+            limit: 200,
+            nextToken: next,
+          },
+          authMode: "userPool",
+        });
+
+        const res = data?.conversationParticipantsByUser;
+        const items = res?.items || [];
+        next = res?.nextToken || null;
+
+        items.forEach((p) => {
+          if (p?.conversationId) map[p.conversationId] = p.lastReadAt || null;
+        });
+      } while (next);
+
+      lastReadAtRef.current = map;
+      setLastReadAtByConvoId(map);
+    } catch (err) {
+      console.log("[PATIENT_HOME] fetchMyReadState error:", err);
+      lastReadAtRef.current = {};
+      setLastReadAtByConvoId({});
+    } finally {
+      setLoadingReads(false);
+    }
+  }, [currentUser?.id]);
 
   const fetchConversations = useCallback(
     async ({ reset = false } = {}) => {
@@ -118,7 +367,11 @@ const PatientHomeScreen = () => {
         const result = data?.listConversations;
         const newItems = result?.items || [];
 
-        setConversations((prev) => (reset ? newItems : [...prev, ...newItems]));
+        setConversations((prev) => {
+          const merged = reset ? newItems : [...prev, ...newItems];
+          return sortByLastActivity(merged);
+        });
+
         setNextToken(result?.nextToken || null);
       } catch (err) {
         console.log("[PATIENT_HOME] Error fetching conversations:", err);
@@ -128,7 +381,7 @@ const PatientHomeScreen = () => {
         setRefreshing(false);
       }
     },
-    [currentUser?.id, nextToken],
+    [currentUser?.id, nextToken, sortByLastActivity],
   );
 
   const fetchCareTeam = useCallback(async () => {
@@ -147,63 +400,121 @@ const PatientHomeScreen = () => {
       const assignments = data?.advocateAssignmentsByPatient?.items || [];
 
       if (!assignments.length) {
-        setProviderUser(null);
-        setAdvocates([]);
+        setCareTeams([]);
         return;
       }
 
-      const providerIds = [
-        ...new Set(assignments.map((a) => a.providerId).filter(Boolean)),
-      ];
-      const advocateIds = [
-        ...new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
-      ];
+      const providerToAdvocates = new Map();
 
-      const fetchUser = async (id) => {
-        try {
-          const { data } = await client.graphql({
-            query: GET_USER,
-            variables: { id },
-            authMode: "userPool",
-          });
-          return data?.getUser || null;
-        } catch (err) {
-          console.log("[PATIENT_HOME] Error fetching user:", err);
-          return null;
+      assignments.forEach((a) => {
+        if (!a?.providerId) return;
+        if (!providerToAdvocates.has(a.providerId)) {
+          providerToAdvocates.set(a.providerId, new Set());
         }
+        if (a.advocateId) {
+          providerToAdvocates.get(a.providerId).add(a.advocateId);
+        }
+      });
+
+      const providerIds = Array.from(providerToAdvocates.keys()).filter(
+        Boolean,
+      );
+      const advocateIds = Array.from(
+        new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
+      );
+
+      const allIds = Array.from(new Set([...providerIds, ...advocateIds]));
+      await fetchUserMapForIds(allIds);
+
+      const mergedUsers = {
+        ...usersByIdRef.current,
       };
 
-      const provider =
-        providerIds.length > 0 ? await fetchUser(providerIds[0]) : null;
+      const teams = providerIds
+        .map((providerId) => {
+          const providerUser = mergedUsers[providerId] || null;
+          const advocatesForProvider = Array.from(
+            providerToAdvocates.get(providerId) || [],
+          )
+            .map((advId) => mergedUsers[advId])
+            .filter(Boolean);
 
-      const advocateUsers = (
-        await Promise.all(advocateIds.map(fetchUser))
-      ).filter(Boolean);
+          return {
+            providerId,
+            providerUser,
+            advocates: advocatesForProvider,
+          };
+        })
+        .sort((a, b) => {
+          const an = (a.providerUser?.displayName || "").toLowerCase();
+          const bn = (b.providerUser?.displayName || "").toLowerCase();
+          return an.localeCompare(bn);
+        });
 
-      setProviderUser(provider);
-      setAdvocates(advocateUsers);
+      setCareTeams(teams);
     } catch (err) {
       console.log("[PATIENT_HOME] Error fetching care team:", err);
       setCareTeamError("Unable to load your care team.");
+      setCareTeams([]);
     } finally {
       setCareTeamLoading(false);
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, fetchUserMapForIds]);
+
+  const toggleProviderExpanded = useCallback((providerId) => {
+    if (!providerId) return;
+    setExpandedProviders((prev) => {
+      const next = new Set(prev);
+      if (next.has(providerId)) next.delete(providerId);
+      else next.add(providerId);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!currentUser?.id) return;
-
     fetchConversations({ reset: true });
+    fetchMyReadState();
     fetchCareTeam();
-  }, [currentUser?.id, fetchConversations, fetchCareTeam]);
+  }, [currentUser?.id, fetchConversations, fetchMyReadState, fetchCareTeam]);
+
+  useEffect(() => {
+    if (!conversations.length) return;
+
+    conversations
+      .slice(0, PREVIEW_COUNT)
+      .forEach((c) => fetchLastMessage(c.id));
+
+    const idsToLoad = uniq(conversations.flatMap((c) => c.memberIds || []));
+    fetchUserMapForIds(idsToLoad);
+  }, [conversations, fetchLastMessage, fetchUserMapForIds]);
 
   const onRefresh = useCallback(() => {
     if (!currentUser?.id) return;
 
     setRefreshing(true);
+
+    lastMessageRef.current = {};
+    loadingLastRef.current = {};
+    setLastMessageByConvo({});
+    setLoadingLastByConvo({});
+
     fetchConversations({ reset: true });
+    fetchMyReadState();
     fetchCareTeam();
-  }, [currentUser?.id, fetchConversations, fetchCareTeam]);
+  }, [currentUser?.id, fetchConversations, fetchMyReadState, fetchCareTeam]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!currentUser?.id) return;
+
+      fetchConversations({ reset: true });
+      fetchMyReadState();
+      fetchCareTeam();
+
+      return () => {};
+    }, [currentUser?.id, fetchConversations, fetchMyReadState, fetchCareTeam]),
+  );
 
   const loadMore = () => {
     if (!nextToken || loadingConvos) return;
@@ -214,7 +525,11 @@ const PatientHomeScreen = () => {
     navigation.navigate("Chat", {
       conversationId: conversation.id,
       conversation,
-      title: conversation.title || "Conversation",
+      title: getConversationTitle({
+        conversation,
+        currentUserId: currentUser?.id,
+        usersById: usersByIdRef.current,
+      }),
     });
   };
 
@@ -233,243 +548,363 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           if (prev.some((c) => c.id === conversation.id)) return prev;
-          return [conversation, ...prev];
+          return sortByLastActivity([conversation, ...prev]);
         });
 
         navigation.navigate("Chat", {
           conversationId: conversation.id,
           conversation,
           title:
-            conversation.title ||
+            getConversationTitle({
+              conversation,
+              currentUserId: currentUser.id,
+              usersById: {
+                ...usersByIdRef.current,
+                [targetUser.id]: targetUser,
+              },
+            }) ||
             targetUser.displayName ||
             "Care Team Conversation",
         });
       } catch (err) {
-        console.log("[PATIENT_HOME] handleOpenCareTeamChat error:", err);
+        devLog("handleOpenCareTeamChat error:", err);
         Alert.alert(
           "Unable to open chat",
           "Something went wrong while opening the conversation.",
         );
       }
     },
-    [currentUser?.id, currentUser?.displayName, navigation],
+    [currentUser?.id, currentUser?.displayName, navigation, sortByLastActivity],
   );
 
-  const canMessageCareTeam = !!providerUser?.id && advocates.length > 0;
+  const handleOpenCareTeamGroupChat = useCallback(
+    async ({ providerId, providerName, advocateIds }) => {
+      if (!currentUser?.id) return;
+      if (!providerId) return;
 
-  const handleOpenCareTeamGroupChat = useCallback(async () => {
-    if (!currentUser?.id) return;
-    if (!providerUser?.id || advocates.length === 0) return;
+      try {
+        const conversation = await ensureCareTeamConversation({
+          currentUserId: currentUser.id,
+          patientId: currentUser.id,
+          providerId,
+          advocateIds,
+          title: `Care Team: ${currentUser.displayName || "Patient"} • ${
+            providerName || "Provider"
+          }`,
+        });
 
-    try {
-      const conversation = await ensureCareTeamConversation({
-        currentUserId: currentUser.id,
-        patientId: currentUser.id,
-        providerId: providerUser.id,
-        advocateIds: advocates.map((a) => a.id).filter(Boolean),
-        title: `Care Team: ${currentUser.displayName || "Patient"}`,
-      });
+        setConversations((prev) => {
+          if (prev.some((c) => c.id === conversation.id)) return prev;
+          return sortByLastActivity([conversation, ...prev]);
+        });
 
-      setConversations((prev) => {
-        if (prev.some((c) => c.id === conversation.id)) return prev;
-        return [conversation, ...prev];
-      });
-
-      navigation.navigate("Chat", {
-        conversationId: conversation.id,
-        conversation,
-        title: conversation.title || "Care Team Chat",
-      });
-    } catch (err) {
-      console.log("[PATIENT_HOME] handleOpenCareTeamGroupChat error:", err);
-      Alert.alert(
-        "Unable to open care team chat",
-        "Something went wrong while opening the care team conversation.",
-      );
-    }
-  }, [
-    currentUser?.id,
-    currentUser?.displayName,
-    providerUser?.id,
-    advocates,
-    navigation,
-  ]);
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title: getConversationTitle({
+            conversation,
+            currentUserId: currentUser.id,
+            usersById: usersByIdRef.current,
+          }),
+        });
+      } catch (err) {
+        devLog("handleOpenCareTeamGroupChat error:", err);
+        Alert.alert(
+          "Unable to open care team chat",
+          "Something went wrong while opening the care team conversation.",
+        );
+      }
+    },
+    [currentUser?.id, currentUser?.displayName, navigation, sortByLastActivity],
+  );
 
   const hasConversations = conversations.length > 0;
   const showGlobalLoader = loadingCurrentUser && !hasConversations;
 
-  return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 8 },
-      ]}
-    >
+  const hasAnyCareTeams = careTeams.length > 0;
+
+  const Header = (
+    <>
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Welcome back,</Text>
           <Text style={styles.username}>{username}</Text>
         </View>
-        <View style={styles.rolePill}>
-          <Text style={styles.rolePillText}>{roleLabel}</Text>
-        </View>
+
+        <RolePill role={currentUser?.role} />
       </View>
 
-      {error && (
+      {error ? (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      )}
-
-      {/* Care Team */}
-      <View style={styles.sectionHeaderRow}>
-        <Text style={styles.sectionTitle}>My Care Team</Text>
-        {careTeamLoading && (
-          <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
-        )}
-      </View>
-
-      {careTeamError && (
-        <Text style={styles.sectionErrorText}>{careTeamError}</Text>
-      )}
-
-      {providerUser || advocates.length > 0 ? (
-        <View style={styles.careTeamContainer}>
-          {/* ✅ NEW: Care Team group chat CTA */}
-          {canMessageCareTeam && (
-            <View style={styles.careTeamTopCTA}>
-              <TouchableOpacity
-                style={styles.careTeamCTAButton}
-                onPress={handleOpenCareTeamGroupChat}
-              >
-                <Text style={styles.careTeamCTAButtonText}>
-                  Message Care Team
-                </Text>
-              </TouchableOpacity>
-              <Text style={styles.careTeamCTASubtitle}>
-                Includes your provider + all active advocates.
-              </Text>
-            </View>
-          )}
-
-          {/* Provider */}
-          {providerUser && (
-            <View style={styles.careCard}>
-              <View style={styles.careCardHeader}>
-                <Text style={styles.careName}>
-                  {providerUser.displayName || "Provider"}
-                </Text>
-                <Text style={[styles.careRoleBadge, styles.providerBadge]}>
-                  Provider
-                </Text>
-              </View>
-              <Text style={styles.careSubtitle}>
-                Primary provider for your care.
-              </Text>
-              <TouchableOpacity
-                style={styles.careButton}
-                onPress={() => handleOpenCareTeamChat(providerUser)}
-              >
-                <Text style={styles.careButtonText}>Open Chat</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Advocates */}
-          {advocates.length > 0 && (
-            <View style={styles.careSubsection}>
-              <Text style={styles.careSubsectionTitle}>Advocates</Text>
-              {advocates.map((adv) => (
-                <View key={adv.id} style={styles.careCard}>
-                  <View style={styles.careCardHeader}>
-                    <Text style={styles.careName}>
-                      {adv.displayName || "Advocate"}
-                    </Text>
-                    <Text style={[styles.careRoleBadge, styles.advocateBadge]}>
-                      Advocate
-                    </Text>
-                  </View>
-                  <Text style={styles.careSubtitle}>
-                    Supports you in communicating with your providers.
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.careButton}
-                    onPress={() => handleOpenCareTeamChat(adv)}
-                  >
-                    <Text style={styles.careButtonText}>Open Chat</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      ) : !careTeamLoading ? (
-        <View style={styles.emptyCareTeam}>
-          <Text style={styles.emptyCareTitle}>No care team yet</Text>
-          <Text style={styles.emptyCareBody}>
-            Once a provider assigns themselves or an advocate, they’ll appear
-            here.
-          </Text>
-        </View>
       ) : null}
 
-      <View style={styles.sectionDivider} />
+      <View style={styles.segmentWrap}>
+        <TouchableOpacity
+          style={[
+            styles.segmentBtn,
+            activeTab === "conversations" && styles.segmentBtnActive,
+          ]}
+          onPress={() => setActiveTab("conversations")}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              activeTab === "conversations" && styles.segmentTextActive,
+            ]}
+          >
+            Conversations
+          </Text>
+        </TouchableOpacity>
 
-      {/* Conversations */}
-      {showGlobalLoader ? (
+        <TouchableOpacity
+          style={[
+            styles.segmentBtn,
+            activeTab === "careTeam" && styles.segmentBtnActive,
+          ]}
+          onPress={() => setActiveTab("careTeam")}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              activeTab === "careTeam" && styles.segmentTextActive,
+            ]}
+          >
+            Care Team
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  const renderCareTeam = () => {
+    const renderTeamItem = ({ item: team }) => {
+      const providerName =
+        team.providerUser?.displayName ||
+        team.providerUser?.email ||
+        "Provider";
+
+      const advocateIds = (team.advocates || [])
+        .map((a) => a.id)
+        .filter(Boolean);
+      const canMessageTeam = !!team.providerId && advocateIds.length > 0;
+
+      const isExpanded = expandedProviders.has(team.providerId);
+      const advocateCount = team.advocates?.length || 0;
+
+      return (
+        <View style={styles.providerCard}>
+          <View style={styles.providerTopRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.providerName} numberOfLines={1}>
+                {providerName}
+              </Text>
+            </View>
+
+            <Text style={[styles.badge, styles.providerBadge]}>Provider</Text>
+          </View>
+
+          <View style={styles.actionsRow}>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={() =>
+                handleOpenCareTeamChat(
+                  team.providerUser || {
+                    id: team.providerId,
+                    displayName: providerName,
+                  },
+                )
+              }
+            >
+              <Text style={styles.primaryBtnText}>Message</Text>
+            </TouchableOpacity>
+
+            {canMessageTeam ? (
+              <TouchableOpacity
+                style={styles.secondaryBtn}
+                onPress={() =>
+                  handleOpenCareTeamGroupChat({
+                    providerId: team.providerId,
+                    providerName,
+                    advocateIds,
+                  })
+                }
+              >
+                <Text style={styles.secondaryBtnText}>Care Team Chat</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.disabledPill}>
+                <Text style={styles.disabledPillText}>
+                  Add advocate to enable group
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {advocateCount > 0 ? (
+            <TouchableOpacity
+              style={styles.advocatesHeaderRow}
+              onPress={() => toggleProviderExpanded(team.providerId)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.advocatesHeaderRowText}>
+                Advocates ({advocateCount})
+              </Text>
+
+              <Text style={styles.chevronText}>{isExpanded ? "▴" : "▾"}</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {isExpanded && advocateCount > 0 ? (
+            <View style={styles.advocatesWrap}>
+              {team.advocates.map((adv) => (
+                <TouchableOpacity
+                  key={adv.id}
+                  style={styles.advocateRow}
+                  onPress={() => handleOpenCareTeamChat(adv)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.advocateName} numberOfLines={1}>
+                      {adv.displayName || adv.email || "Advocate"}
+                    </Text>
+                    <Text style={styles.advocateHint} numberOfLines={1}>
+                      Tap to message
+                    </Text>
+                  </View>
+
+                  <Text style={[styles.badge, styles.advocateBadge]}>
+                    Advocate
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      );
+    };
+
+    return (
+      <View style={{ paddingBottom: 0 }}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>My Care Team</Text>
+          {careTeamLoading ? (
+            <ActivityIndicator size="small" style={{ marginLeft: 8 }} />
+          ) : null}
+        </View>
+
+        {careTeamError ? (
+          <Text style={styles.sectionErrorText}>{careTeamError}</Text>
+        ) : null}
+
+        {hasAnyCareTeams ? (
+          <FlatList
+            data={careTeams}
+            keyExtractor={(t) => t.providerId}
+            renderItem={renderTeamItem}
+            contentContainerStyle={{ paddingBottom: 16 }}
+          />
+        ) : !careTeamLoading ? (
+          <View style={styles.emptyInfo}>
+            <Text style={styles.emptyInfoTitle}>No care team yet</Text>
+            <Text style={styles.emptyInfoBody}>
+              Once a provider assigns themselves or an advocate, they’ll appear
+              here.
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  if (showGlobalLoader) {
+    return (
+      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+        {Header}
         <View style={styles.centered}>
           <ActivityIndicator size="large" />
           <Text style={styles.loadingText}>Loading your home…</Text>
         </View>
-      ) : (
-        <>
-          <Text style={styles.sectionTitle}>
-            My Conversations
-            {hasConversations ? ` (${conversations.length})` : ""}
-          </Text>
+      </View>
+    );
+  }
 
-          {hasConversations ? (
-            <FlatList
-              data={conversations}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.conversationCard}
-                  onPress={() => handleOpenConversation(item)}
-                >
-                  <Text style={styles.conversationTitle}>
-                    {item.title || "Conversation"}
-                  </Text>
-                  <Text style={styles.conversationMeta}>
-                    {item.createdAt
-                      ? new Date(item.createdAt).toLocaleString()
-                      : "No timestamp"}
-                  </Text>
-                </TouchableOpacity>
-              )}
-              contentContainerStyle={styles.listContent}
-              refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-              }
-              onEndReached={loadMore}
-              onEndReachedThreshold={0.5}
-              ListFooterComponent={
-                loadingConvos && !refreshing ? (
-                  <ActivityIndicator style={{ marginVertical: 12 }} />
-                ) : null
-              }
+  if (activeTab === "careTeam") {
+    return (
+      <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+        {Header}
+        {renderCareTeam()}
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.container, { paddingBottom: insets.bottom }]}>
+      <FlatList
+        data={conversations}
+        keyExtractor={(item) => item.id}
+        ListHeaderComponent={Header}
+        renderItem={({ item }) => {
+          const last = lastMessageByConvo[item.id];
+          const lastLoading = loadingLastByConvo[item.id];
+
+          const preview = lastLoading
+            ? "Loading preview…"
+            : last?.type === "SYSTEM"
+              ? last?.body || "System update"
+              : last?.body || "No messages yet";
+
+          const ts = getLastActivityTs(item);
+
+          const lastReadAt = lastReadAtRef.current?.[item.id] || null;
+          const lastMsgAt = item?.lastMessageAt || null;
+
+          const isUnread =
+            !!lastMsgAt &&
+            (!lastReadAt ||
+              new Date(lastReadAt).getTime() < new Date(lastMsgAt).getTime());
+
+          const title = getConversationTitle({
+            conversation: item,
+            currentUserId: currentUser?.id,
+            usersById,
+          });
+
+          return (
+            <ConversationListItem
+              title={title}
+              preview={preview}
+              timestamp={ts}
+              unread={isUnread}
+              onPress={() => handleOpenConversation(item)}
+              testID={`conversation-${item.id}`}
             />
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>No conversations yet</Text>
-              <Text style={styles.emptyBody}>
-                When someone starts a conversation with you, it will appear
-                here.
-              </Text>
-            </View>
-          )}
-        </>
-      )}
+          );
+        }}
+        contentContainerStyle={[styles.listContent, { paddingBottom: 16 }]}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListEmptyComponent={
+          <View style={styles.emptyInfo}>
+            <Text style={styles.emptyInfoTitle}>No conversations yet</Text>
+            <Text style={styles.emptyInfoBody}>
+              When someone starts a conversation with you, it will appear here.
+            </Text>
+          </View>
+        }
+        ListFooterComponent={
+          loadingConvos && !refreshing ? (
+            <ActivityIndicator style={{ marginVertical: 12 }} />
+          ) : null
+        }
+      />
+      {loadingReads ? (
+        <View style={styles.readsSpinner}>
+          <ActivityIndicator size="small" />
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -479,223 +914,247 @@ export default PatientHomeScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 16,
-    backgroundColor: "#F7F8FA",
+    paddingHorizontal: theme.space.lg,
+    backgroundColor: theme.colors.bg,
   },
+
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: theme.space.md,
+    marginTop: theme.space.sm,
   },
-  greeting: {
-    fontSize: 16,
-    color: "#666",
-  },
+
   username: {
-    fontSize: 22,
     fontWeight: "700",
-    color: "#111827",
+    color: theme.colors.text,
   },
-  rolePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#E0F2FE",
+
+  errorBanner: {
+    backgroundColor: theme.colors.dangerBg,
+    padding: theme.space.sm,
+    borderRadius: theme.radius.sm,
+    marginBottom: theme.space.sm,
   },
-  rolePillText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0369A1",
+  errorText: {
+    ...theme.type.subtext,
+    color: theme.colors.dangerText,
+  },
+
+  segmentWrap: {
+    flexDirection: "row",
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+    marginBottom: theme.space.md,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: theme.space.xs,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentBtnActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  segmentText: {
+    fontWeight: "700",
+    color: theme.colors.text,
+  },
+  segmentTextActive: {
+    color: theme.colors.primaryText,
   },
 
   sectionHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 4,
+    marginBottom: theme.space.xs,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 4,
-    color: "#111827",
-  },
-  sectionDivider: {
-    height: 1,
-    backgroundColor: "#E5E7EB",
-    marginVertical: 12,
+    ...theme.type.h2,
   },
   sectionErrorText: {
-    fontSize: 12,
-    color: "#B91C1C",
-    marginBottom: 4,
-  },
-
-  careTeamContainer: {
-    marginBottom: 8,
-  },
-
-  careTeamTopCTA: {
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#EFF6FF",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#BFDBFE",
-    marginBottom: 10,
-  },
-  careTeamCTAButton: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#1D4ED8",
-  },
-  careTeamCTAButtonText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  careTeamCTASubtitle: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#475569",
-  },
-
-  careCard: {
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-    marginBottom: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-  },
-  careCardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  careName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-  },
-  careRoleBadge: {
-    fontSize: 11,
-    fontWeight: "600",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-  },
-  providerBadge: {
-    backgroundColor: "#DBEAFE",
-    color: "#1D4ED8",
-  },
-  advocateBadge: {
-    backgroundColor: "#ECFDF5",
-    color: "#15803D",
-  },
-  careSubtitle: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginBottom: 8,
-  },
-  careButton: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#2563EB",
-  },
-  careButtonText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
-  careSubsection: {
-    marginTop: 4,
-  },
-  careSubsectionTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
-    marginBottom: 4,
-  },
-  emptyCareTeam: {
-    marginTop: 4,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#EFF6FF",
-  },
-  emptyCareTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#1D4ED8",
-    marginBottom: 2,
-  },
-  emptyCareBody: {
-    fontSize: 13,
-    color: "#4B5563",
+    ...theme.type.subtext,
+    color: theme.colors.dangerText,
+    marginBottom: theme.space.xs,
   },
 
   listContent: {
-    paddingBottom: 16,
-  },
-  conversationCard: {
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: "#FFFFFF",
-    marginBottom: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-  },
-  conversationTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
-  conversationMeta: {
-    fontSize: 12,
-    color: "#6B7280",
-  },
-
-  errorBanner: {
-    backgroundColor: "#FEE2E2",
-    padding: 8,
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  errorText: {
-    color: "#B91C1C",
-    fontSize: 12,
+    paddingBottom: theme.space.sm,
   },
 
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    paddingTop: theme.space.md,
   },
   loadingText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: "#6B7280",
+    ...theme.type.subtext,
+    marginTop: theme.space.xs,
   },
 
-  emptyState: {
-    marginTop: 12,
+  emptyInfo: {
+    marginTop: theme.space.sm,
     padding: 16,
-    borderRadius: 12,
-    backgroundColor: "#EFF6FF",
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.infoBg,
   },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#1D4ED8",
-    marginBottom: 4,
+  emptyInfoTitle: {
+    ...theme.type.h3,
+    color: theme.colors.infoText,
+    marginBottom: theme.space.xs,
   },
-  emptyBody: {
-    fontSize: 13,
+  emptyInfoBody: {
     color: "#4B5563",
+  },
+
+  readsSpinner: {
+    position: "absolute",
+    right: theme.space.sm,
+    bottom: theme.space.sm,
+    backgroundColor: theme.colors.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: theme.space.xs,
+  },
+
+  providerCard: {
+    padding: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.card,
+    marginBottom: theme.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
+  },
+
+  providerTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.space.sm,
+    marginBottom: theme.space.sm,
+  },
+
+  providerName: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  badge: {
+    fontSize: 11,
+    fontWeight: "700",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: theme.radius.pill,
+  },
+  providerBadge: {
+    backgroundColor: theme.colors.providerBg,
+    color: theme.colors.providerText,
+  },
+  advocateBadge: {
+    backgroundColor: theme.colors.advocateBg,
+    color: theme.colors.advocateText,
+  },
+
+  actionsRow: {
+    flexDirection: "row",
+    gap: theme.space.xs,
+    flexWrap: "wrap",
+    marginTop: theme.space.xs,
+  },
+  primaryBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.primary,
+  },
+  primaryBtnText: {
+    fontWeight: "800",
+    color: theme.colors.primaryText,
+  },
+  secondaryBtn: {
+    alignSelf: "flex-start",
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.infoText,
+  },
+  secondaryBtnText: {
+    fontWeight: "800",
+    color: theme.colors.primaryText,
+  },
+
+  disabledPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: theme.space.xs,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.border,
+  },
+  disabledPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.muted,
+  },
+
+  advocatesWrap: {
+    marginTop: theme.space.md,
+    paddingTop: theme.space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+  },
+
+  advocateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.space.sm,
+    paddingVertical: theme.space.xs,
+    paddingHorizontal: 10,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.bg,
+    marginBottom: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+  },
+
+  advocateName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  advocateHint: {
+    marginTop: 2,
+    fontSize: 12,
+    color: theme.colors.subtext,
+  },
+
+  advocatesHeaderRow: {
+    marginTop: theme.space.sm,
+    paddingTop: theme.space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  advocatesHeaderRowText: {
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  chevronText: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: theme.colors.subtext,
   },
 });
