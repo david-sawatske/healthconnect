@@ -28,6 +28,20 @@ const devLog = (...args) => {
   if (__DEV__) console.log("[ADMIN_HOME]", ...args);
 };
 
+const ADMIN_TAB = {
+  USERS: "USERS",
+  PATIENT_PROVIDER: "PATIENT_PROVIDER",
+  ADVOCATE_INVITES: "ADVOCATE_INVITES",
+  DEV: "DEV",
+};
+
+const ADMIN_TABS = [
+  { label: "Users", value: ADMIN_TAB.USERS },
+  { label: "Patient–Provider", value: ADMIN_TAB.PATIENT_PROVIDER },
+  { label: "Advocate Invites", value: ADMIN_TAB.ADVOCATE_INVITES },
+  { label: "Dev", value: ADMIN_TAB.DEV },
+];
+
 const CREATE_USER_ROLES = [
   { label: "Patient", value: "PATIENT" },
   { label: "Provider", value: "PROVIDER" },
@@ -55,6 +69,43 @@ const getUserSubLabel = (user) => {
   const parts = [user?.email, user?.id].filter(Boolean);
   return parts.join(" • ");
 };
+
+function AdminTabBar({ activeTab, onChangeTab, disabled }) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.tabScrollContent}
+      style={styles.tabScroll}
+    >
+      {ADMIN_TABS.map((tab) => {
+        const active = activeTab === tab.value;
+
+        return (
+          <Pressable
+            key={tab.value}
+            onPress={() => onChangeTab(tab.value)}
+            disabled={disabled}
+            style={[
+              styles.tabButton,
+              active ? styles.tabButtonActive : null,
+              disabled ? styles.disabled : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.tabButtonText,
+                active ? styles.tabButtonTextActive : null,
+              ]}
+            >
+              {tab.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
 
 function StepHeader({ number, title, complete, active, onEdit }) {
   return (
@@ -151,6 +202,8 @@ function CollapsedSelection({ label, user }) {
 }
 
 export default function AdminHomeScreen() {
+  const [activeTab, setActiveTab] = useState(ADMIN_TAB.USERS);
+
   const [loadingSeed, setLoadingSeed] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
@@ -578,32 +631,36 @@ export default function AdminHomeScreen() {
 
     return (
       <View style={styles.createUserStack}>
-        <View style={styles.roleRow}>
-          {CREATE_USER_ROLES.map((role) => {
-            const selected = createUserRole === role.value;
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputLabel}>Role</Text>
 
-            return (
-              <Pressable
-                key={role.value}
-                onPress={() => setCreateUserRole(role.value)}
-                disabled={busy}
-                style={[
-                  styles.rolePill,
-                  selected ? styles.rolePillSelected : null,
-                  busy ? styles.disabled : null,
-                ]}
-              >
-                <Text
+          <View style={styles.roleRow}>
+            {CREATE_USER_ROLES.map((role) => {
+              const selected = createUserRole === role.value;
+
+              return (
+                <Pressable
+                  key={role.value}
+                  onPress={() => setCreateUserRole(role.value)}
+                  disabled={busy}
                   style={[
-                    styles.rolePillText,
-                    selected ? styles.rolePillTextSelected : null,
+                    styles.rolePill,
+                    selected ? styles.rolePillSelected : null,
+                    busy ? styles.disabled : null,
                   ]}
                 >
-                  {role.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+                  <Text
+                    style={[
+                      styles.rolePillText,
+                      selected ? styles.rolePillTextSelected : null,
+                    ]}
+                  >
+                    {role.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.inputStack}>
@@ -1079,51 +1136,31 @@ export default function AdminHomeScreen() {
     );
   };
 
-  return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={styles.header}>
-        <Text style={styles.title}>Admin Tools</Text>
-        <Text style={styles.subtitle}>
-          Manage demo data, create users, connect patients to providers, and
-          invite advocates to existing care teams.
-        </Text>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Developer Actions</Text>
-
-        <View style={styles.buttonStack}>
-          <Button
-            title={loadingSeed ? "Seeding..." : "Seed (basic)"}
-            onPress={seedBasic}
-            disabled={busy}
-          />
-        </View>
-      </View>
-
+  const renderUsersTab = () => {
+    return (
       <View style={styles.section}>
         <View style={styles.sectionHeaderText}>
           <Text style={styles.sectionTitle}>Create User</Text>
           <Text style={styles.sectionDescription}>
-            Add a patient, provider, or advocate profile through the admin user
-            API.
+            Create a patient, provider, or advocate profile. No relationships or
+            chats are created here.
           </Text>
         </View>
 
         {renderCreateUserForm()}
       </View>
+    );
+  };
 
+  const renderPatientProviderTab = () => {
+    return (
       <View style={styles.section}>
         <View style={styles.sectionHeaderRow}>
           <View style={styles.sectionHeaderText}>
-            <Text style={styles.sectionTitle}>Connect Patient to Provider</Text>
+            <Text style={styles.sectionTitle}>Patient–Provider</Text>
             <Text style={styles.sectionDescription}>
-              Select a patient, choose an available provider, then create the
-              care-team connection.
+              Connect a patient to a provider. This creates the relationship and
+              ensures the canonical care-team chat.
             </Text>
           </View>
 
@@ -1151,16 +1188,18 @@ export default function AdminHomeScreen() {
           </View>
         )}
       </View>
+    );
+  };
 
+  const renderAdvocateInvitesTab = () => {
+    return (
       <View style={styles.section}>
         <View style={styles.sectionHeaderRow}>
           <View style={styles.sectionHeaderText}>
-            <Text style={styles.sectionTitle}>
-              Invite Advocate to Care Team
-            </Text>
+            <Text style={styles.sectionTitle}>Advocate Invites</Text>
             <Text style={styles.sectionDescription}>
-              Select an existing patient/provider care team, then invite an
-              advocate. Chat access is granted only after approval.
+              Invite an advocate to an existing patient/provider care team.
+              Pending invites do not grant chat access.
             </Text>
           </View>
 
@@ -1189,6 +1228,57 @@ export default function AdminHomeScreen() {
           </View>
         )}
       </View>
+    );
+  };
+
+  const renderDevTab = () => {
+    return (
+      <View style={styles.section}>
+        <View style={styles.sectionHeaderText}>
+          <Text style={styles.sectionTitle}>Dev Tools</Text>
+          <Text style={styles.sectionDescription}>
+            Developer-only actions for resetting and preparing demo data.
+          </Text>
+        </View>
+
+        <View style={styles.buttonStack}>
+          <Button
+            title={loadingSeed ? "Seeding..." : "Seed (basic)"}
+            onPress={seedBasic}
+            disabled={busy}
+          />
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+    >
+      <View style={styles.header}>
+        <Text style={styles.title}>Admin Tools</Text>
+        <Text style={styles.subtitle}>
+          Create users, manage care-team access, and prepare demo data.
+        </Text>
+      </View>
+
+      <AdminTabBar
+        activeTab={activeTab}
+        onChangeTab={setActiveTab}
+        disabled={busy}
+      />
+
+      {activeTab === ADMIN_TAB.USERS ? renderUsersTab() : null}
+      {activeTab === ADMIN_TAB.PATIENT_PROVIDER
+        ? renderPatientProviderTab()
+        : null}
+      {activeTab === ADMIN_TAB.ADVOCATE_INVITES
+        ? renderAdvocateInvitesTab()
+        : null}
+      {activeTab === ADMIN_TAB.DEV ? renderDevTab() : null}
 
       {busy &&
       !loadingUsers &&
@@ -1221,6 +1311,33 @@ const styles = {
     fontSize: 14,
     lineHeight: 20,
     color: "#6B7280",
+  },
+  tabScroll: {
+    marginHorizontal: -16,
+  },
+  tabScrollContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  tabButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  tabButtonActive: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+  tabButtonText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#374151",
+  },
+  tabButtonTextActive: {
+    color: "#FFFFFF",
   },
   section: {
     backgroundColor: "#FFFFFF",
