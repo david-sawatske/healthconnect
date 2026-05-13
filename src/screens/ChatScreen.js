@@ -28,6 +28,14 @@ const devLog = (...args) => {
   if (__DEV__) console.log("[CHAT_SCREEN]", ...args);
 };
 
+const WEB_CALL_UNAVAILABLE_TITLE = "Video calls are mobile-only";
+const WEB_CALL_UNAVAILABLE_MESSAGE =
+  "This web demo highlights role-based workflows, care-team messaging, invite flows, realtime updates, and demo data. Native video calling is available in the iOS and Android app builds and is intentionally disabled in the browser preview.";
+
+const WEB_UPLOAD_UNAVAILABLE_TITLE = "File uploads are mobile-only";
+const WEB_UPLOAD_UNAVAILABLE_MESSAGE =
+  "This web demo focuses on role-based workflows, care-team messaging, invite flows, realtime updates, and demo data. File and media uploads are available in the iOS and Android app builds and are intentionally disabled in the browser preview.";
+
 export default function ChatScreen({ route, navigation }) {
   const insets = useSafeAreaInsets();
   const { currentUser } = useCurrentUser();
@@ -124,6 +132,13 @@ export default function ChatScreen({ route, navigation }) {
   };
 
   const handleAttach = useCallback(async () => {
+    if (Platform.OS === "web") {
+      globalThis.alert?.(
+        `${WEB_UPLOAD_UNAVAILABLE_TITLE}\n\n${WEB_UPLOAD_UNAVAILABLE_MESSAGE}`,
+      );
+      return;
+    }
+
     try {
       await attach();
       scrollToBottom(true);
@@ -148,6 +163,22 @@ export default function ChatScreen({ route, navigation }) {
       );
     }
   }, [send]);
+
+  const handleStartCall = useCallback(() => {
+    if (Platform.OS === "web") {
+      globalThis.alert?.(
+        `${WEB_CALL_UNAVAILABLE_TITLE}\n\n${WEB_CALL_UNAVAILABLE_MESSAGE}`,
+      );
+      return;
+    }
+
+    navigation?.navigate?.("Call", {
+      conversation: conversationParam || {
+        id: conversationId,
+        memberIds,
+      },
+    });
+  }, [conversationId, conversationParam, memberIds, navigation]);
 
   const renderItem = ({ item, index }) => {
     const isSystem = item.type === "SYSTEM";
@@ -265,21 +296,18 @@ export default function ChatScreen({ route, navigation }) {
       >
         <View style={styles.inputRow}>
           <TouchableOpacity
-            accessibilityLabel="Start a video call"
+            accessibilityLabel={
+              Platform.OS === "web"
+                ? "Video calls are mobile-only in this web demo"
+                : "Start a video call"
+            }
             style={[
               styles.iconButton,
               styles.callButton,
               !canStartCall && styles.iconButtonDisabled,
             ]}
             disabled={!canStartCall}
-            onPress={() =>
-              navigation?.navigate?.("Call", {
-                conversation: conversationParam || {
-                  id: conversationId,
-                  memberIds,
-                },
-              })
-            }
+            onPress={handleStartCall}
             activeOpacity={0.85}
           >
             <Text style={[styles.iconButtonText, styles.callButtonText]}>
@@ -288,7 +316,11 @@ export default function ChatScreen({ route, navigation }) {
           </TouchableOpacity>
 
           <TouchableOpacity
-            accessibilityLabel="Attach media"
+            accessibilityLabel={
+              Platform.OS === "web"
+                ? "File uploads are mobile-only in this web demo"
+                : "Attach media"
+            }
             style={styles.iconButton}
             onPress={handleAttach}
             activeOpacity={0.85}
