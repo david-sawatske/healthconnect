@@ -12,12 +12,15 @@ import {
 import {
   connectPatientProvider,
   createAdminUser,
+  fetchAdminAdvocates,
   fetchAdminPatients,
   fetchAdminProviders,
   fetchProviderPatientsForPatient,
   formatConnectPatientProviderSummary,
   formatCreateUserSummary,
+  formatInviteAdvocateSummary,
   formatSeedResultSummary,
+  inviteAdvocateToCareTeam,
   seedBasicAdminData,
 } from "../features/admin/adminService";
 
@@ -34,6 +37,13 @@ const CREATE_USER_ROLES = [
 const FLOW_STEP = {
   PATIENT: "PATIENT",
   PROVIDER: "PROVIDER",
+  REVIEW: "REVIEW",
+};
+
+const INVITE_STEP = {
+  PATIENT: "PATIENT",
+  PROVIDER: "PROVIDER",
+  ADVOCATE: "ADVOCATE",
   REVIEW: "REVIEW",
 };
 
@@ -147,24 +157,40 @@ export default function AdminHomeScreen() {
   const [loadingConnections, setLoadingConnections] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
+  const [loadingInviteConnections, setLoadingInviteConnections] =
+    useState(false);
+  const [invitingAdvocate, setInvitingAdvocate] = useState(false);
+
   const [createUserRole, setCreateUserRole] = useState("PATIENT");
   const [createUserName, setCreateUserName] = useState("");
   const [createUserEmail, setCreateUserEmail] = useState("");
 
   const [patients, setPatients] = useState([]);
   const [providers, setProviders] = useState([]);
+  const [advocates, setAdvocates] = useState([]);
+
   const [providerPatients, setProviderPatients] = useState([]);
+  const [inviteProviderPatients, setInviteProviderPatients] = useState([]);
 
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   const [selectedProviderId, setSelectedProviderId] = useState(null);
   const [flowStep, setFlowStep] = useState(FLOW_STEP.PATIENT);
+
+  const [selectedInvitePatientId, setSelectedInvitePatientId] = useState(null);
+  const [selectedInviteProviderId, setSelectedInviteProviderId] =
+    useState(null);
+  const [selectedInviteAdvocateId, setSelectedInviteAdvocateId] =
+    useState(null);
+  const [inviteStep, setInviteStep] = useState(INVITE_STEP.PATIENT);
 
   const busy =
     loadingSeed ||
     creatingUser ||
     loadingUsers ||
     loadingConnections ||
-    connecting;
+    connecting ||
+    loadingInviteConnections ||
+    invitingAdvocate;
 
   const selectedPatient = useMemo(() => {
     return patients.find((patient) => patient.id === selectedPatientId) || null;
@@ -176,6 +202,26 @@ export default function AdminHomeScreen() {
     );
   }, [providers, selectedProviderId]);
 
+  const selectedInvitePatient = useMemo(() => {
+    return (
+      patients.find((patient) => patient.id === selectedInvitePatientId) || null
+    );
+  }, [patients, selectedInvitePatientId]);
+
+  const selectedInviteProvider = useMemo(() => {
+    return (
+      providers.find((provider) => provider.id === selectedInviteProviderId) ||
+      null
+    );
+  }, [providers, selectedInviteProviderId]);
+
+  const selectedInviteAdvocate = useMemo(() => {
+    return (
+      advocates.find((advocate) => advocate.id === selectedInviteAdvocateId) ||
+      null
+    );
+  }, [advocates, selectedInviteAdvocateId]);
+
   const connectedProviderIds = useMemo(() => {
     return new Set(
       providerPatients
@@ -184,25 +230,48 @@ export default function AdminHomeScreen() {
     );
   }, [providerPatients]);
 
+  const inviteConnectedProviderIds = useMemo(() => {
+    return new Set(
+      inviteProviderPatients
+        .map((relationship) => relationship?.providerId)
+        .filter(Boolean),
+    );
+  }, [inviteProviderPatients]);
+
   const patientStepComplete = Boolean(selectedPatient);
   const providerStepComplete = Boolean(selectedProvider);
-  const canSubmit =
+
+  const invitePatientStepComplete = Boolean(selectedInvitePatient);
+  const inviteProviderStepComplete = Boolean(selectedInviteProvider);
+  const inviteAdvocateStepComplete = Boolean(selectedInviteAdvocate);
+
+  const canSubmitConnection =
     selectedPatientId &&
     selectedProviderId &&
     !connectedProviderIds.has(selectedProviderId) &&
+    !busy;
+
+  const canSubmitInvite =
+    selectedInvitePatientId &&
+    selectedInviteProviderId &&
+    selectedInviteAdvocateId &&
+    inviteConnectedProviderIds.has(selectedInviteProviderId) &&
     !busy;
 
   const loadUsers = async () => {
     setLoadingUsers(true);
 
     try {
-      const [patientResults, providerResults] = await Promise.all([
-        fetchAdminPatients(),
-        fetchAdminProviders(),
-      ]);
+      const [patientResults, providerResults, advocateResults] =
+        await Promise.all([
+          fetchAdminPatients(),
+          fetchAdminProviders(),
+          fetchAdminAdvocates(),
+        ]);
 
       setPatients(patientResults);
       setProviders(providerResults);
+      setAdvocates(advocateResults);
     } catch (e) {
       devLog("load users failed =", e);
       Alert.alert("Unable to load users", e?.message ?? String(e));
@@ -234,6 +303,29 @@ export default function AdminHomeScreen() {
     }
   };
 
+  const loadInviteConnectionsForPatient = async (patientId) => {
+    if (!patientId) {
+      setInviteProviderPatients([]);
+      return;
+    }
+
+    setLoadingInviteConnections(true);
+
+    try {
+      const relationships = await fetchProviderPatientsForPatient(patientId);
+      setInviteProviderPatients(relationships);
+    } catch (e) {
+      devLog("load invite provider connections failed =", e);
+      setInviteProviderPatients([]);
+      Alert.alert(
+        "Unable to load care teams",
+        e?.message ?? "Unable to load existing care-team connections.",
+      );
+    } finally {
+      setLoadingInviteConnections(false);
+    }
+  };
+
   useEffect(() => {
     loadUsers();
   }, []);
@@ -243,6 +335,14 @@ export default function AdminHomeScreen() {
     setSelectedProviderId(null);
     setProviderPatients([]);
     setFlowStep(FLOW_STEP.PATIENT);
+  };
+
+  const resetInviteFlow = () => {
+    setSelectedInvitePatientId(null);
+    setSelectedInviteProviderId(null);
+    setSelectedInviteAdvocateId(null);
+    setInviteProviderPatients([]);
+    setInviteStep(INVITE_STEP.PATIENT);
   };
 
   const handleSelectPatient = async (patientId) => {
@@ -272,6 +372,47 @@ export default function AdminHomeScreen() {
     setFlowStep(FLOW_STEP.PROVIDER);
   };
 
+  const handleSelectInvitePatient = async (patientId) => {
+    setSelectedInvitePatientId(patientId);
+    setSelectedInviteProviderId(null);
+    setSelectedInviteAdvocateId(null);
+    setInviteProviderPatients([]);
+    setInviteStep(INVITE_STEP.PROVIDER);
+
+    await loadInviteConnectionsForPatient(patientId);
+  };
+
+  const handleChangeInvitePatient = () => {
+    setSelectedInviteProviderId(null);
+    setSelectedInviteAdvocateId(null);
+    setInviteProviderPatients([]);
+    setInviteStep(INVITE_STEP.PATIENT);
+  };
+
+  const handleSelectInviteProvider = (providerId) => {
+    if (!inviteConnectedProviderIds.has(providerId)) return;
+
+    setSelectedInviteProviderId(providerId);
+    setSelectedInviteAdvocateId(null);
+    setInviteStep(INVITE_STEP.ADVOCATE);
+  };
+
+  const handleChangeInviteProvider = () => {
+    setSelectedInviteProviderId(null);
+    setSelectedInviteAdvocateId(null);
+    setInviteStep(INVITE_STEP.PROVIDER);
+  };
+
+  const handleSelectInviteAdvocate = (advocateId) => {
+    setSelectedInviteAdvocateId(advocateId);
+    setInviteStep(INVITE_STEP.REVIEW);
+  };
+
+  const handleChangeInviteAdvocate = () => {
+    setSelectedInviteAdvocateId(null);
+    setInviteStep(INVITE_STEP.ADVOCATE);
+  };
+
   const seedBasic = async () => {
     setLoadingSeed(true);
 
@@ -283,6 +424,7 @@ export default function AdminHomeScreen() {
       Alert.alert("Seed complete", formatSeedResultSummary(result.data));
 
       resetConnectionFlow();
+      resetInviteFlow();
       await loadUsers();
     } catch (e) {
       devLog("seed failed =", e);
@@ -366,6 +508,10 @@ export default function AdminHomeScreen() {
       setFlowStep(FLOW_STEP.PROVIDER);
 
       await loadConnectionsForPatient(selectedPatientId);
+
+      if (selectedInvitePatientId === selectedPatientId) {
+        await loadInviteConnectionsForPatient(selectedPatientId);
+      }
     } catch (e) {
       devLog("connect patient/provider failed =", e);
 
@@ -375,6 +521,54 @@ export default function AdminHomeScreen() {
       );
     } finally {
       setConnecting(false);
+    }
+  };
+
+  const handleInviteAdvocate = async () => {
+    if (
+      !selectedInvitePatientId ||
+      !selectedInviteProviderId ||
+      !selectedInviteAdvocateId
+    ) {
+      Alert.alert(
+        "Select users",
+        "Choose a patient, provider, and advocate before creating the invite.",
+      );
+      return;
+    }
+
+    if (!inviteConnectedProviderIds.has(selectedInviteProviderId)) {
+      Alert.alert(
+        "Care team required",
+        "Choose a provider that is already connected to this patient.",
+      );
+      return;
+    }
+
+    setInvitingAdvocate(true);
+
+    try {
+      const result = await inviteAdvocateToCareTeam({
+        patientId: selectedInvitePatientId,
+        providerId: selectedInviteProviderId,
+        advocateId: selectedInviteAdvocateId,
+      });
+
+      devLog("invite advocate result =", result);
+
+      Alert.alert("Advocate invited", formatInviteAdvocateSummary(result));
+
+      setSelectedInviteAdvocateId(null);
+      setInviteStep(INVITE_STEP.ADVOCATE);
+    } catch (e) {
+      devLog("invite advocate failed =", e);
+
+      Alert.alert(
+        "Invite failed",
+        e?.message ?? "Unable to invite advocate to care team.",
+      );
+    } finally {
+      setInvitingAdvocate(false);
     }
   };
 
@@ -620,7 +814,264 @@ export default function AdminHomeScreen() {
                 connecting ? "Connecting..." : "Connect Patient to Provider"
               }
               onPress={handleConnectPatientProvider}
-              disabled={!canSubmit}
+              disabled={!canSubmitConnection}
+            />
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderInvitePatientStep = () => {
+    const isActive = inviteStep === INVITE_STEP.PATIENT;
+
+    return (
+      <View style={styles.stepCard}>
+        <StepHeader
+          number="1"
+          title="Select patient"
+          complete={invitePatientStepComplete}
+          active={isActive}
+          onEdit={invitePatientStepComplete ? handleChangeInvitePatient : null}
+        />
+
+        {!isActive && selectedInvitePatient ? (
+          <CollapsedSelection label="Patient" user={selectedInvitePatient} />
+        ) : null}
+
+        {isActive ? (
+          <View style={styles.listStack}>
+            {patients.length ? (
+              patients.map((patient) => (
+                <UserSelectCard
+                  key={patient.id}
+                  user={patient}
+                  selected={patient.id === selectedInvitePatientId}
+                  disabled={busy}
+                  badgeText={
+                    patient.id === selectedInvitePatientId ? "Selected" : null
+                  }
+                  onPress={() => handleSelectInvitePatient(patient.id)}
+                />
+              ))
+            ) : (
+              <Text style={styles.emptyText}>
+                No patients found. Run Seed (basic) first or create a patient.
+              </Text>
+            )}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderInviteProviderStep = () => {
+    const isActive = inviteStep === INVITE_STEP.PROVIDER;
+    const isLocked = !selectedInvitePatient;
+
+    return (
+      <View style={[styles.stepCard, isLocked ? styles.stepCardLocked : null]}>
+        <StepHeader
+          number="2"
+          title="Select existing provider connection"
+          complete={inviteProviderStepComplete}
+          active={isActive}
+          onEdit={
+            inviteProviderStepComplete && selectedInvitePatient
+              ? handleChangeInviteProvider
+              : null
+          }
+        />
+
+        {isLocked ? (
+          <Text style={styles.lockedText}>Select a patient first.</Text>
+        ) : null}
+
+        {!isActive && selectedInviteProvider ? (
+          <CollapsedSelection label="Provider" user={selectedInviteProvider} />
+        ) : null}
+
+        {isActive && selectedInvitePatient ? (
+          <View style={styles.listStack}>
+            {loadingInviteConnections ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator />
+                <Text style={styles.loadingText}>
+                  Loading existing care-team connections...
+                </Text>
+              </View>
+            ) : null}
+
+            {!loadingInviteConnections && providers.length
+              ? providers.map((provider) => {
+                  const isConnected = inviteConnectedProviderIds.has(
+                    provider.id,
+                  );
+                  const isSelected = provider.id === selectedInviteProviderId;
+
+                  return (
+                    <UserSelectCard
+                      key={provider.id}
+                      user={provider}
+                      selected={isSelected}
+                      disabled={busy || !isConnected}
+                      disabledReason={
+                        isConnected
+                          ? null
+                          : "No care-team connection for this patient"
+                      }
+                      badgeText={
+                        isSelected
+                          ? "Selected"
+                          : isConnected
+                            ? "Care Team"
+                            : "Unavailable"
+                      }
+                      onPress={() => handleSelectInviteProvider(provider.id)}
+                    />
+                  );
+                })
+              : null}
+
+            {!loadingInviteConnections && !providers.length ? (
+              <Text style={styles.emptyText}>
+                No providers found. Create a provider and connect them to a
+                patient first.
+              </Text>
+            ) : null}
+
+            {!loadingInviteConnections &&
+            providers.length &&
+            inviteConnectedProviderIds.size === 0 ? (
+              <Text style={styles.emptyText}>
+                This patient has no provider connections yet. Connect the
+                patient to a provider before inviting an advocate.
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderInviteAdvocateStep = () => {
+    const isActive = inviteStep === INVITE_STEP.ADVOCATE;
+    const isLocked = !selectedInvitePatient || !selectedInviteProvider;
+
+    return (
+      <View style={[styles.stepCard, isLocked ? styles.stepCardLocked : null]}>
+        <StepHeader
+          number="3"
+          title="Select advocate"
+          complete={inviteAdvocateStepComplete}
+          active={isActive}
+          onEdit={
+            inviteAdvocateStepComplete && selectedInviteProvider
+              ? handleChangeInviteAdvocate
+              : null
+          }
+        />
+
+        {isLocked ? (
+          <Text style={styles.lockedText}>
+            Select a patient and existing provider connection first.
+          </Text>
+        ) : null}
+
+        {!isActive && selectedInviteAdvocate ? (
+          <CollapsedSelection label="Advocate" user={selectedInviteAdvocate} />
+        ) : null}
+
+        {isActive && selectedInvitePatient && selectedInviteProvider ? (
+          <View style={styles.listStack}>
+            {advocates.length ? (
+              advocates.map((advocate) => {
+                const isSelected = advocate.id === selectedInviteAdvocateId;
+
+                return (
+                  <UserSelectCard
+                    key={advocate.id}
+                    user={advocate}
+                    selected={isSelected}
+                    disabled={busy}
+                    badgeText={isSelected ? "Selected" : "Available"}
+                    onPress={() => handleSelectInviteAdvocate(advocate.id)}
+                  />
+                );
+              })
+            ) : (
+              <Text style={styles.emptyText}>
+                No advocates found. Create an advocate first.
+              </Text>
+            )}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderInviteReviewStep = () => {
+    const isActive = inviteStep === INVITE_STEP.REVIEW;
+    const isLocked =
+      !selectedInvitePatient ||
+      !selectedInviteProvider ||
+      !selectedInviteAdvocate;
+
+    return (
+      <View style={[styles.stepCard, isLocked ? styles.stepCardLocked : null]}>
+        <StepHeader
+          number="4"
+          title="Review and invite"
+          complete={false}
+          active={isActive}
+        />
+
+        {isLocked ? (
+          <Text style={styles.lockedText}>
+            Select a patient, provider, and advocate first.
+          </Text>
+        ) : null}
+
+        {isActive &&
+        selectedInvitePatient &&
+        selectedInviteProvider &&
+        selectedInviteAdvocate ? (
+          <View style={styles.reviewStack}>
+            <View style={styles.summaryBox}>
+              <Text style={styles.summaryTitle}>Invite summary</Text>
+
+              <Text style={styles.summaryLine}>
+                Patient:{" "}
+                <Text style={styles.summaryStrong}>
+                  {getUserLabel(selectedInvitePatient)}
+                </Text>
+              </Text>
+
+              <Text style={styles.summaryLine}>
+                Provider:{" "}
+                <Text style={styles.summaryStrong}>
+                  {getUserLabel(selectedInviteProvider)}
+                </Text>
+              </Text>
+
+              <Text style={styles.summaryLine}>
+                Advocate:{" "}
+                <Text style={styles.summaryStrong}>
+                  {getUserLabel(selectedInviteAdvocate)}
+                </Text>
+              </Text>
+
+              <Text style={styles.summaryNote}>
+                This creates an advocate invite only. It does not create an
+                advocate assignment, add the advocate to the care-team chat, or
+                create a chat participant.
+              </Text>
+            </View>
+
+            <Button
+              title={invitingAdvocate ? "Inviting..." : "Invite Advocate"}
+              onPress={handleInviteAdvocate}
+              disabled={!canSubmitInvite}
             />
           </View>
         ) : null}
@@ -637,7 +1088,8 @@ export default function AdminHomeScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>Admin Tools</Text>
         <Text style={styles.subtitle}>
-          Manage demo data, create users, and connect patients to providers.
+          Manage demo data, create users, connect patients to providers, and
+          invite advocates to existing care teams.
         </Text>
       </View>
 
@@ -700,7 +1152,48 @@ export default function AdminHomeScreen() {
         )}
       </View>
 
-      {busy && !loadingUsers && !loadingConnections ? (
+      <View style={styles.section}>
+        <View style={styles.sectionHeaderRow}>
+          <View style={styles.sectionHeaderText}>
+            <Text style={styles.sectionTitle}>
+              Invite Advocate to Care Team
+            </Text>
+            <Text style={styles.sectionDescription}>
+              Select an existing patient/provider care team, then invite an
+              advocate. Chat access is granted only after approval.
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={loadUsers}
+            disabled={busy}
+            style={[styles.refresh, busy ? styles.disabled : null]}
+          >
+            <Text style={styles.refreshText}>Refresh</Text>
+          </Pressable>
+        </View>
+
+        {loadingUsers ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator />
+            <Text style={styles.loadingText}>
+              Loading patients/providers/advocates...
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.flowStack}>
+            {renderInvitePatientStep()}
+            {renderInviteProviderStep()}
+            {renderInviteAdvocateStep()}
+            {renderInviteReviewStep()}
+          </View>
+        )}
+      </View>
+
+      {busy &&
+      !loadingUsers &&
+      !loadingConnections &&
+      !loadingInviteConnections ? (
         <ActivityIndicator style={styles.bottomLoader} />
       ) : null}
     </ScrollView>

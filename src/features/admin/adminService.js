@@ -110,7 +110,7 @@ export const seedAdminData = async ({
   scenario = "basic",
 } = {}) => {
   try {
-    const op = await post({
+    const op = post({
       apiName: "seeding",
       path: "/admin/seeding",
       options: {
@@ -427,6 +427,81 @@ export const formatConnectPatientProviderSummary = (data) => {
     `Provider participant: ${
       data?.participants?.provider?.created ? "created" : "already existed"
     }`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+};
+
+export const fetchAdminAdvocates = () => {
+  return fetchAdminUsersByRole("ADVOCATE");
+};
+
+export async function inviteAdvocateToCareTeam({
+  patientId,
+  providerId,
+  advocateId,
+}) {
+  try {
+    const op = post({
+      apiName: "seeding",
+      path: "/admin/users",
+      options: {
+        body: {
+          action: "INVITE_ADVOCATE_TO_CARE_TEAM",
+          patientId,
+          providerId,
+          advocateId,
+        },
+      },
+    });
+
+    const response = await op.response;
+    const body = await parseRestResponseBody(response.body);
+
+    if (!body?.ok) {
+      throw new Error(body?.error || "Failed to invite advocate.");
+    }
+
+    return body;
+  } catch (error) {
+    devLog("inviteAdvocateToCareTeam error =", error);
+
+    const message = await unwrapRestErrorMessage(
+      error,
+      "Failed to invite advocate.",
+    );
+
+    throw new Error(message);
+  }
+}
+
+export const formatInviteAdvocateSummary = (data) => {
+  if (!data) {
+    return "Advocate invite completed, but no response details were returned.";
+  }
+
+  const patientName = data?.patient?.displayName || data?.patient?.email;
+  const providerName = data?.provider?.displayName || data?.provider?.email;
+  const advocateName = data?.advocate?.displayName || data?.advocate?.email;
+
+  return [
+    data?.message || "Advocate invited successfully.",
+    "",
+    patientName ? `Patient: ${patientName}` : null,
+    providerName ? `Provider: ${providerName}` : null,
+    advocateName ? `Advocate: ${advocateName}` : null,
+    "",
+    data?.invite?.id ? `Invite: ${data.invite.id}` : null,
+    data?.invite?.status ? `Status: ${data.invite.status}` : null,
+    `Invite created: ${data?.invite?.created ? "yes" : "already existed"}`,
+    "",
+    data?.conversation?.id
+      ? `Existing care team chat: ${data.conversation.id}`
+      : null,
+    "",
+    "No advocate assignment was created.",
+    "The advocate was not added to the care-team chat yet.",
+    "Chat access will be granted only after approval/acceptance.",
   ]
     .filter(Boolean)
     .join("\n");

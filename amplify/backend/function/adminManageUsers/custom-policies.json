@@ -8,7 +8,8 @@
       "arn:aws:dynamodb:us-east-1:996180473601:table/User-5izqvjgcw5e5zdbimlgzknen3m-dev",
       "arn:aws:dynamodb:us-east-1:996180473601:table/ProviderPatient-5izqvjgcw5e5zdbimlgzknen3m-dev",
       "arn:aws:dynamodb:us-east-1:996180473601:table/Conversation-5izqvjgcw5e5zdbimlgzknen3m-dev",
-      "arn:aws:dynamodb:us-east-1:996180473601:table/ConversationParticipant-5izqvjgcw5e5zdbimlgzknen3m-dev"
+      "arn:aws:dynamodb:us-east-1:996180473601:table/ConversationParticipant-5izqvjgcw5e5zdbimlgzknen3m-dev",
+      "arn:aws:dynamodb:us-east-1:996180473601:table/AdvocateInvite-5izqvjgcw5e5zdbimlgzknen3m-dev"
     ]
   }
 ]

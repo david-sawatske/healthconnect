@@ -32,6 +32,7 @@ const {
   TABLE_PROVIDER_PATIENT,
   TABLE_CONVERSATION,
   TABLE_CONVERSATION_PARTICIPANT,
+  TABLE_ADVOCATE_INVITE,
 } = process.env;
 
 const VALID_ROLES = new Set(["ADMIN", "PATIENT", "PROVIDER", "ADVOCATE"]);
@@ -44,6 +45,7 @@ requireEnv("TABLE_USER", TABLE_USER);
 requireEnv("TABLE_PROVIDER_PATIENT", TABLE_PROVIDER_PATIENT);
 requireEnv("TABLE_CONVERSATION", TABLE_CONVERSATION);
 requireEnv("TABLE_CONVERSATION_PARTICIPANT", TABLE_CONVERSATION_PARTICIPANT);
+requireEnv("TABLE_ADVOCATE_INVITE", TABLE_ADVOCATE_INVITE);
 
 exports.handler = async (event) => {
   console.log("[ADMIN_MANAGE_USERS] event.raw =", JSON.stringify(event));
@@ -61,6 +63,11 @@ exports.handler = async (event) => {
 
     if (action === "CONNECT_PATIENT_PROVIDER") {
       const result = await connectPatientProvider(body);
+      return json(200, result);
+    }
+
+    if (action === "INVITE_ADVOCATE_TO_CARE_TEAM") {
+      const result = await inviteAdvocateToCareTeam(body);
       return json(200, result);
     }
 
@@ -207,6 +214,80 @@ async function connectPatientProvider(body) {
   };
 }
 
+async function inviteAdvocateToCareTeam(body) {
+  const patientId = requireNonEmptyString("patientId", body.patientId);
+  const providerId = requireNonEmptyString("providerId", body.providerId);
+  const advocateId = requireNonEmptyString("advocateId", body.advocateId);
+  const now = new Date().toISOString();
+
+  if (patientId === providerId) {
+    throw httpError(400, "patientId and providerId must be different.");
+  }
+
+  if (patientId === advocateId) {
+    throw httpError(400, "patientId and advocateId must be different.");
+  }
+
+  if (providerId === advocateId) {
+    throw httpError(400, "providerId and advocateId must be different.");
+  }
+
+  const patient = await getUserByIdOrThrow(patientId, "PATIENT");
+  const provider = await getUserByIdOrThrow(providerId, "PROVIDER");
+  const advocate = await getUserByIdOrThrow(advocateId, "ADVOCATE");
+
+  const providerPatient = await getProviderPatientOrThrow({
+    patientId,
+    providerId,
+  });
+
+  const conversation = await getCareTeamConversationOrThrow({
+    patientId,
+    providerId,
+  });
+
+  const invite = await ensureAdvocateInvite({
+    patientId,
+    providerId,
+    advocateId,
+    conversationId: conversation.id,
+    createdBy: providerId,
+    now,
+  });
+
+  return {
+    ok: true,
+    action: "INVITE_ADVOCATE_TO_CARE_TEAM",
+    message: invite.created
+      ? "Advocate invited to care team successfully."
+      : "Advocate invite already exists.",
+    patient: toPublicUser(patient),
+    provider: toPublicUser(provider),
+    advocate: toPublicUser(advocate),
+    providerPatient: {
+      id: providerPatient.id,
+    },
+    conversation: {
+      id: conversation.id,
+      title: conversation.title ?? null,
+      isGroup: conversation.isGroup,
+      memberIds: conversation.memberIds,
+    },
+    invite: {
+      id: invite.id,
+      created: invite.created,
+      status: invite.item.status,
+      patientId: invite.item.patientId,
+      providerId: invite.item.providerId,
+      advocateId: invite.item.advocateId,
+      conversationId: invite.item.conversationId,
+      createdBy: invite.item.createdBy,
+      approvedBy: invite.item.approvedBy ?? null,
+      approvedAt: invite.item.approvedAt ?? null,
+    },
+  };
+}
+
 async function ensureCognitoUserByEmail({ email, displayName }) {
   const existing = await findCognitoUserByEmail(email);
 
@@ -236,7 +317,10 @@ async function ensureCognitoUserByEmail({ email, displayName }) {
   const username = createdUser?.Username;
 
   if (!username) {
-    throw httpError(500, "Cognito user was created but no username was returned.");
+    throw httpError(
+      500,
+      "Cognito user was created but no username was returned.",
+    );
   }
 
   const fullUser = await cognito.send(
@@ -312,6 +396,46 @@ async function getUserByIdOrThrow(userId, expectedRole) {
   }
 
   return user;
+}
+
+async function getProviderPatientOrThrow({ patientId, providerId }) {
+  const id = providerPatientId({ patientId, providerId });
+
+  const res = await ddb.send(
+    new GetCommand({
+      TableName: TABLE_PROVIDER_PATIENT,
+      Key: { id },
+    }),
+  );
+
+  if (!res.Item) {
+    throw httpError(
+      404,
+      `Patient ${patientId} is not connected to provider ${providerId}.`,
+    );
+  }
+
+  return res.Item;
+}
+
+async function getCareTeamConversationOrThrow({ patientId, providerId }) {
+  const id = careTeamConversationId({ patientId, providerId });
+
+  const res = await ddb.send(
+    new GetCommand({
+      TableName: TABLE_CONVERSATION,
+      Key: { id },
+    }),
+  );
+
+  if (!res.Item) {
+    throw httpError(
+      404,
+      `Care-team conversation not found for patient ${patientId} and provider ${providerId}.`,
+    );
+  }
+
+  return res.Item;
 }
 
 async function ensureProviderPatient({ patientId, providerId, now }) {
@@ -445,13 +569,87 @@ async function ensureCareTeamConversation({ patientId, providerId, now }) {
   }
 }
 
+async function ensureAdvocateInvite({
+  patientId,
+  providerId,
+  advocateId,
+  conversationId,
+  createdBy,
+  now,
+}) {
+  const id = advocateInviteId({ patientId, providerId, advocateId });
+
+  const existing = await ddb.send(
+    new GetCommand({
+      TableName: TABLE_ADVOCATE_INVITE,
+      Key: { id },
+    }),
+  );
+
+  if (existing.Item) {
+    return {
+      id,
+      created: false,
+      item: existing.Item,
+    };
+  }
+
+  const item = {
+    id,
+    patientId,
+    providerId,
+    advocateId,
+    conversationId,
+    status: "PENDING",
+    createdBy,
+    approvedBy: null,
+    approvedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: TABLE_ADVOCATE_INVITE,
+        Item: item,
+        ConditionExpression: "attribute_not_exists(id)",
+      }),
+    );
+
+    return {
+      id,
+      created: true,
+      item,
+    };
+  } catch (e) {
+    if (e.name !== "ConditionalCheckFailedException") throw e;
+
+    const reread = await ddb.send(
+      new GetCommand({
+        TableName: TABLE_ADVOCATE_INVITE,
+        Key: { id },
+      }),
+    );
+
+    return {
+      id,
+      created: false,
+      item: reread.Item,
+    };
+  }
+}
+
 async function ensureConversationHasMembers({
-                                              conversation,
-                                              requiredMemberIds,
-                                              now,
-                                            }) {
+  conversation,
+  requiredMemberIds,
+  now,
+}) {
   if (!conversation) {
-    throw httpError(500, "Conversation could not be loaded after creation race.");
+    throw httpError(
+      500,
+      "Conversation could not be loaded after creation race.",
+    );
   }
 
   const existingMemberIds = Array.isArray(conversation.memberIds)
@@ -631,6 +829,10 @@ function careTeamConversationId({ patientId, providerId }) {
 
 function providerPatientId({ providerId, patientId }) {
   return `PP:${providerId}:${patientId}`;
+}
+
+function advocateInviteId({ patientId, providerId, advocateId }) {
+  return `ADV_INVITE:${patientId}:${providerId}:${advocateId}`;
 }
 
 function conversationParticipantId({ conversationId, userId }) {
