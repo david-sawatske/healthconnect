@@ -142,6 +142,7 @@ const LAST_MESSAGE_BY_CONVERSATION = /* GraphQL */ `
 
 const PAGE_SIZE = 20;
 const PREVIEW_COUNT = 20;
+const LAST_MESSAGE_SCAN_LIMIT = 10;
 
 function uniq(arr) {
   return [...new Set((arr || []).filter(Boolean))];
@@ -311,18 +312,25 @@ const PatientHomeScreen = () => {
     try {
       const { data } = await client.graphql({
         query: LAST_MESSAGE_BY_CONVERSATION,
-        variables: { conversationId, limit: 1 },
+        variables: {
+          conversationId,
+          limit: LAST_MESSAGE_SCAN_LIMIT,
+        },
         authMode: "userPool",
       });
 
       const items = data?.messagesByConversation?.items || [];
-      const last = items[0] || null;
+      const lastNonSystemMessage =
+        items.find((msg) => msg?.type !== "SYSTEM") || null;
 
       lastMessageRef.current = {
         ...lastMessageRef.current,
-        [conversationId]: last,
+        [conversationId]: lastNonSystemMessage,
       };
-      setLastMessageByConvo((prev) => ({ ...prev, [conversationId]: last }));
+      setLastMessageByConvo((prev) => ({
+        ...prev,
+        [conversationId]: lastNonSystemMessage,
+      }));
     } catch (err) {
       console.log(
         "[PATIENT_HOME] fetchLastMessage error:",
@@ -676,9 +684,7 @@ const PatientHomeScreen = () => {
         const conversation = await ensureDirectConversation({
           currentUserId: currentUser.id,
           memberIds: [currentUser.id, targetUser.id],
-          title: `${currentUser.displayName || "You"} ↔ ${
-            targetUser.displayName || "Care Team"
-          }`,
+          title: targetUser.displayName || targetUser.email || "Care Team",
         });
 
         setConversations((prev) => {
@@ -709,7 +715,7 @@ const PatientHomeScreen = () => {
         );
       }
     },
-    [currentUser?.id, currentUser?.displayName, navigation, sortByLastActivity],
+    [currentUser?.id, navigation, sortByLastActivity],
   );
 
   const handleOpenCareTeamGroupChat = useCallback(
@@ -796,10 +802,33 @@ const PatientHomeScreen = () => {
     return rows;
   }, [careTeam]);
 
+  const visibleConversations = conversations.filter((conversation) => {
+    const hasLoadedLastMessage = Object.prototype.hasOwnProperty.call(
+      lastMessageByConvo,
+      conversation.id,
+    );
+
+    if (!hasLoadedLastMessage) return false;
+
+    return !!lastMessageByConvo[conversation.id];
+  });
+
+  const checkingConversationMessages =
+    conversations.length > 0 &&
+    conversations
+      .slice(0, PREVIEW_COUNT)
+      .some(
+        (conversation) =>
+          !Object.prototype.hasOwnProperty.call(
+            lastMessageByConvo,
+            conversation.id,
+          ) || loadingLastByConvo[conversation.id],
+      );
+
   const hasCareTeam =
     careTeam.providers.length > 0 || careTeam.advocates.length > 0;
 
-  const hasConversations = conversations.length > 0;
+  const hasConversations = visibleConversations.length > 0;
   const showGlobalLoader = loadingCurrentUser && !hasConversations;
 
   const Header = (
@@ -1076,7 +1105,7 @@ const PatientHomeScreen = () => {
   return (
     <View style={styles.container}>
       <FlatList
-        data={conversations}
+        data={visibleConversations}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={Header}
         renderItem={({ item }) => {
@@ -1085,14 +1114,12 @@ const PatientHomeScreen = () => {
 
           const preview = lastLoading
             ? "Loading preview…"
-            : last?.type === "SYSTEM"
-              ? last?.body || "System update"
-              : last?.body || "No messages yet";
+            : last?.body || "No messages yet";
 
-          const ts = getLastActivityTs(item);
+          const ts = last?.createdAt || getLastActivityTs(item);
 
           const lastReadAt = lastReadAtRef.current?.[item.id] || null;
-          const lastMsgAt = item?.lastMessageAt || null;
+          const lastMsgAt = last?.createdAt || null;
 
           const isUnread =
             !!lastMsgAt &&
@@ -1126,12 +1153,22 @@ const PatientHomeScreen = () => {
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
         ListEmptyComponent={
-          <View style={styles.emptyInfo}>
-            <Text style={styles.emptyInfoTitle}>No conversations yet</Text>
-            <Text style={styles.emptyInfoBody}>
-              When someone starts a conversation with you, it will appear here.
-            </Text>
-          </View>
+          checkingConversationMessages ? (
+            <View style={styles.emptyInfo}>
+              <ActivityIndicator size="small" />
+              <Text style={[styles.emptyInfoBody, styles.emptyLoadingText]}>
+                Checking conversations…
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.emptyInfo}>
+              <Text style={styles.emptyInfoTitle}>No conversations yet</Text>
+              <Text style={styles.emptyInfoBody}>
+                When someone sends you a message, the conversation will appear
+                here.
+              </Text>
+            </View>
+          )
         }
         ListFooterComponent={
           loadingConvos && !refreshing ? (
@@ -1261,6 +1298,10 @@ const styles = StyleSheet.create({
   },
   emptyInfoBody: {
     color: "#4B5563",
+  },
+  emptyLoadingText: {
+    marginTop: theme.space.xs,
+    textAlign: "center",
   },
 
   readsSpinner: {
