@@ -1,4 +1,10 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import {
   View,
   Text,
@@ -69,6 +75,24 @@ const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
         updatedAt
       }
       nextToken
+    }
+  }
+`;
+
+const PROVIDER_PATIENTS_BY_PATIENT = /* GraphQL */ `
+  query ProviderPatientsByPatient($patientId: ID!) {
+    providerPatientsByPatient(patientId: $patientId) {
+      items {
+        id
+        patientId
+        providerId
+        provider {
+          id
+          displayName
+          role
+          email
+        }
+      }
     }
   }
 `;
@@ -164,7 +188,10 @@ const PatientHomeScreen = () => {
 
   const [careTeamLoading, setCareTeamLoading] = useState(false);
   const [careTeamError, setCareTeamError] = useState(null);
-  const [careTeams, setCareTeams] = useState([]);
+  const [careTeam, setCareTeam] = useState({
+    providers: [],
+    advocates: [],
+  });
 
   const [loadingConvos, setLoadingConvos] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -175,7 +202,6 @@ const PatientHomeScreen = () => {
 
   const [lastReadAtByConvoId, setLastReadAtByConvoId] = useState({});
   const [loadingReads, setLoadingReads] = useState(false);
-  const [expandedProviders, setExpandedProviders] = useState(() => new Set());
 
   const [usersById, setUsersById] = useState({});
 
@@ -222,7 +248,7 @@ const PatientHomeScreen = () => {
 
   const fetchUserMapForIds = useCallback(async (ids) => {
     const uniqueIds = uniq(ids).filter((id) => !usersByIdRef.current[id]);
-    if (!uniqueIds.length) return;
+    if (!uniqueIds.length) return {};
 
     try {
       const results = await Promise.all(
@@ -247,10 +273,18 @@ const PatientHomeScreen = () => {
       });
 
       if (Object.keys(map).length) {
+        usersByIdRef.current = {
+          ...usersByIdRef.current,
+          ...map,
+        };
+
         setUsersById((prev) => ({ ...prev, ...map }));
       }
+
+      return map;
     } catch (err) {
       console.log("[PATIENT_HOME] fetchUserMapForIds error:", err);
+      return {};
     }
   }, []);
 
@@ -394,85 +428,182 @@ const PatientHomeScreen = () => {
       setCareTeamLoading(true);
       setCareTeamError(null);
 
-      const { data } = await client.graphql({
-        query: ADVOCATE_ASSIGNMENTS_FOR_PATIENT,
-        variables: { patientId: currentUser.id },
-        authMode: "userPool",
-      });
+      const [providerResult, advocateResult] = await Promise.all([
+        client.graphql({
+          query: PROVIDER_PATIENTS_BY_PATIENT,
+          variables: { patientId: currentUser.id },
+          authMode: "userPool",
+        }),
+        client.graphql({
+          query: ADVOCATE_ASSIGNMENTS_FOR_PATIENT,
+          variables: { patientId: currentUser.id },
+          authMode: "userPool",
+        }),
+      ]);
 
-      const assignments = data?.advocateAssignmentsByPatient?.items || [];
+      const providerPatients =
+        providerResult?.data?.providerPatientsByPatient?.items || [];
 
-      if (!assignments.length) {
-        setCareTeams([]);
-        return;
-      }
+      const assignments =
+        advocateResult?.data?.advocateAssignmentsByPatient?.items || [];
 
       const providerToAdvocates = new Map();
+      const advocateToProviders = new Map();
+      const providerUsersById = {};
 
-      assignments.forEach((a) => {
-        if (!a?.providerId) return;
-        if (!providerToAdvocates.has(a.providerId)) {
-          providerToAdvocates.set(a.providerId, new Set());
+      providerPatients.forEach((pp) => {
+        if (!pp?.providerId) return;
+
+        if (!providerToAdvocates.has(pp.providerId)) {
+          providerToAdvocates.set(pp.providerId, new Set());
         }
-        if (a.advocateId) {
-          providerToAdvocates.get(a.providerId).add(a.advocateId);
+
+        if (pp.provider?.id) {
+          providerUsersById[pp.provider.id] = pp.provider;
+        }
+      });
+
+      assignments.forEach((assignment) => {
+        if (!assignment?.providerId) return;
+
+        if (!providerToAdvocates.has(assignment.providerId)) {
+          providerToAdvocates.set(assignment.providerId, new Set());
+        }
+
+        if (assignment.advocateId) {
+          providerToAdvocates
+            .get(assignment.providerId)
+            .add(assignment.advocateId);
+
+          if (!advocateToProviders.has(assignment.advocateId)) {
+            advocateToProviders.set(assignment.advocateId, new Set());
+          }
+
+          advocateToProviders
+            .get(assignment.advocateId)
+            .add(assignment.providerId);
         }
       });
 
       const providerIds = Array.from(providerToAdvocates.keys()).filter(
         Boolean,
       );
-      const advocateIds = Array.from(
-        new Set(assignments.map((a) => a.advocateId).filter(Boolean)),
+
+      const advocateIds = Array.from(advocateToProviders.keys()).filter(
+        Boolean,
       );
 
-      const allIds = Array.from(new Set([...providerIds, ...advocateIds]));
-      await fetchUserMapForIds(allIds);
+      const providerIdsMissingUsers = providerIds.filter(
+        (id) => !providerUsersById[id],
+      );
+
+      const loadedUsers = await fetchUserMapForIds([
+        ...providerIdsMissingUsers,
+        ...advocateIds,
+      ]);
 
       const mergedUsers = {
         ...usersByIdRef.current,
+        ...providerUsersById,
+        ...loadedUsers,
       };
 
-      const teams = providerIds
+      if (Object.keys(providerUsersById).length) {
+        usersByIdRef.current = {
+          ...usersByIdRef.current,
+          ...providerUsersById,
+        };
+
+        setUsersById((prev) => ({
+          ...prev,
+          ...providerUsersById,
+        }));
+      }
+
+      const providers = providerIds
         .map((providerId) => {
           const providerUser = mergedUsers[providerId] || null;
-          const advocatesForProvider = Array.from(
+          const advocateIdsForProvider = Array.from(
             providerToAdvocates.get(providerId) || [],
-          )
-            .map((advId) => mergedUsers[advId])
-            .filter(Boolean);
+          ).filter(Boolean);
 
           return {
             providerId,
             providerUser,
-            advocates: advocatesForProvider,
+            advocateIds: advocateIdsForProvider,
           };
         })
         .sort((a, b) => {
-          const an = (a.providerUser?.displayName || "").toLowerCase();
-          const bn = (b.providerUser?.displayName || "").toLowerCase();
+          const an = (
+            a.providerUser?.displayName ||
+            a.providerUser?.email ||
+            ""
+          ).toLowerCase();
+
+          const bn = (
+            b.providerUser?.displayName ||
+            b.providerUser?.email ||
+            ""
+          ).toLowerCase();
+
           return an.localeCompare(bn);
         });
 
-      setCareTeams(teams);
+      const advocates = advocateIds
+        .map((advocateId) => {
+          const advocateUser = mergedUsers[advocateId] || null;
+          const providerIdsForAdvocate = Array.from(
+            advocateToProviders.get(advocateId) || [],
+          ).filter(Boolean);
+
+          const providerNames = providerIdsForAdvocate
+            .map((providerId) => {
+              const providerUser = mergedUsers[providerId];
+              return (
+                providerUser?.displayName || providerUser?.email || "Provider"
+              );
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b));
+
+          return {
+            advocateId,
+            advocateUser,
+            providerIds: providerIdsForAdvocate,
+            providerNames,
+          };
+        })
+        .sort((a, b) => {
+          const an = (
+            a.advocateUser?.displayName ||
+            a.advocateUser?.email ||
+            ""
+          ).toLowerCase();
+
+          const bn = (
+            b.advocateUser?.displayName ||
+            b.advocateUser?.email ||
+            ""
+          ).toLowerCase();
+
+          return an.localeCompare(bn);
+        });
+
+      setCareTeam({
+        providers,
+        advocates,
+      });
     } catch (err) {
       console.log("[PATIENT_HOME] Error fetching care team:", err);
       setCareTeamError("Unable to load your care team.");
-      setCareTeams([]);
+      setCareTeam({
+        providers: [],
+        advocates: [],
+      });
     } finally {
       setCareTeamLoading(false);
     }
   }, [currentUser?.id, fetchUserMapForIds]);
-
-  const toggleProviderExpanded = useCallback((providerId) => {
-    if (!providerId) return;
-    setExpandedProviders((prev) => {
-      const next = new Set(prev);
-      if (next.has(providerId)) next.delete(providerId);
-      else next.add(providerId);
-      return next;
-    });
-  }, []);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -619,6 +750,54 @@ const PatientHomeScreen = () => {
     [currentUser?.id, navigation, sortByLastActivity],
   );
 
+  const careTeamRows = useMemo(() => {
+    const rows = [];
+
+    if (careTeam.providers.length) {
+      rows.push({
+        type: "section",
+        id: "providers-section",
+        title: "Providers",
+        subtitle: "Message providers directly or open a care-team chat.",
+      });
+
+      careTeam.providers.forEach((provider) => {
+        rows.push({
+          type: "provider",
+          id: `provider-${provider.providerId}`,
+          ...provider,
+        });
+      });
+    }
+
+    rows.push({
+      type: "section",
+      id: "advocates-section",
+      title: "Advocates",
+      subtitle: "Advocates are listed once with the providers they support.",
+    });
+
+    if (careTeam.advocates.length) {
+      careTeam.advocates.forEach((advocate) => {
+        rows.push({
+          type: "advocate",
+          id: `advocate-${advocate.advocateId}`,
+          ...advocate,
+        });
+      });
+    } else {
+      rows.push({
+        type: "emptyAdvocates",
+        id: "empty-advocates",
+      });
+    }
+
+    return rows;
+  }, [careTeam]);
+
+  const hasCareTeam =
+    careTeam.providers.length > 0 || careTeam.advocates.length > 0;
+
   const hasConversations = conversations.length > 0;
   const showGlobalLoader = loadingCurrentUser && !hasConversations;
 
@@ -693,22 +872,29 @@ const PatientHomeScreen = () => {
     </>
   );
 
-  const renderCareTeamItem = ({ item: team }) => {
+  const renderProviderCard = (provider) => {
     const providerName =
-      team.providerUser?.displayName || team.providerUser?.email || "Provider";
+      provider.providerUser?.displayName ||
+      provider.providerUser?.email ||
+      "Provider";
 
-    const advocateIds = (team.advocates || []).map((a) => a.id).filter(Boolean);
-    const canMessageTeam = !!team.providerId && advocateIds.length > 0;
-
-    const isExpanded = expandedProviders.has(team.providerId);
-    const advocateCount = team.advocates?.length || 0;
+    const advocateIds = provider.advocateIds || [];
+    const hasAdvocates = advocateIds.length > 0;
 
     return (
       <View style={styles.providerCard}>
-        <View style={styles.providerTopRow}>
+        <View style={styles.cardTopRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.providerName} numberOfLines={1}>
+            <Text style={styles.cardName} numberOfLines={1}>
               {providerName}
+            </Text>
+
+            <Text style={styles.cardHint} numberOfLines={1}>
+              {hasAdvocates
+                ? `${advocateIds.length} advocate${
+                    advocateIds.length === 1 ? "" : "s"
+                  } assigned`
+                : "No advocates assigned"}
             </Text>
           </View>
 
@@ -720,8 +906,8 @@ const PatientHomeScreen = () => {
             style={styles.primaryBtn}
             onPress={() =>
               handleOpenCareTeamChat(
-                team.providerUser || {
-                  id: team.providerId,
+                provider.providerUser || {
+                  id: provider.providerId,
                   displayName: providerName,
                 },
               )
@@ -730,68 +916,117 @@ const PatientHomeScreen = () => {
             <Text style={styles.primaryBtnText}>Message</Text>
           </TouchableOpacity>
 
-          {canMessageTeam ? (
-            <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() =>
-                handleOpenCareTeamGroupChat({
-                  providerId: team.providerId,
-                  providerName,
-                  advocateIds,
-                })
-              }
-            >
-              <Text style={styles.secondaryBtnText}>Care Team Chat</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.disabledPill}>
-              <Text style={styles.disabledPillText}>
-                Add advocate to enable group
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {advocateCount > 0 ? (
           <TouchableOpacity
-            style={styles.advocatesHeaderRow}
-            onPress={() => toggleProviderExpanded(team.providerId)}
-            activeOpacity={0.7}
+            style={[
+              styles.secondaryBtn,
+              !hasAdvocates && styles.secondaryBtnDisabled,
+            ]}
+            onPress={() => {
+              if (!hasAdvocates) {
+                Alert.alert(
+                  "Advocate access required",
+                  `Contact ${providerName} or an admin to request advocate access for this provider before using the care team chat.`,
+                );
+                return;
+              }
+
+              handleOpenCareTeamGroupChat({
+                providerId: provider.providerId,
+                providerName,
+                advocateIds,
+              });
+            }}
           >
-            <Text style={styles.advocatesHeaderRowText}>
-              Advocates ({advocateCount})
+            <Text
+              style={[
+                styles.secondaryBtnText,
+                !hasAdvocates && styles.secondaryBtnTextDisabled,
+              ]}
+            >
+              Care Team Chat
             </Text>
-
-            <Text style={styles.chevronText}>{isExpanded ? "▴" : "▾"}</Text>
           </TouchableOpacity>
-        ) : null}
-
-        {isExpanded && advocateCount > 0 ? (
-          <View style={styles.advocatesWrap}>
-            {team.advocates.map((adv) => (
-              <TouchableOpacity
-                key={adv.id}
-                style={styles.advocateRow}
-                onPress={() => handleOpenCareTeamChat(adv)}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.advocateName} numberOfLines={1}>
-                    {adv.displayName || adv.email || "Advocate"}
-                  </Text>
-                  <Text style={styles.advocateHint} numberOfLines={1}>
-                    Tap to message
-                  </Text>
-                </View>
-
-                <Text style={[styles.badge, styles.advocateBadge]}>
-                  Advocate
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : null}
+        </View>
       </View>
     );
+  };
+
+  const renderAdvocateCard = (advocate) => {
+    const advocateName =
+      advocate.advocateUser?.displayName ||
+      advocate.advocateUser?.email ||
+      "Advocate";
+
+    const providerNames = advocate.providerNames || [];
+    const supportsText = providerNames.length
+      ? `Supports: ${providerNames.join(", ")}`
+      : "Supports: Provider relationship pending";
+
+    return (
+      <View style={styles.advocateCard}>
+        <View style={styles.cardTopRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardName} numberOfLines={1}>
+              {advocateName}
+            </Text>
+
+            <Text style={styles.supportsText} numberOfLines={2}>
+              {supportsText}
+            </Text>
+          </View>
+
+          <Text style={[styles.badge, styles.advocateBadge]}>Advocate</Text>
+        </View>
+
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={styles.primaryBtn}
+            onPress={() =>
+              handleOpenCareTeamChat(
+                advocate.advocateUser || {
+                  id: advocate.advocateId,
+                  displayName: advocateName,
+                },
+              )
+            }
+          >
+            <Text style={styles.primaryBtnText}>Message</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderCareTeamRow = ({ item }) => {
+    if (item.type === "section") {
+      return (
+        <View style={styles.careTeamSection}>
+          <Text style={styles.careTeamSectionTitle}>{item.title}</Text>
+          <Text style={styles.careTeamSectionSubtitle}>{item.subtitle}</Text>
+        </View>
+      );
+    }
+
+    if (item.type === "provider") {
+      return renderProviderCard(item);
+    }
+
+    if (item.type === "advocate") {
+      return renderAdvocateCard(item);
+    }
+
+    if (item.type === "emptyAdvocates") {
+      return (
+        <View style={styles.emptyInfo}>
+          <Text style={styles.emptyInfoTitle}>No advocates assigned</Text>
+          <Text style={styles.emptyInfoBody}>
+            Contact your provider or an admin to request advocate access.
+          </Text>
+        </View>
+      );
+    }
+
+    return null;
   };
 
   if (showGlobalLoader) {
@@ -810,9 +1045,9 @@ const PatientHomeScreen = () => {
     return (
       <View style={styles.container}>
         <FlatList
-          data={careTeams}
-          keyExtractor={(item) => item.providerId}
-          renderItem={renderCareTeamItem}
+          data={hasCareTeam ? careTeamRows : []}
+          keyExtractor={(item) => item.id}
+          renderItem={renderCareTeamRow}
           ListHeaderComponent={CareTeamListHeader}
           contentContainerStyle={[
             styles.careTeamListContent,
@@ -826,8 +1061,7 @@ const PatientHomeScreen = () => {
               <View style={styles.emptyInfo}>
                 <Text style={styles.emptyInfoTitle}>No care team yet</Text>
                 <Text style={styles.emptyInfoBody}>
-                  Once a provider assigns themselves or an advocate, they’ll
-                  appear here.
+                  Once a provider is connected to you, they’ll appear here.
                 </Text>
               </View>
             ) : null
@@ -1039,6 +1273,22 @@ const styles = StyleSheet.create({
     paddingVertical: theme.space.xs,
   },
 
+  careTeamSection: {
+    marginTop: theme.space.md,
+    marginBottom: theme.space.xs,
+  },
+  careTeamSectionTitle: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: theme.colors.text,
+  },
+  careTeamSectionSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    color: theme.colors.subtext,
+  },
+
   providerCard: {
     padding: theme.space.md,
     borderRadius: theme.radius.md,
@@ -1049,17 +1299,40 @@ const styles = StyleSheet.create({
     ...theme.shadow.card,
   },
 
-  providerTopRow: {
+  advocateCard: {
+    padding: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.card,
+    marginBottom: theme.space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border,
+    ...theme.shadow.card,
+  },
+
+  cardTopRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: theme.space.sm,
     marginBottom: theme.space.sm,
   },
 
-  providerName: {
+  cardName: {
     fontSize: 16,
     fontWeight: "800",
     color: theme.colors.text,
+  },
+
+  cardHint: {
+    marginTop: 2,
+    fontSize: 12,
+    color: theme.colors.subtext,
+  },
+
+  supportsText: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    color: theme.colors.subtext,
   },
 
   badge: {
@@ -1102,74 +1375,14 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.pill,
     backgroundColor: theme.colors.infoText,
   },
+  secondaryBtnDisabled: {
+    backgroundColor: theme.colors.border,
+  },
   secondaryBtnText: {
     fontWeight: "800",
     color: theme.colors.primaryText,
   },
-
-  disabledPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: theme.space.sm,
-    paddingVertical: theme.space.xs,
-    borderRadius: theme.radius.pill,
-    backgroundColor: theme.colors.border,
-  },
-  disabledPillText: {
-    fontSize: 12,
-    fontWeight: "700",
+  secondaryBtnTextDisabled: {
     color: theme.colors.muted,
-  },
-
-  advocatesWrap: {
-    marginTop: theme.space.md,
-    paddingTop: theme.space.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border,
-  },
-
-  advocateRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.space.sm,
-    paddingVertical: theme.space.xs,
-    paddingHorizontal: 10,
-    borderRadius: theme.radius.md,
-    backgroundColor: theme.colors.bg,
-    marginBottom: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.colors.border,
-  },
-
-  advocateName: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: theme.colors.text,
-  },
-
-  advocateHint: {
-    marginTop: 2,
-    fontSize: 12,
-    color: theme.colors.subtext,
-  },
-
-  advocatesHeaderRow: {
-    marginTop: theme.space.sm,
-    paddingTop: theme.space.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.colors.border,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  advocatesHeaderRowText: {
-    fontWeight: "800",
-    color: theme.colors.text,
-  },
-
-  chevronText: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: theme.colors.subtext,
   },
 });
