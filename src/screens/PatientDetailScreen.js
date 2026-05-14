@@ -8,6 +8,7 @@ import {
   Alert,
   Modal,
   FlatList,
+  ScrollView,
 } from "react-native";
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -61,6 +62,7 @@ const LIST_ADVOCATE_INVITES_FOR_PATIENT = /* GraphQL */ `
       items {
         id
         patientId
+        providerId
         advocateId
         conversationId
         status
@@ -172,6 +174,10 @@ function getInviteErrorAlert(message) {
   };
 }
 
+function uniq(values) {
+  return Array.from(new Set((values || []).filter(Boolean)));
+}
+
 const HeroActionButton = ({ variant, title, subtitle, onPress, disabled }) => {
   const buttonStyles = [styles.heroBtn];
 
@@ -220,6 +226,8 @@ const PatientDetailScreen = () => {
     patientId,
     patientName,
     providerId: routeProviderId,
+    providerName: routeProviderName,
+    providers: routeProviders = [],
     fromRole,
   } = route.params || {};
 
@@ -228,6 +236,7 @@ const PatientDetailScreen = () => {
   const [advocateInvites, setAdvocateInvites] = useState([]);
   const [loadingInvites, setLoadingInvites] = useState(true);
   const [advocateUsersById, setAdvocateUsersById] = useState({});
+  const [providerUsersById, setProviderUsersById] = useState({});
 
   const [advocates, setAdvocates] = useState([]);
   const [advocatesLoading, setAdvocatesLoading] = useState(false);
@@ -248,6 +257,44 @@ const PatientDetailScreen = () => {
     return null;
   }, [routeProviderId, isProviderView, viewerId]);
 
+  const patientDisplayName = patientName || "Patient";
+
+  const normalizedRouteProviders = useMemo(() => {
+    const fromProviders = Array.isArray(routeProviders) ? routeProviders : [];
+
+    const base = fromProviders
+      .map((provider) => ({
+        providerId: provider.providerId,
+        providerName:
+          provider.providerName ||
+          provider.displayName ||
+          provider.email ||
+          "Provider",
+        email: provider.email || null,
+        assignmentId: provider.assignmentId || null,
+        createdAt: provider.createdAt || null,
+      }))
+      .filter((provider) => provider.providerId);
+
+    if (base.length > 0) {
+      return base;
+    }
+
+    if (routeProviderId) {
+      return [
+        {
+          providerId: routeProviderId,
+          providerName: routeProviderName || "Provider",
+          email: null,
+          assignmentId: null,
+          createdAt: null,
+        },
+      ];
+    }
+
+    return [];
+  }, [routeProviders, routeProviderId, routeProviderName]);
+
   useEffect(() => {
     if (!patientId) return;
 
@@ -267,17 +314,17 @@ const PatientDetailScreen = () => {
 
         const sorted = [...items].sort(
           (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+            new Date(b.createdAt || 0).getTime() -
+            new Date(a.createdAt || 0).getTime(),
         );
 
         setAdvocateAssignments(sorted);
 
-        const uniqueAdvocateIds = [
-          ...new Set(sorted.map((a) => a.advocateId).filter(Boolean)),
-        ];
+        const uniqueAdvocateIds = uniq(sorted.map((a) => a.advocateId));
+        const uniqueProviderIds = uniq(sorted.map((a) => a.providerId));
 
         if (uniqueAdvocateIds.length > 0) {
-          const userResults = await Promise.all(
+          const advocateResults = await Promise.all(
             uniqueAdvocateIds.map((id) =>
               safeGql({
                 query: GET_USER,
@@ -294,7 +341,33 @@ const PatientDetailScreen = () => {
 
           setAdvocateUsersById((prev) => {
             const next = { ...prev };
-            userResults.forEach((r) => {
+            advocateResults.forEach((r) => {
+              const u = r?.data?.getUser;
+              if (u?.id) next[u.id] = u;
+            });
+            return next;
+          });
+        }
+
+        if (uniqueProviderIds.length > 0) {
+          const providerResults = await Promise.all(
+            uniqueProviderIds.map((id) =>
+              safeGql({
+                query: GET_USER,
+                variables: { id },
+                label: `GetProviderUser:${id}`,
+              }).catch((err) => {
+                devLog("GetProviderUser ERR", id, err);
+                return null;
+              }),
+            ),
+          );
+
+          if (!mounted) return;
+
+          setProviderUsersById((prev) => {
+            const next = { ...prev };
+            providerResults.forEach((r) => {
               const u = r?.data?.getUser;
               if (u?.id) next[u.id] = u;
             });
@@ -333,15 +406,13 @@ const PatientDetailScreen = () => {
 
         const sorted = [...items].sort(
           (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+            new Date(b.createdAt || 0).getTime() -
+            new Date(a.createdAt || 0).getTime(),
         );
 
         setAdvocateInvites(sorted);
 
-        const uniqueAdvocateIds = [
-          ...new Set(sorted.map((i) => i.advocateId).filter(Boolean)),
-        ];
-
+        const uniqueAdvocateIds = uniq(sorted.map((i) => i.advocateId));
         const missingIds = uniqueAdvocateIds.filter(
           (id) => !advocateUsersById[id],
         );
@@ -414,6 +485,62 @@ const PatientDetailScreen = () => {
     };
   }, [effectiveProviderId]);
 
+  const advocateProviders = useMemo(() => {
+    if (!isAdvocateView) return [];
+
+    const fromAssignments = (advocateAssignments || [])
+      .filter((a) => a.active !== false)
+      .filter((a) => !viewerId || a.advocateId === viewerId)
+      .map((assignment) => {
+        const providerUser = providerUsersById[assignment.providerId];
+        const routeProvider = normalizedRouteProviders.find(
+          (p) => p.providerId === assignment.providerId,
+        );
+
+        return {
+          providerId: assignment.providerId,
+          providerName:
+            providerUser?.displayName ||
+            providerUser?.email ||
+            routeProvider?.providerName ||
+            "Provider",
+          email: providerUser?.email || routeProvider?.email || null,
+          assignmentId: assignment.id,
+          createdAt: assignment.createdAt,
+        };
+      })
+      .filter((provider) => provider.providerId);
+
+    const merged = [...normalizedRouteProviders, ...fromAssignments];
+    const byId = {};
+
+    merged.forEach((provider) => {
+      if (!provider.providerId) return;
+
+      const existing = byId[provider.providerId];
+
+      byId[provider.providerId] = {
+        ...existing,
+        ...provider,
+        providerName:
+          provider.providerName ||
+          existing?.providerName ||
+          provider.email ||
+          "Provider",
+      };
+    });
+
+    return Object.values(byId).sort((a, b) =>
+      (a.providerName || "").localeCompare(b.providerName || ""),
+    );
+  }, [
+    isAdvocateView,
+    advocateAssignments,
+    viewerId,
+    providerUsersById,
+    normalizedRouteProviders,
+  ]);
+
   const providerScopedAssignments = useMemo(() => {
     if (!effectiveProviderId) return [];
     return (advocateAssignments || []).filter(
@@ -426,7 +553,9 @@ const PatientDetailScreen = () => {
 
     return (advocateInvites || []).filter(
       (invite) =>
-        invite.createdBy === effectiveProviderId && invite.status === "PENDING",
+        invite.status === "PENDING" &&
+        (invite.providerId === effectiveProviderId ||
+          invite.createdBy === effectiveProviderId),
     );
   }, [advocateInvites, effectiveProviderId]);
 
@@ -444,6 +573,12 @@ const PatientDetailScreen = () => {
       .map((a) => advocateUsersById[a.advocateId])
       .filter(Boolean);
   }, [providerScopedAssignments, advocateUsersById]);
+
+  const providerDisplayName =
+    providerUser?.displayName ||
+    providerUser?.email ||
+    routeProviderName ||
+    "Provider";
 
   const openDirectChat = useCallback(
     async (targetUser) => {
@@ -474,6 +609,66 @@ const PatientDetailScreen = () => {
     [viewerId, currentUser?.displayName, navigation],
   );
 
+  const openCareTeamChatForProvider = useCallback(
+    async (provider) => {
+      const providerId = provider?.providerId;
+
+      if (!patientId) {
+        Alert.alert("Missing patient", "Patient information is not available.");
+        return;
+      }
+
+      if (!viewerId) {
+        Alert.alert("User not ready", "Your account is still loading.");
+        return;
+      }
+
+      if (!providerId) {
+        Alert.alert(
+          "Missing provider context",
+          "Choose a provider so the correct care team chat can be used.",
+        );
+        return;
+      }
+
+      try {
+        const activeForThisProvider = (advocateAssignments || []).filter(
+          (a) =>
+            a.active !== false &&
+            a.patientId === patientId &&
+            a.providerId === providerId,
+        );
+
+        const advocateIds = uniq(
+          activeForThisProvider.map((a) => a.advocateId),
+        );
+
+        const providerName = provider?.providerName || "Provider";
+
+        const conversation = await ensureCareTeamConversation({
+          currentUserId: viewerId,
+          patientId,
+          providerId,
+          advocateIds,
+          title: `Care Team: ${providerName}`,
+        });
+
+        navigation.navigate("Chat", {
+          conversationId: conversation.id,
+          conversation,
+          title: conversation.title || `Care Team: ${providerName}`,
+        });
+      } catch (error) {
+        devLog("openCareTeamChatForProvider ERR", error);
+        Alert.alert(
+          "Unable to open care team chat",
+          "The care team conversation could not be opened. Please try again.",
+        );
+      }
+    },
+    [patientId, viewerId, advocateAssignments, navigation],
+  );
+
   const openCareTeamChat = useCallback(async () => {
     if (!patientId) {
       Alert.alert("Missing patient", "Patient information is not available.");
@@ -498,9 +693,7 @@ const PatientDetailScreen = () => {
         (a) => a.active,
       );
 
-      const advocateIds = Array.from(
-        new Set(activeForThisProvider.map((a) => a.advocateId).filter(Boolean)),
-      );
+      const advocateIds = uniq(activeForThisProvider.map((a) => a.advocateId));
 
       if (advocateIds.length > 0) {
         const conversation = await ensureCareTeamConversation({
@@ -508,13 +701,13 @@ const PatientDetailScreen = () => {
           patientId,
           providerId: effectiveProviderId,
           advocateIds,
-          title: `Care Team: ${patientName || "Patient"}`,
+          title: `Care Team: ${providerDisplayName}`,
         });
 
         navigation.navigate("Chat", {
           conversationId: conversation.id,
           conversation,
-          title: conversation.title || "Care Team Chat",
+          title: conversation.title || `Care Team: ${providerDisplayName}`,
         });
         return;
       }
@@ -545,6 +738,7 @@ const PatientDetailScreen = () => {
     viewerId,
     effectiveProviderId,
     providerScopedAssignments,
+    providerDisplayName,
     currentUser?.displayName,
     navigation,
   ]);
@@ -645,7 +839,8 @@ const PatientDetailScreen = () => {
       const existingPending = advocateInvites.find(
         (invite) =>
           invite.patientId === patientId &&
-          invite.createdBy === effectiveProviderId &&
+          (invite.providerId === effectiveProviderId ||
+            invite.createdBy === effectiveProviderId) &&
           invite.advocateId === selectedAdvocate.id &&
           invite.status === "PENDING",
       );
@@ -661,13 +856,10 @@ const PatientDetailScreen = () => {
       setAssigning(true);
 
       try {
-        const activeAdvocateIds = Array.from(
-          new Set(
-            (providerScopedAssignments || [])
-              .filter((a) => a.active)
-              .map((a) => a.advocateId)
-              .filter(Boolean),
-          ),
+        const activeAdvocateIds = uniq(
+          (providerScopedAssignments || [])
+            .filter((a) => a.active)
+            .map((a) => a.advocateId),
         );
 
         await ensureCareTeamConversation({
@@ -675,7 +867,7 @@ const PatientDetailScreen = () => {
           patientId,
           providerId: effectiveProviderId,
           advocateIds: activeAdvocateIds,
-          title: `Care Team: ${patientName || "Patient"}`,
+          title: `Care Team: ${providerDisplayName}`,
         });
 
         const res = await safeGql({
@@ -696,7 +888,8 @@ const PatientDetailScreen = () => {
         setAdvocateInvites((prev) =>
           [newInvite, ...prev].sort(
             (a, b) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+              new Date(b.createdAt || 0).getTime() -
+              new Date(a.createdAt || 0).getTime(),
           ),
         );
 
@@ -731,7 +924,7 @@ const PatientDetailScreen = () => {
       advocateAssignments,
       advocateInvites,
       providerScopedAssignments,
-      patientName,
+      providerDisplayName,
     ],
   );
 
@@ -786,16 +979,123 @@ const PatientDetailScreen = () => {
     [advocateUsersById, isProviderView],
   );
 
-  const providerDisplayName =
-    providerUser?.displayName || providerUser?.email || "Provider";
-  const patientDisplayName = patientName || "Patient";
-
   const canOpenGroupChat =
     !!effectiveProviderId && activeAdvocatesForSummary.length > 0;
 
   const handleToggleManage = () => {
     if (!isProviderView) return;
     setManageExpanded((prev) => !prev);
+  };
+
+  const renderAdvocateProviderCard = (provider) => {
+    const providerName = provider.providerName || "Provider";
+
+    return (
+      <SectionCard key={provider.providerId} style={styles.providerCard}>
+        <View style={styles.providerHeaderRow}>
+          <View style={styles.flexOne}>
+            <Text style={styles.providerName} numberOfLines={1}>
+              {providerName}
+            </Text>
+            <Text style={styles.providerSubtext} numberOfLines={1}>
+              Provider-specific care team
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.providerActionsGrid}>
+          <HeroActionButton
+            variant="secondary"
+            title={`Message ${providerName}`}
+            subtitle="Direct provider chat"
+            onPress={() =>
+              openDirectChat({
+                id: provider.providerId,
+                displayName: providerName,
+                email: provider.email,
+              })
+            }
+            disabled={!viewerId || loadingCurrentUser}
+          />
+
+          <HeroActionButton
+            variant="primary"
+            title="Care Team Chat"
+            subtitle={`${patientDisplayName} • ${providerName}`}
+            onPress={() => openCareTeamChatForProvider(provider)}
+            disabled={!viewerId || loadingCurrentUser}
+          />
+        </View>
+      </SectionCard>
+    );
+  };
+
+  const renderAdvocateView = () => {
+    return (
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(insets.bottom, theme.space.sm) },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        <SectionCard style={styles.heroCard}>
+          <View style={styles.heroHeaderRow}>
+            <View style={styles.flexOne}>
+              <Text style={styles.heroTitle}>Patient</Text>
+              <Text style={styles.heroSubtitle} numberOfLines={1}>
+                Shared advocate relationship
+              </Text>
+            </View>
+
+            {loadingAssignments || loadingInvites ? (
+              <View style={styles.heroLoadingPill}>
+                <ActivityIndicator size="small" />
+                <Text style={styles.heroLoadingText}>Loading</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.heroActionsGrid}>
+            <HeroActionButton
+              variant="primary"
+              title={
+                patientName && patientName.trim()
+                  ? `Message ${patientName.trim()}`
+                  : "Message Patient"
+              }
+              subtitle="One shared direct chat"
+              onPress={() =>
+                openDirectChat({
+                  id: patientId,
+                  displayName: patientDisplayName,
+                  email: null,
+                })
+              }
+              disabled={!viewerId || !patientId || loadingCurrentUser}
+            />
+          </View>
+        </SectionCard>
+
+        <View style={styles.sectionTitleRow}>
+          <Text style={styles.sectionTitle}>Providers</Text>
+          <Text style={styles.sectionCount}>{advocateProviders.length}</Text>
+        </View>
+
+        {advocateProviders.length === 0 && !loadingAssignments ? (
+          <SectionCard>
+            <Text style={styles.emptyTitle}>No providers found</Text>
+            <Text style={styles.emptyBody}>
+              Provider-specific care team chats will appear here after an
+              advocate assignment is active.
+            </Text>
+          </SectionCard>
+        ) : null}
+
+        {advocateProviders.map(renderAdvocateProviderCard)}
+      </ScrollView>
+    );
   };
 
   const renderManageAdvocatesPanel = () => {
@@ -939,31 +1239,8 @@ const PatientDetailScreen = () => {
     );
   };
 
-  return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top, paddingBottom: insets.bottom || 0 },
-      ]}
-    >
-      <View style={styles.topBar}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backBtn}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.backText}>←</Text>
-        </TouchableOpacity>
-
-        <View style={styles.topBarTitleWrap}>
-          <Text style={styles.topBarTitle} numberOfLines={1}>
-            {patientDisplayName}
-          </Text>
-        </View>
-
-        <View style={styles.topBarSpacer} />
-      </View>
-
+  const renderProviderView = () => {
+    return (
       <View style={styles.content}>
         <SectionCard style={styles.heroCard}>
           <View style={styles.heroHeaderRow}>
@@ -1010,42 +1287,49 @@ const PatientDetailScreen = () => {
               disabled={!viewerId || !patientId || loadingCurrentUser}
             />
 
-            {isAdvocateView && effectiveProviderId ? (
-              <HeroActionButton
-                variant="secondary"
-                title={
-                  providerDisplayName && providerDisplayName !== "Provider"
-                    ? `Message ${providerDisplayName}`
-                    : "Message Provider"
-                }
-                subtitle="Direct chat"
-                onPress={() =>
-                  openDirectChat({
-                    id: effectiveProviderId,
-                    displayName: providerDisplayName,
-                    email: providerUser?.email,
-                  })
-                }
-                disabled={!viewerId || loadingCurrentUser}
-              />
-            ) : null}
-
-            {isProviderView ? (
-              <HeroActionButton
-                variant="ghost"
-                title={
-                  manageExpanded ? "Hide Manage Advocates" : "Manage Advocates"
-                }
-                subtitle="View advocates, invites, and messages"
-                onPress={handleToggleManage}
-                disabled={!viewerId || loadingCurrentUser}
-              />
-            ) : null}
+            <HeroActionButton
+              variant="ghost"
+              title={
+                manageExpanded ? "Hide Manage Advocates" : "Manage Advocates"
+              }
+              subtitle="View advocates, invites, and messages"
+              onPress={handleToggleManage}
+              disabled={!viewerId || loadingCurrentUser}
+            />
           </View>
 
           {renderManageAdvocatesPanel()}
         </SectionCard>
       </View>
+    );
+  };
+
+  return (
+    <View
+      style={[
+        styles.container,
+        { paddingTop: insets.top, paddingBottom: insets.bottom || 0 },
+      ]}
+    >
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.backText}>←</Text>
+        </TouchableOpacity>
+
+        <View style={styles.topBarTitleWrap}>
+          <Text style={styles.topBarTitle} numberOfLines={1}>
+            {patientDisplayName}
+          </Text>
+        </View>
+
+        <View style={styles.topBarSpacer} />
+      </View>
+
+      {isAdvocateView ? renderAdvocateView() : renderProviderView()}
 
       {isProviderView ? (
         <AdvocatePickerModal
@@ -1199,6 +1483,15 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.bg,
   },
 
+  scroll: {
+    flex: 1,
+  },
+
+  scrollContent: {
+    paddingHorizontal: theme.space.sm,
+    paddingTop: theme.space.xs,
+  },
+
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -1270,6 +1563,12 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
   },
 
+  heroSubtitle: {
+    ...theme.type.small,
+    color: theme.colors.subtext,
+    marginTop: 2,
+  },
+
   heroLoadingPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -1335,6 +1634,66 @@ const styles = StyleSheet.create({
 
   heroBtnSubOnPrimary: {
     color: theme.colors.infoBg,
+  },
+
+  sectionTitleRow: {
+    marginTop: theme.space.xs,
+    marginBottom: theme.space.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  sectionTitle: {
+    ...theme.type.h3,
+    color: theme.colors.text,
+  },
+
+  sectionCount: {
+    ...theme.type.small,
+    fontWeight: "800",
+    color: theme.colors.subtext,
+  },
+
+  providerCard: {
+    marginBottom: theme.space.sm,
+  },
+
+  providerHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.space.xs,
+  },
+
+  providerName: {
+    ...theme.type.subtext,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  providerSubtext: {
+    ...theme.type.small,
+    color: theme.colors.subtext,
+    marginTop: 3,
+  },
+
+  providerActionsGrid: {
+    marginTop: theme.space.sm,
+    gap: theme.space.xs,
+  },
+
+  emptyTitle: {
+    ...theme.type.subtext,
+    fontWeight: "800",
+    color: theme.colors.text,
+  },
+
+  emptyBody: {
+    ...theme.type.small,
+    color: theme.colors.subtext,
+    marginTop: 4,
+    lineHeight: 18,
   },
 
   managePanel: {

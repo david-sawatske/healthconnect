@@ -96,10 +96,12 @@ const ProviderHomeScreen = () => {
         patientId: patient.id,
         patientName: patient.displayName || "Patient",
         providerId: currentUser.id,
+        providerName:
+          currentUser.displayName || currentUser.email || "Provider",
         fromRole: "PROVIDER",
       });
     },
-    [currentUser?.id, navigation],
+    [currentUser?.id, currentUser?.displayName, currentUser?.email, navigation],
   );
 
   const renderPatientItem = useCallback(

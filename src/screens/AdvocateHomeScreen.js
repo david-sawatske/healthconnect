@@ -70,6 +70,7 @@ const LIST_MY_PENDING_ADVOCATE_INVITES = /* GraphQL */ `
       items {
         id
         patientId
+        providerId
         advocateId
         conversationId
         status
@@ -159,6 +160,15 @@ const batchFetchUsers = async (ids) => {
   return results;
 };
 
+function getProviderSummary(providers = []) {
+  const names = providers.map((p) => p.providerName).filter(Boolean);
+
+  if (names.length === 0) return "No providers";
+  if (names.length === 1) return `Provider: ${names[0]}`;
+
+  return `${names.length} providers • ${names[0]} +${names.length - 1}`;
+}
+
 const AdvocateHomeScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -235,28 +245,66 @@ const AdvocateHomeScreen = () => {
 
       const userMap = await batchFetchUsers(allIds);
 
-      const map = {};
-      activeAssignments.forEach((a) => {
-        const pId = a.patientId;
-        const prId = a.providerId;
-        if (!pId || !prId) return;
+      const patientMap = {};
 
-        const key = `${pId}#${prId}`;
-        if (!map[key]) {
-          map[key] = {
-            patientId: pId,
-            patientName: userMap[pId]?.displayName ?? "Unknown Patient",
-            providerId: prId,
-            providerName: userMap[prId]?.displayName ?? "Unknown Provider",
-            createdAt: a.createdAt,
+      activeAssignments.forEach((assignment) => {
+        const patientId = assignment.patientId;
+        const providerId = assignment.providerId;
+
+        if (!patientId || !providerId) return;
+
+        if (!patientMap[patientId]) {
+          patientMap[patientId] = {
+            patientId,
+            patientName:
+              userMap[patientId]?.displayName ||
+              userMap[patientId]?.email ||
+              "Unknown Patient",
+            providers: [],
+            createdAt: assignment.createdAt,
           };
+        }
+
+        const existingProvider = patientMap[patientId].providers.some(
+          (provider) => provider.providerId === providerId,
+        );
+
+        if (!existingProvider) {
+          patientMap[patientId].providers.push({
+            providerId,
+            providerName:
+              userMap[providerId]?.displayName ||
+              userMap[providerId]?.email ||
+              "Unknown Provider",
+            assignmentId: assignment.id,
+            createdAt: assignment.createdAt,
+          });
+        }
+
+        const currentCreatedAt = new Date(
+          patientMap[patientId].createdAt || 0,
+        ).getTime();
+        const assignmentCreatedAt = new Date(
+          assignment.createdAt || 0,
+        ).getTime();
+
+        if (assignmentCreatedAt > currentCreatedAt) {
+          patientMap[patientId].createdAt = assignment.createdAt;
         }
       });
 
-      const rows = Object.values(map).sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
+      const rows = Object.values(patientMap)
+        .map((patient) => ({
+          ...patient,
+          providers: [...(patient.providers || [])].sort((a, b) =>
+            (a.providerName || "").localeCompare(b.providerName || ""),
+          ),
+        }))
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || 0).getTime() -
+            new Date(a.createdAt || 0).getTime(),
+        );
 
       setPatients(rows);
     } catch (err) {
@@ -335,6 +383,7 @@ const AdvocateHomeScreen = () => {
 
       const userIds = all.flatMap((invite) => [
         invite.patientId,
+        invite.providerId,
         invite.createdBy,
       ]);
 
@@ -555,10 +604,14 @@ const AdvocateHomeScreen = () => {
 
   const handleOpenPatient = useCallback(
     (patient) => {
+      const firstProvider = patient.providers?.[0] || null;
+
       navigation.navigate("PatientDetail", {
         patientId: patient.patientId,
         patientName: patient.patientName,
-        providerId: patient.providerId,
+        providers: patient.providers || [],
+        providerId: firstProvider?.providerId || null,
+        providerName: firstProvider?.providerName || null,
         advocateId,
         fromRole: "ADVOCATE",
       });
@@ -573,13 +626,22 @@ const AdvocateHomeScreen = () => {
           new Date(b.createdAt || 0).getTime() -
           new Date(a.createdAt || 0).getTime(),
       )
-      .map((invite) => ({
-        ...invite,
-        patientName:
-          inviteUsersById[invite.patientId]?.displayName || "Unknown Patient",
-        providerName:
-          inviteUsersById[invite.createdBy]?.displayName || "Unknown Provider",
-      }));
+      .map((invite) => {
+        const providerUser =
+          inviteUsersById[invite.providerId] ||
+          inviteUsersById[invite.createdBy] ||
+          null;
+
+        return {
+          ...invite,
+          patientName:
+            inviteUsersById[invite.patientId]?.displayName || "Unknown Patient",
+          providerName:
+            providerUser?.displayName ||
+            providerUser?.email ||
+            "Unknown Provider",
+        };
+      });
   }, [pendingInvites, inviteUsersById]);
 
   const computeUnreadForRow = useCallback(
@@ -589,18 +651,23 @@ const AdvocateHomeScreen = () => {
       const groupById = careTeamConvoRef.current?.__groupById || {};
       const candidateGroups = Object.values(groupById);
 
-      const careTeamConvo =
-        candidateGroups.find((c) => {
-          const ids = Array.isArray(c?.memberIds) ? c.memberIds : [];
+      const careTeamConvos = (row.providers || [])
+        .map((provider) => {
           return (
-            c?.isGroup === true &&
-            ids.includes(advocateId) &&
-            ids.includes(row.patientId) &&
-            ids.includes(row.providerId)
+            candidateGroups.find((c) => {
+              const ids = Array.isArray(c?.memberIds) ? c.memberIds : [];
+              return (
+                c?.isGroup === true &&
+                ids.includes(advocateId) &&
+                ids.includes(row.patientId) &&
+                ids.includes(provider.providerId)
+              );
+            }) || null
           );
-        }) || null;
+        })
+        .filter(Boolean);
 
-      const convos = [directConvo, careTeamConvo].filter(Boolean);
+      const convos = [directConvo, ...careTeamConvos].filter(Boolean);
 
       const unreadForConvo = (c) => {
         const lastMsgAt = c?.lastMessageAt || null;
@@ -688,7 +755,7 @@ const AdvocateHomeScreen = () => {
   }, [selectedInvite, fetchPendingInvites]);
 
   const renderPatientItem = ({ item }) => {
-    const subtitle = `Provider: ${item.providerName || "Unknown Provider"}`;
+    const subtitle = getProviderSummary(item.providers);
     const isUnread = computeUnreadForRow(item);
 
     return (
@@ -698,7 +765,7 @@ const AdvocateHomeScreen = () => {
           subtitle={subtitle}
           unread={isUnread}
           onPress={() => handleOpenPatient(item)}
-          testID={`patient-${item.patientId}-${item.providerId}`}
+          testID={`patient-${item.patientId}`}
         />
       </View>
     );
@@ -781,7 +848,7 @@ const AdvocateHomeScreen = () => {
         ) : (
           <FlatList
             data={patients}
-            keyExtractor={(item) => `${item.patientId}#${item.providerId}`}
+            keyExtractor={(item) => item.patientId}
             renderItem={renderPatientItem}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
