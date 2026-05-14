@@ -152,8 +152,6 @@ function getUserDisplay(user) {
 }
 
 function getConversationTitle({ conversation, currentUserId, usersById }) {
-  if (conversation?.title) return conversation.title;
-
   const memberIds = Array.isArray(conversation?.memberIds)
     ? conversation.memberIds
     : [];
@@ -164,8 +162,11 @@ function getConversationTitle({ conversation, currentUserId, usersById }) {
     if (otherIds.length === 1) {
       return getUserDisplay(usersById[otherIds[0]]) || "Conversation";
     }
+
     return "Conversation";
   }
+
+  if (conversation?.title) return conversation.title;
 
   const names = otherIds
     .map((id) => getUserDisplay(usersById[id]))
