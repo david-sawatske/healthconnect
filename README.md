@@ -6,6 +6,12 @@ This project is designed as a portfolio application to demonstrate production-st
 
 > **Note:** HealthConnect is a portfolio/demo application. It is not intended for real patient care or production healthcare use without additional compliance, security, auditing, monitoring, and operational review.
 
+## Live Demo
+
+Web demo: https://healthconnect.expo.app
+
+> The web version is intended for employer review. Some native mobile features, such as video calling and file uploads, may show browser fallback behavior.
+
 ---
 
 ## Table of Contents
