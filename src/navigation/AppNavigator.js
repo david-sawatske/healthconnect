@@ -1,5 +1,13 @@
 import React from "react";
-import { Button, Alert, Platform, StyleSheet, View } from "react-native";
+import {
+  Button,
+  Alert,
+  Platform,
+  StyleSheet,
+  View,
+  Text,
+  Linking,
+} from "react-native";
 import {
   NavigationContainer,
   createNavigationContainerRef,
@@ -46,6 +54,29 @@ function LogoutButton({ navigation }) {
   };
 
   return <Button title="Log Out" onPress={handleLogout} />;
+}
+
+function WebDemoFooter() {
+  if (Platform.OS !== "web") return null;
+
+  const handleContactPress = () => {
+    Linking.openURL("mailto:david@sawatske.com");
+  };
+
+  return (
+    <View style={styles.webFooter}>
+      <Text style={styles.webFooterText}>
+        Mobile-first demo. Scroll where you would swipe.
+      </Text>
+
+      <Text style={styles.webFooterText}>
+        Questions/Mobile App Access:{" "}
+        <Text style={styles.webFooterLink} onPress={handleContactPress}>
+          david@sawatske.com
+        </Text>
+      </Text>
+    </View>
+  );
 }
 
 export default function AppNavigator() {
@@ -203,6 +234,8 @@ export default function AppNavigator() {
           <IncomingCallModal onAccept={onAccept} onDecline={onDecline} />
         ) : null}
       </View>
+
+      <WebDemoFooter />
     </View>
   );
 }
@@ -218,5 +251,24 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: Platform.OS === "web" ? 430 : undefined,
     backgroundColor: "#FFFFFF",
+  },
+  webFooter: {
+    width: "100%",
+    maxWidth: 430,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: "#F9FAFB",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+  },
+  webFooterText: {
+    fontSize: 11,
+    lineHeight: 15,
+    color: "#6B7280",
+    textAlign: "center",
+  },
+  webFooterLink: {
+    color: "#2563EB",
+    fontWeight: "600",
   },
 });
