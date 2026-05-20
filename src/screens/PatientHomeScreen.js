@@ -25,6 +25,11 @@ import RolePill from "../components/RolePill";
 import {
   ensureDirectConversation,
   ensureCareTeamConversation,
+  getLastActivityTs,
+  getLastNonSystemMessageForConversation,
+  listConversationReadStateForUser,
+  listConversationsForUser,
+  sortConversationsByLastActivity,
 } from "../features/chat/conversationService";
 import { theme } from "../ui/theme";
 
@@ -33,51 +38,6 @@ const client = generateClient();
 const devLog = (...args) => {
   if (__DEV__) console.log("[PATIENT_HOME]", ...args);
 };
-
-const LIST_MY_CONVERSATIONS = /* GraphQL */ `
-  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
-    listConversations(
-      filter: { memberIds: { contains: $sub } }
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        title
-        memberIds
-        createdAt
-        updatedAt
-        isGroup
-        createdBy
-        lastMessageAt
-      }
-      nextToken
-    }
-  }
-`;
-
-const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
-  query ConversationParticipantsByUser(
-    $userId: String!
-    $limit: Int
-    $nextToken: String
-  ) {
-    conversationParticipantsByUser(
-      userId: $userId
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        conversationId
-        userId
-        lastReadAt
-        updatedAt
-      }
-      nextToken
-    }
-  }
-`;
 
 const PROVIDER_PATIENTS_BY_PATIENT = /* GraphQL */ `
   query ProviderPatientsByPatient($patientId: ID!) {
@@ -118,24 +78,6 @@ const GET_USER = /* GraphQL */ `
       displayName
       role
       email
-    }
-  }
-`;
-
-const LAST_MESSAGE_BY_CONVERSATION = /* GraphQL */ `
-  query LastMessageByConversation($conversationId: ID!, $limit: Int) {
-    messagesByConversation(
-      conversationId: $conversationId
-      sortDirection: DESC
-      limit: $limit
-    ) {
-      items {
-        id
-        type
-        body
-        senderId
-        createdAt
-      }
     }
   }
 `;
@@ -233,26 +175,6 @@ const PatientHomeScreen = () => {
   const careTeamBottomPadding = insets.bottom + theme.space.lg;
   const conversationsBottomPadding = insets.bottom + theme.space.lg;
 
-  const getLastActivityTs = useCallback((conversation) => {
-    return (
-      conversation?.lastMessageAt ||
-      conversation?.updatedAt ||
-      conversation?.createdAt ||
-      0
-    );
-  }, []);
-
-  const sortByLastActivity = useCallback(
-    (items) => {
-      return [...items].sort((a, b) => {
-        const at = new Date(getLastActivityTs(a)).getTime();
-        const bt = new Date(getLastActivityTs(b)).getTime();
-        return bt - at;
-      });
-    },
-    [getLastActivityTs],
-  );
-
   const fetchUserMapForIds = useCallback(async (ids) => {
     const uniqueIds = uniq(ids).filter((id) => !usersByIdRef.current[id]);
     if (!uniqueIds.length) return {};
@@ -324,18 +246,12 @@ const PatientHomeScreen = () => {
     }));
 
     try {
-      const { data } = await client.graphql({
-        query: LAST_MESSAGE_BY_CONVERSATION,
-        variables: {
-          conversationId,
+      const lastNonSystemMessage = await getLastNonSystemMessageForConversation(
+        conversationId,
+        {
           limit: LAST_MESSAGE_SCAN_LIMIT,
         },
-        authMode: "userPool",
-      });
-
-      const items = data?.messagesByConversation?.items || [];
-      const lastNonSystemMessage =
-        items.find((message) => message?.type !== "SYSTEM") || null;
+      );
 
       lastMessageRef.current = {
         ...lastMessageRef.current,
@@ -381,30 +297,9 @@ const PatientHomeScreen = () => {
     setLoadingReads(true);
 
     try {
-      let next = null;
-      const map = {};
-
-      do {
-        const { data } = await client.graphql({
-          query: CONVERSATION_PARTICIPANTS_BY_USER,
-          variables: {
-            userId: currentUser.id,
-            limit: 200,
-            nextToken: next,
-          },
-          authMode: "userPool",
-        });
-
-        const result = data?.conversationParticipantsByUser;
-        const items = result?.items || [];
-        next = result?.nextToken || null;
-
-        items.forEach((participant) => {
-          if (participant?.conversationId) {
-            map[participant.conversationId] = participant.lastReadAt || null;
-          }
-        });
-      } while (next);
+      const map = await listConversationReadStateForUser(currentUser.id, {
+        limit: 200,
+      });
 
       lastReadAtRef.current = map;
       setLastReadAtByConvoId(map);
@@ -428,22 +323,16 @@ const PatientHomeScreen = () => {
           setError(null);
         }
 
-        const { data } = await client.graphql({
-          query: LIST_MY_CONVERSATIONS,
-          variables: {
-            sub: currentUser.id,
-            limit: PAGE_SIZE,
-            nextToken: reset ? null : nextToken,
-          },
-          authMode: "userPool",
+        const result = await listConversationsForUser(currentUser.id, {
+          limit: PAGE_SIZE,
+          nextToken: reset ? null : nextToken,
         });
 
-        const result = data?.listConversations;
         const newItems = result?.items || [];
 
         setConversations((prev) => {
           const merged = reset ? newItems : [...prev, ...newItems];
-          return sortByLastActivity(merged);
+          return sortConversationsByLastActivity(merged);
         });
 
         setNextToken(result?.nextToken || null);
@@ -454,7 +343,7 @@ const PatientHomeScreen = () => {
         setLoadingConvos(false);
       }
     },
-    [currentUser?.id, nextToken, sortByLastActivity],
+    [currentUser?.id, nextToken],
   );
 
   const fetchCareTeam = useCallback(async () => {
@@ -727,7 +616,7 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           if (prev.some((item) => item.id === conversation.id)) return prev;
-          return sortByLastActivity([conversation, ...prev]);
+          return sortConversationsByLastActivity([conversation, ...prev]);
         });
 
         navigation.navigate("Chat", {
@@ -754,7 +643,7 @@ const PatientHomeScreen = () => {
         );
       }
     },
-    [currentUser?.id, navigation, sortByLastActivity],
+    [currentUser?.id, navigation],
   );
 
   const handleOpenCareTeamGroupChat = useCallback(
@@ -772,7 +661,7 @@ const PatientHomeScreen = () => {
 
         setConversations((prev) => {
           if (prev.some((item) => item.id === conversation.id)) return prev;
-          return sortByLastActivity([conversation, ...prev]);
+          return sortConversationsByLastActivity([conversation, ...prev]);
         });
 
         navigation.navigate("Chat", {
@@ -793,7 +682,7 @@ const PatientHomeScreen = () => {
         );
       }
     },
-    [currentUser?.id, navigation, sortByLastActivity],
+    [currentUser?.id, navigation],
   );
 
   const careTeamRows = useMemo(() => {
