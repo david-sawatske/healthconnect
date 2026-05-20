@@ -24,6 +24,10 @@ import PatientListItem from "../components/PatientListItem";
 import RolePill from "../components/RolePill";
 import { DeclineAdvocateInvite } from "../graphql/advocateInvites";
 import { ApproveInviteServer } from "../graphql/customMutations";
+import {
+  listAllConversationsForUser,
+  listConversationReadStateForUser,
+} from "../features/chat/conversationService";
 import { theme } from "../ui/theme";
 
 const client = generateClient();
@@ -92,50 +96,6 @@ const GET_USER = /* GraphQL */ `
       displayName
       role
       email
-    }
-  }
-`;
-
-const LIST_MY_CONVERSATIONS = /* GraphQL */ `
-  query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
-    listConversations(
-      filter: { memberIds: { contains: $sub } }
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        title
-        memberIds
-        isGroup
-        createdAt
-        updatedAt
-        lastMessageAt
-      }
-      nextToken
-    }
-  }
-`;
-
-const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
-  query ConversationParticipantsByUser(
-    $userId: String!
-    $limit: Int
-    $nextToken: String
-  ) {
-    conversationParticipantsByUser(
-      userId: $userId
-      limit: $limit
-      nextToken: $nextToken
-    ) {
-      items {
-        id
-        conversationId
-        userId
-        lastReadAt
-        updatedAt
-      }
-      nextToken
     }
   }
 `;
@@ -410,28 +370,9 @@ const AdvocateHomeScreen = () => {
     setLoadingReads(true);
 
     try {
-      let next = null;
-      const map = {};
-
-      do {
-        const { data } = await client.graphql({
-          query: CONVERSATION_PARTICIPANTS_BY_USER,
-          variables: {
-            userId: advocateId,
-            limit: 200,
-            nextToken: next,
-          },
-          authMode: "userPool",
-        });
-
-        const res = data?.conversationParticipantsByUser;
-        const items = res?.items || [];
-        next = res?.nextToken || null;
-
-        items.forEach((p) => {
-          if (p?.conversationId) map[p.conversationId] = p.lastReadAt || null;
-        });
-      } while (next);
+      const map = await listConversationReadStateForUser(advocateId, {
+        limit: 200,
+      });
 
       lastReadAtRef.current = map;
       setLastReadAtByConvoId(map);
@@ -454,22 +395,9 @@ const AdvocateHomeScreen = () => {
     convosInFlightRef.current = true;
 
     try {
-      let nt = null;
-      const all = [];
-
-      do {
-        const { data } = await client.graphql({
-          query: LIST_MY_CONVERSATIONS,
-          variables: { sub: advocateId, limit: 200, nextToken: nt },
-          authMode: "userPool",
-        });
-
-        const res = data?.listConversations;
-        const items = res?.items || [];
-        nt = res?.nextToken || null;
-
-        all.push(...items);
-      } while (nt);
+      const all = await listAllConversationsForUser(advocateId, {
+        limit: 200,
+      });
 
       const directMap = {};
       const groupConvos = [];
