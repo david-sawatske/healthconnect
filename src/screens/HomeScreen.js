@@ -12,19 +12,9 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import { signOut, getCurrentUser, fetchUserAttributes } from "aws-amplify/auth";
 import { generateClient } from "aws-amplify/api";
+import { getUserById } from "../services/userService";
 
 const client = generateClient();
-
-const GetUser = `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      email
-      displayName
-      role
-    }
-  }
-`;
 
 const ListMyConversations = `
   query ListMyConversations($sub: String!, $limit: Int, $nextToken: String) {
@@ -46,9 +36,11 @@ const ListMyConversations = `
 
 const inferRole = (login = "") => {
   const v = String(login).toLowerCase();
+
   if (v.includes("patient")) return "PATIENT";
   if (v.includes("provider")) return "PROVIDER";
   if (v.includes("advocate")) return "ADVOCATE";
+
   return "USER";
 };
 
@@ -61,18 +53,44 @@ export default function HomeScreen({ navigation }) {
   const [nextToken, setNextToken] = useState(null);
   const [loadingConvos, setLoadingConvos] = useState(false);
 
+  const loadConversations = useCallback(
+    async (cursor = null) => {
+      if (!sub) return;
+
+      setLoadingConvos(true);
+
+      try {
+        const res = await client.graphql({
+          query: ListMyConversations,
+          variables: { sub, limit: 25, nextToken: cursor ?? undefined },
+          authMode: "userPool",
+        });
+
+        const page = res?.data?.listConversations;
+
+        setConvos((prev) =>
+          cursor ? [...prev, ...(page?.items ?? [])] : (page?.items ?? []),
+        );
+        setNextToken(page?.nextToken ?? null);
+      } catch (e) {
+        console.log("List conversations failed:", e);
+        Alert.alert("Error", "Could not fetch conversations.");
+      } finally {
+        setLoadingConvos(false);
+      }
+    },
+    [sub],
+  );
+
   useEffect(() => {
     (async () => {
       try {
         const user = await getCurrentUser();
         const mySub = user.userId;
+
         setSub(mySub);
 
-        const res = await client.graphql({
-          query: GetUser,
-          variables: { id: mySub },
-        });
-        const profile = res?.data?.getUser;
+        const profile = await getUserById(mySub);
 
         if (profile) {
           setDisplayName(profile.displayName || profile.email || user.username);
@@ -81,12 +99,15 @@ export default function HomeScreen({ navigation }) {
         }
 
         let email = "";
+
         try {
           const attrs = await fetchUserAttributes();
           email = attrs?.email || "";
         } catch {}
+
         const loginId =
           user?.signInDetails?.loginId || email || user?.username || "";
+
         setDisplayName(loginId);
         setRole(inferRole(loginId));
       } catch (err) {
@@ -104,34 +125,9 @@ export default function HomeScreen({ navigation }) {
     }, [sub, loadConversations]),
   );
 
-  const loadConversations = useCallback(
-    async (cursor = null) => {
-      if (!sub) return;
-      setLoadingConvos(true);
-      try {
-        const res = await client.graphql({
-          query: ListMyConversations,
-          variables: { sub, limit: 25, nextToken: cursor ?? undefined },
-          authMode: "userPool",
-        });
-        const page = res?.data?.listConversations;
-        setConvos((prev) =>
-          cursor ? [...prev, ...(page?.items ?? [])] : (page?.items ?? []),
-        );
-        setNextToken(page?.nextToken ?? null);
-      } catch (e) {
-        console.log("List conversations failed:", e);
-        Alert.alert("Error", "Could not fetch conversations.");
-      } finally {
-        setLoadingConvos(false);
-      }
-    },
-    [sub],
-  );
-
   useEffect(() => {
     if (sub) loadConversations();
-  }, [sub]);
+  }, [sub, loadConversations]);
 
   const handleSignOut = async () => {
     try {

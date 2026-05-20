@@ -19,6 +19,11 @@ import {
   ensureCareTeamConversation,
 } from "../features/chat/conversationService";
 import { CreateAdvocateInviteGuarded } from "../graphql/advocateInvites";
+import {
+  getUserById,
+  getUserDisplayName,
+  getUsersByIds,
+} from "../services/userService";
 import { theme } from "../ui/theme";
 
 const client = generateClient();
@@ -86,17 +91,6 @@ const UPDATE_ADVOCATE_ASSIGNMENT = /* GraphQL */ `
       active
       createdAt
       updatedAt
-    }
-  }
-`;
-
-const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
     }
   }
 `;
@@ -302,6 +296,7 @@ const PatientDetailScreen = () => {
 
     (async () => {
       setLoadingAssignments(true);
+
       try {
         const res = await safeGql({
           query: LIST_ADVOCATE_ASSIGNMENTS_FOR_PATIENT,
@@ -324,55 +319,23 @@ const PatientDetailScreen = () => {
         const uniqueProviderIds = uniq(sorted.map((a) => a.providerId));
 
         if (uniqueAdvocateIds.length > 0) {
-          const advocateResults = await Promise.all(
-            uniqueAdvocateIds.map((id) =>
-              safeGql({
-                query: GET_USER,
-                variables: { id },
-                label: `GetAdvocateUser:${id}`,
-              }).catch((err) => {
-                devLog("GetAdvocateUser ERR", id, err);
-                return null;
-              }),
-            ),
-          );
-
+          const userMap = await getUsersByIds(uniqueAdvocateIds);
           if (!mounted) return;
 
-          setAdvocateUsersById((prev) => {
-            const next = { ...prev };
-            advocateResults.forEach((r) => {
-              const u = r?.data?.getUser;
-              if (u?.id) next[u.id] = u;
-            });
-            return next;
-          });
+          setAdvocateUsersById((prev) => ({
+            ...prev,
+            ...userMap,
+          }));
         }
 
         if (uniqueProviderIds.length > 0) {
-          const providerResults = await Promise.all(
-            uniqueProviderIds.map((id) =>
-              safeGql({
-                query: GET_USER,
-                variables: { id },
-                label: `GetProviderUser:${id}`,
-              }).catch((err) => {
-                devLog("GetProviderUser ERR", id, err);
-                return null;
-              }),
-            ),
-          );
-
+          const userMap = await getUsersByIds(uniqueProviderIds);
           if (!mounted) return;
 
-          setProviderUsersById((prev) => {
-            const next = { ...prev };
-            providerResults.forEach((r) => {
-              const u = r?.data?.getUser;
-              if (u?.id) next[u.id] = u;
-            });
-            return next;
-          });
+          setProviderUsersById((prev) => ({
+            ...prev,
+            ...userMap,
+          }));
         }
       } catch (error) {
         if (!mounted) return;
@@ -394,6 +357,7 @@ const PatientDetailScreen = () => {
 
     (async () => {
       setLoadingInvites(true);
+
       try {
         const res = await safeGql({
           query: LIST_ADVOCATE_INVITES_FOR_PATIENT,
@@ -418,29 +382,13 @@ const PatientDetailScreen = () => {
         );
 
         if (missingIds.length > 0) {
-          const userResults = await Promise.all(
-            missingIds.map((id) =>
-              safeGql({
-                query: GET_USER,
-                variables: { id },
-                label: `GetInviteAdvocateUser:${id}`,
-              }).catch((err) => {
-                devLog("GetInviteAdvocateUser ERR", id, err);
-                return null;
-              }),
-            ),
-          );
-
+          const userMap = await getUsersByIds(missingIds);
           if (!mounted) return;
 
-          setAdvocateUsersById((prev) => {
-            const next = { ...prev };
-            userResults.forEach((r) => {
-              const u = r?.data?.getUser;
-              if (u?.id) next[u.id] = u;
-            });
-            return next;
-          });
+          setAdvocateUsersById((prev) => ({
+            ...prev,
+            ...userMap,
+          }));
         }
       } catch (error) {
         if (!mounted) return;
@@ -465,14 +413,10 @@ const PatientDetailScreen = () => {
       }
 
       try {
-        const res = await safeGql({
-          query: GET_USER,
-          variables: { id: effectiveProviderId },
-          label: "GetProviderUserForPatient",
-        });
+        const user = await getUserById(effectiveProviderId);
 
         if (!mounted) return;
-        setProviderUser(res?.data?.getUser || null);
+        setProviderUser(user || null);
       } catch (error) {
         devLog("GetProviderUserForPatient ERR", error);
       }
@@ -500,8 +444,7 @@ const PatientDetailScreen = () => {
         return {
           providerId: assignment.providerId,
           providerName:
-            providerUser?.displayName ||
-            providerUser?.email ||
+            getUserDisplayName(providerUser, null) ||
             routeProvider?.providerName ||
             "Provider",
           email: providerUser?.email || routeProvider?.email || null,
@@ -575,28 +518,25 @@ const PatientDetailScreen = () => {
   }, [providerScopedAssignments, advocateUsersById]);
 
   const providerDisplayName =
-    providerUser?.displayName ||
-    providerUser?.email ||
-    routeProviderName ||
-    "Provider";
+    getUserDisplayName(providerUser, null) || routeProviderName || "Provider";
 
   const openDirectChat = useCallback(
     async (targetUser) => {
       if (!targetUser?.id || !viewerId) return;
 
+      const targetDisplayName = getUserDisplayName(targetUser, "Chat");
+
       try {
         const conversation = await ensureDirectConversation({
           currentUserId: viewerId,
           memberIds: [viewerId, targetUser.id],
-          title: `${currentUser?.displayName || "You"} ↔ ${
-            targetUser.displayName || targetUser.email || "Chat"
-          }`,
+          title: `${getUserDisplayName(currentUser, "You")} ↔ ${targetDisplayName}`,
         });
 
         navigation.navigate("Chat", {
           conversationId: conversation.id,
           conversation,
-          title: conversation.title || targetUser.displayName || "Conversation",
+          title: conversation.title || targetDisplayName || "Conversation",
         });
       } catch (error) {
         devLog("openDirectChat ERR", error);
@@ -606,7 +546,7 @@ const PatientDetailScreen = () => {
         );
       }
     },
-    [viewerId, currentUser?.displayName, navigation],
+    [viewerId, currentUser, navigation],
   );
 
   const openCareTeamChatForProvider = useCallback(
@@ -715,7 +655,7 @@ const PatientDetailScreen = () => {
       const direct = await ensureDirectConversation({
         currentUserId: viewerId,
         memberIds: [viewerId, patientId],
-        title: `${currentUser?.displayName || "You"} ↔ ${
+        title: `${getUserDisplayName(currentUser, "You")} ↔ ${
           patientName || "Patient"
         }`,
       });
@@ -739,7 +679,7 @@ const PatientDetailScreen = () => {
     effectiveProviderId,
     providerScopedAssignments,
     providerDisplayName,
-    currentUser?.displayName,
+    currentUser,
     navigation,
   ]);
 
@@ -764,6 +704,7 @@ const PatientDetailScreen = () => {
     if (advocates.length > 0) return;
 
     setAdvocatesLoading(true);
+
     try {
       const res = await safeGql({
         query: LIST_ADVOCATE_USERS,
@@ -903,9 +844,10 @@ const PatientDetailScreen = () => {
 
         Alert.alert(
           "Invite sent",
-          `${
-            selectedAdvocate.displayName || selectedAdvocate.email || "Advocate"
-          } can approve this from their invites screen.`,
+          `${getUserDisplayName(
+            selectedAdvocate,
+            "Advocate",
+          )} can approve this from their invites screen.`,
         );
       } catch (error) {
         const message = getGraphQlErrorMessage(error);
@@ -933,7 +875,7 @@ const PatientDetailScreen = () => {
       if (!isProviderView) return;
 
       const user = advocateUsersById[assignment.advocateId];
-      const name = user?.displayName || user?.email || "this advocate";
+      const name = getUserDisplayName(user, "this advocate");
 
       Alert.alert(
         "Remove advocate?",
@@ -1147,7 +1089,7 @@ const PatientDetailScreen = () => {
         {hasActive
           ? activeAssignmentsForManagePanel.map((assignment) => {
               const user = advocateUsersById[assignment.advocateId] || {};
-              const name = user.displayName || user.email || "Advocate";
+              const name = getUserDisplayName(user, "Advocate");
 
               return (
                 <View key={assignment.id} style={styles.manageRow}>
@@ -1190,7 +1132,7 @@ const PatientDetailScreen = () => {
             <Text style={styles.pendingSectionTitle}>Pending Invites</Text>
             {pendingInvitesForManagePanel.map((invite) => {
               const user = advocateUsersById[invite.advocateId] || {};
-              const name = user.displayName || user.email || "Advocate";
+              const name = getUserDisplayName(user, "Advocate");
 
               return (
                 <View key={invite.id} style={styles.pendingRow}>
@@ -1416,7 +1358,7 @@ const AdvocatePickerModal = ({
       >
         <View style={styles.flexOne}>
           <Text style={styles.advocateName} numberOfLines={1}>
-            {item.displayName || item.email || "Unnamed Advocate"}
+            {getUserDisplayName(item, "Unnamed Advocate")}
           </Text>
           {status ? (
             <Text style={styles.advocateStatusText}>{status}</Text>

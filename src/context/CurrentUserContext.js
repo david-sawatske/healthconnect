@@ -5,22 +5,9 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { generateClient } from "aws-amplify/api";
 import { getCurrentUser } from "aws-amplify/auth";
 import { Hub } from "aws-amplify/utils";
-
-const client = generateClient();
-
-const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
+import { getUserById } from "../services/userService";
 
 const CurrentUserContext = createContext({
   currentUser: null,
@@ -36,8 +23,10 @@ export function CurrentUserProvider({ children }) {
 
   const loadUser = useCallback(async () => {
     setLoading(true);
+
     try {
       const auth = await getCurrentUser();
+
       if (!auth?.userId) {
         setCurrentUser(null);
         return;
@@ -45,13 +34,7 @@ export function CurrentUserProvider({ children }) {
 
       console.log("[CURRENT_USER] auth.userId =", auth.userId);
 
-      const { data } = await client.graphql({
-        query: GET_USER,
-        variables: { id: auth.userId },
-        authMode: "userPool",
-      });
-
-      const user = data?.getUser ?? null;
+      const user = await getUserById(auth.userId);
 
       if (!user) {
         console.log(
@@ -68,6 +51,7 @@ export function CurrentUserProvider({ children }) {
       setLoading(false);
     }
   }, []);
+
   useEffect(() => {
     loadUser();
   }, [loadUser]);
@@ -75,6 +59,7 @@ export function CurrentUserProvider({ children }) {
   useEffect(() => {
     const unsubscribe = Hub.listen("auth", ({ payload }) => {
       const event = payload?.event;
+
       if (
         event === "signedIn" ||
         event === "signedOut" ||

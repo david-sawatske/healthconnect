@@ -21,10 +21,8 @@ import {
   ScrollView,
 } from "react-native";
 import { signIn, getCurrentUser } from "aws-amplify/auth";
-import { generateClient } from "aws-amplify/api";
 import { theme } from "../ui/theme";
-
-const client = generateClient();
+import { getUserById } from "../services/userService";
 
 const isWeb = Platform.OS === "web";
 
@@ -173,16 +171,6 @@ const DEMO_USERS_BY_ROLE = {
   ],
 };
 
-const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      role
-      displayName
-    }
-  }
-`;
-
 const getFriendlyAuthMessage = (err) => {
   const code = err?.name || err?.code || "";
   const message = err?.message || "";
@@ -312,13 +300,7 @@ export default function AuthScreen({ navigation }) {
       const cognitoUser = await getCurrentUser();
       const sub = cognitoUser.userId;
 
-      const { data } = await client.graphql({
-        query: GET_USER,
-        variables: { id: sub },
-        authMode: "userPool",
-      });
-
-      const user = data?.getUser;
+      const user = await getUserById(sub);
 
       if (!user) {
         Alert.alert(

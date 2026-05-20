@@ -1,17 +1,7 @@
 import { getGraphqlClient } from "./amplify/client";
+import { GetUser } from "../graphql/users";
 
 const client = getGraphqlClient();
-
-const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
 
 const devLog = (...args) => {
   if (__DEV__) console.log("[USER_SERVICE]", ...args);
@@ -30,7 +20,7 @@ export async function getUserById(userId) {
 
   try {
     const { data } = await client.graphql({
-      query: GET_USER,
+      query: GetUser,
       variables: { id: userId },
       authMode: "userPool",
     });
