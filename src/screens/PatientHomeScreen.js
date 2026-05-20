@@ -31,6 +31,7 @@ import {
   listConversationsForUser,
   sortConversationsByLastActivity,
 } from "../features/chat/conversationService";
+import { getPatientCareTeam } from "../features/patients/patientCareTeamService";
 import { theme } from "../ui/theme";
 
 const client = generateClient();
@@ -38,38 +39,6 @@ const client = generateClient();
 const devLog = (...args) => {
   if (__DEV__) console.log("[PATIENT_HOME]", ...args);
 };
-
-const PROVIDER_PATIENTS_BY_PATIENT = /* GraphQL */ `
-  query ProviderPatientsByPatient($patientId: ID!) {
-    providerPatientsByPatient(patientId: $patientId) {
-      items {
-        id
-        patientId
-        providerId
-        provider {
-          id
-          displayName
-          role
-          email
-        }
-      }
-    }
-  }
-`;
-
-const ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
-  query AdvocateAssignmentsForPatient($patientId: ID!) {
-    advocateAssignmentsByPatient(patientId: $patientId) {
-      items {
-        id
-        patientId
-        providerId
-        advocateId
-        createdAt
-      }
-    }
-  }
-`;
 
 const GET_USER = /* GraphQL */ `
   query GetUser($id: ID!) {
@@ -353,171 +322,24 @@ const PatientHomeScreen = () => {
       setCareTeamLoading(true);
       setCareTeamError(null);
 
-      const [providerResult, advocateResult] = await Promise.all([
-        client.graphql({
-          query: PROVIDER_PATIENTS_BY_PATIENT,
-          variables: { patientId: currentUser.id },
-          authMode: "userPool",
-        }),
-        client.graphql({
-          query: ADVOCATE_ASSIGNMENTS_FOR_PATIENT,
-          variables: { patientId: currentUser.id },
-          authMode: "userPool",
-        }),
-      ]);
+      const result = await getPatientCareTeam(currentUser.id);
+      const serviceUsersById = result?.usersById || {};
 
-      const providerPatients =
-        providerResult?.data?.providerPatientsByPatient?.items || [];
-
-      const assignments =
-        advocateResult?.data?.advocateAssignmentsByPatient?.items || [];
-
-      const providerToAdvocates = new Map();
-      const advocateToProviders = new Map();
-      const providerUsersById = {};
-
-      providerPatients.forEach((providerPatient) => {
-        if (!providerPatient?.providerId) return;
-
-        if (!providerToAdvocates.has(providerPatient.providerId)) {
-          providerToAdvocates.set(providerPatient.providerId, new Set());
-        }
-
-        if (providerPatient.provider?.id) {
-          providerUsersById[providerPatient.provider.id] =
-            providerPatient.provider;
-        }
-      });
-
-      assignments.forEach((assignment) => {
-        if (!assignment?.providerId) return;
-
-        if (!providerToAdvocates.has(assignment.providerId)) {
-          providerToAdvocates.set(assignment.providerId, new Set());
-        }
-
-        if (assignment.advocateId) {
-          providerToAdvocates
-            .get(assignment.providerId)
-            .add(assignment.advocateId);
-
-          if (!advocateToProviders.has(assignment.advocateId)) {
-            advocateToProviders.set(assignment.advocateId, new Set());
-          }
-
-          advocateToProviders
-            .get(assignment.advocateId)
-            .add(assignment.providerId);
-        }
-      });
-
-      const providerIds = Array.from(providerToAdvocates.keys()).filter(
-        Boolean,
-      );
-
-      const advocateIds = Array.from(advocateToProviders.keys()).filter(
-        Boolean,
-      );
-
-      const providerIdsMissingUsers = providerIds.filter(
-        (id) => !providerUsersById[id],
-      );
-
-      const loadedUsers = await fetchUserMapForIds([
-        ...providerIdsMissingUsers,
-        ...advocateIds,
-      ]);
-
-      const mergedUsers = {
-        ...usersByIdRef.current,
-        ...providerUsersById,
-        ...loadedUsers,
-      };
-
-      if (Object.keys(providerUsersById).length) {
+      if (Object.keys(serviceUsersById).length) {
         usersByIdRef.current = {
           ...usersByIdRef.current,
-          ...providerUsersById,
+          ...serviceUsersById,
         };
 
         setUsersById((prev) => ({
           ...prev,
-          ...providerUsersById,
+          ...serviceUsersById,
         }));
       }
 
-      const providers = providerIds
-        .map((providerId) => {
-          const providerUser = mergedUsers[providerId] || null;
-          const advocateIdsForProvider = Array.from(
-            providerToAdvocates.get(providerId) || [],
-          ).filter(Boolean);
-
-          return {
-            providerId,
-            providerUser,
-            advocateIds: advocateIdsForProvider,
-          };
-        })
-        .sort((a, b) => {
-          const an = (
-            a.providerUser?.displayName ||
-            a.providerUser?.email ||
-            ""
-          ).toLowerCase();
-
-          const bn = (
-            b.providerUser?.displayName ||
-            b.providerUser?.email ||
-            ""
-          ).toLowerCase();
-
-          return an.localeCompare(bn);
-        });
-
-      const advocates = advocateIds
-        .map((advocateId) => {
-          const advocateUser = mergedUsers[advocateId] || null;
-          const providerIdsForAdvocate = Array.from(
-            advocateToProviders.get(advocateId) || [],
-          ).filter(Boolean);
-
-          const providerNames = providerIdsForAdvocate
-            .map((providerId) => {
-              const providerUser = mergedUsers[providerId];
-              return (
-                providerUser?.displayName || providerUser?.email || "Provider"
-              );
-            })
-            .filter(Boolean)
-            .sort((a, b) => a.localeCompare(b));
-
-          return {
-            advocateId,
-            advocateUser,
-            providerIds: providerIdsForAdvocate,
-            providerNames,
-          };
-        })
-        .sort((a, b) => {
-          const an = (
-            a.advocateUser?.displayName ||
-            a.advocateUser?.email ||
-            ""
-          ).toLowerCase();
-
-          const bn = (
-            b.advocateUser?.displayName ||
-            b.advocateUser?.email ||
-            ""
-          ).toLowerCase();
-
-          return an.localeCompare(bn);
-        });
-
       setCareTeam({
-        providers,
-        advocates,
+        providers: result?.providers || [],
+        advocates: result?.advocates || [],
       });
     } catch (err) {
       console.log("[PATIENT_HOME] Error fetching care team:", err);
@@ -530,7 +352,7 @@ const PatientHomeScreen = () => {
     } finally {
       setCareTeamLoading(false);
     }
-  }, [currentUser?.id, fetchUserMapForIds]);
+  }, [currentUser?.id]);
 
   const refreshHomeData = useCallback(async () => {
     if (!currentUser?.id) return;
