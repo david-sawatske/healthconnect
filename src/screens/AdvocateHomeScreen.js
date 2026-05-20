@@ -28,6 +28,7 @@ import {
   listAllConversationsForUser,
   listConversationReadStateForUser,
 } from "../features/chat/conversationService";
+import { getUserDisplayName, getUsersByIds } from "../services/userService";
 import { theme } from "../ui/theme";
 
 const client = generateClient();
@@ -88,37 +89,6 @@ const LIST_MY_PENDING_ADVOCATE_INVITES = /* GraphQL */ `
     }
   }
 `;
-
-const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
-
-const batchFetchUsers = async (ids) => {
-  const unique = [...new Set(ids.filter(Boolean))];
-  const results = {};
-
-  for (const id of unique) {
-    try {
-      const { data } = await client.graphql({
-        query: GET_USER,
-        variables: { id },
-        authMode: "userPool",
-      });
-      if (data?.getUser) results[id] = data.getUser;
-    } catch (err) {
-      devLog("Failed to fetch user:", id, err);
-    }
-  }
-
-  return results;
-};
 
 function getProviderSummary(providers = []) {
   const names = providers.map((p) => p.providerName).filter(Boolean);
@@ -203,7 +173,7 @@ const AdvocateHomeScreen = () => {
       const providerIds = activeAssignments.map((a) => a.providerId);
       const allIds = [...patientIds, ...providerIds];
 
-      const userMap = await batchFetchUsers(allIds);
+      const userMap = await getUsersByIds(allIds);
 
       const patientMap = {};
 
@@ -216,10 +186,10 @@ const AdvocateHomeScreen = () => {
         if (!patientMap[patientId]) {
           patientMap[patientId] = {
             patientId,
-            patientName:
-              userMap[patientId]?.displayName ||
-              userMap[patientId]?.email ||
+            patientName: getUserDisplayName(
+              userMap[patientId],
               "Unknown Patient",
+            ),
             providers: [],
             createdAt: assignment.createdAt,
           };
@@ -232,10 +202,10 @@ const AdvocateHomeScreen = () => {
         if (!existingProvider) {
           patientMap[patientId].providers.push({
             providerId,
-            providerName:
-              userMap[providerId]?.displayName ||
-              userMap[providerId]?.email ||
+            providerName: getUserDisplayName(
+              userMap[providerId],
               "Unknown Provider",
+            ),
             assignmentId: assignment.id,
             createdAt: assignment.createdAt,
           });
@@ -348,7 +318,7 @@ const AdvocateHomeScreen = () => {
       ]);
 
       if (userIds.length > 0) {
-        const userMap = await batchFetchUsers(userIds);
+        const userMap = await getUsersByIds(userIds);
         setInviteUsersById(userMap);
       } else {
         setInviteUsersById({});
@@ -562,12 +532,11 @@ const AdvocateHomeScreen = () => {
 
         return {
           ...invite,
-          patientName:
-            inviteUsersById[invite.patientId]?.displayName || "Unknown Patient",
-          providerName:
-            providerUser?.displayName ||
-            providerUser?.email ||
-            "Unknown Provider",
+          patientName: getUserDisplayName(
+            inviteUsersById[invite.patientId],
+            "Unknown Patient",
+          ),
+          providerName: getUserDisplayName(providerUser, "Unknown Provider"),
         };
       });
   }, [pendingInvites, inviteUsersById]);

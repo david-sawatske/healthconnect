@@ -17,7 +17,6 @@ import {
 } from "react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { generateClient } from "aws-amplify/api";
 
 import { useCurrentUser } from "../context/CurrentUserContext";
 import ConversationListItem from "../components/ConversationListItem";
@@ -32,24 +31,12 @@ import {
   sortConversationsByLastActivity,
 } from "../features/chat/conversationService";
 import { getPatientCareTeam } from "../features/patients/patientCareTeamService";
+import { getUserDisplayName, getUsersByIds } from "../services/userService";
 import { theme } from "../ui/theme";
-
-const client = generateClient();
 
 const devLog = (...args) => {
   if (__DEV__) console.log("[PATIENT_HOME]", ...args);
 };
-
-const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
 
 const PAGE_SIZE = 20;
 const PREVIEW_COUNT = 20;
@@ -57,10 +44,6 @@ const LAST_MESSAGE_SCAN_LIMIT = 10;
 
 function uniq(arr) {
   return [...new Set((arr || []).filter(Boolean))];
-}
-
-function getUserDisplay(user) {
-  return user?.displayName || user?.email || null;
 }
 
 function getConversationTitle({ conversation, currentUserId, usersById }) {
@@ -72,7 +55,7 @@ function getConversationTitle({ conversation, currentUserId, usersById }) {
 
   if (!conversation?.isGroup) {
     if (otherIds.length === 1) {
-      return getUserDisplay(usersById[otherIds[0]]) || "Conversation";
+      return getUserDisplayName(usersById[otherIds[0]], "Conversation");
     }
 
     return "Conversation";
@@ -81,7 +64,7 @@ function getConversationTitle({ conversation, currentUserId, usersById }) {
   if (conversation?.title) return conversation.title;
 
   const names = otherIds
-    .map((id) => getUserDisplay(usersById[id]))
+    .map((id) => getUserDisplayName(usersById[id], null))
     .filter(Boolean);
 
   if (names.length) return names.join(", ");
@@ -144,51 +127,36 @@ const PatientHomeScreen = () => {
   const careTeamBottomPadding = insets.bottom + theme.space.lg;
   const conversationsBottomPadding = insets.bottom + theme.space.lg;
 
-  const fetchUserMapForIds = useCallback(async (ids) => {
-    const uniqueIds = uniq(ids).filter((id) => !usersByIdRef.current[id]);
-    if (!uniqueIds.length) return {};
+  const mergeUsersById = useCallback((map = {}) => {
+    if (!Object.keys(map).length) return;
 
-    try {
-      const results = await Promise.all(
-        uniqueIds.map(async (id) => {
-          try {
-            const { data } = await client.graphql({
-              query: GET_USER,
-              variables: { id },
-              authMode: "userPool",
-            });
+    usersByIdRef.current = {
+      ...usersByIdRef.current,
+      ...map,
+    };
 
-            return data?.getUser || null;
-          } catch (err) {
-            console.log("[PATIENT_HOME] Error fetching user:", id, err);
-            return null;
-          }
-        }),
-      );
-
-      const map = {};
-      results.forEach((user) => {
-        if (user?.id) map[user.id] = user;
-      });
-
-      if (Object.keys(map).length) {
-        usersByIdRef.current = {
-          ...usersByIdRef.current,
-          ...map,
-        };
-
-        setUsersById((prev) => ({
-          ...prev,
-          ...map,
-        }));
-      }
-
-      return map;
-    } catch (err) {
-      console.log("[PATIENT_HOME] fetchUserMapForIds error:", err);
-      return {};
-    }
+    setUsersById((prev) => ({
+      ...prev,
+      ...map,
+    }));
   }, []);
+
+  const fetchUserMapForIds = useCallback(
+    async (ids) => {
+      const uniqueIds = uniq(ids).filter((id) => !usersByIdRef.current[id]);
+      if (!uniqueIds.length) return {};
+
+      try {
+        const map = await getUsersByIds(uniqueIds);
+        mergeUsersById(map);
+        return map;
+      } catch (err) {
+        console.log("[PATIENT_HOME] fetchUserMapForIds error:", err);
+        return {};
+      }
+    },
+    [mergeUsersById],
+  );
 
   const fetchLastMessage = useCallback(async (conversationId) => {
     if (!conversationId) return;
@@ -323,19 +291,7 @@ const PatientHomeScreen = () => {
       setCareTeamError(null);
 
       const result = await getPatientCareTeam(currentUser.id);
-      const serviceUsersById = result?.usersById || {};
-
-      if (Object.keys(serviceUsersById).length) {
-        usersByIdRef.current = {
-          ...usersByIdRef.current,
-          ...serviceUsersById,
-        };
-
-        setUsersById((prev) => ({
-          ...prev,
-          ...serviceUsersById,
-        }));
-      }
+      mergeUsersById(result?.usersById || {});
 
       setCareTeam({
         providers: result?.providers || [],
@@ -352,7 +308,7 @@ const PatientHomeScreen = () => {
     } finally {
       setCareTeamLoading(false);
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, mergeUsersById]);
 
   const refreshHomeData = useCallback(async () => {
     if (!currentUser?.id) return;
@@ -433,7 +389,7 @@ const PatientHomeScreen = () => {
         const conversation = await ensureDirectConversation({
           currentUserId: currentUser.id,
           memberIds: [currentUser.id, targetUser.id],
-          title: targetUser.displayName || targetUser.email || "Care Team",
+          title: getUserDisplayName(targetUser, "Care Team"),
         });
 
         setConversations((prev) => {
@@ -452,9 +408,7 @@ const PatientHomeScreen = () => {
                 ...usersByIdRef.current,
                 [targetUser.id]: targetUser,
               },
-            }) ||
-            targetUser.displayName ||
-            "Care Team Conversation",
+            }) || getUserDisplayName(targetUser, "Care Team Conversation"),
         });
       } catch (err) {
         devLog("handleOpenDirectChat error:", err);
