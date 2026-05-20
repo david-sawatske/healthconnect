@@ -21,6 +21,7 @@ const LIST_MY_CONVERSATIONS = /* GraphQL */ `
         createdBy
         createdAt
         updatedAt
+        lastMessageAt
       }
       nextToken
     }
@@ -37,6 +38,7 @@ const GET_CONVERSATION = /* GraphQL */ `
       createdBy
       createdAt
       updatedAt
+      lastMessageAt
     }
   }
 `;
@@ -51,6 +53,7 @@ const CREATE_CONVERSATION = /* GraphQL */ `
       createdBy
       createdAt
       updatedAt
+      lastMessageAt
     }
   }
 `;
@@ -65,6 +68,48 @@ const UPDATE_CONVERSATION = /* GraphQL */ `
       createdBy
       createdAt
       updatedAt
+      lastMessageAt
+    }
+  }
+`;
+
+const CONVERSATION_PARTICIPANTS_BY_USER = /* GraphQL */ `
+  query ConversationParticipantsByUser(
+    $userId: String!
+    $limit: Int
+    $nextToken: String
+  ) {
+    conversationParticipantsByUser(
+      userId: $userId
+      limit: $limit
+      nextToken: $nextToken
+    ) {
+      items {
+        id
+        conversationId
+        userId
+        lastReadAt
+        updatedAt
+      }
+      nextToken
+    }
+  }
+`;
+
+const LAST_MESSAGE_BY_CONVERSATION = /* GraphQL */ `
+  query LastMessageByConversation($conversationId: ID!, $limit: Int) {
+    messagesByConversation(
+      conversationId: $conversationId
+      sortDirection: DESC
+      limit: $limit
+    ) {
+      items {
+        id
+        type
+        body
+        senderId
+        createdAt
+      }
     }
   }
 `;
@@ -87,25 +132,117 @@ const sameSet = (a, b) => {
   return true;
 };
 
-async function listAllMyConversations(currentUserId, { limit = 100 } = {}) {
+export function getLastActivityTs(conversation) {
+  return (
+    conversation?.lastMessageAt ||
+    conversation?.updatedAt ||
+    conversation?.createdAt ||
+    0
+  );
+}
+
+export function sortConversationsByLastActivity(items = []) {
+  return [...items].sort((a, b) => {
+    const at = new Date(getLastActivityTs(a)).getTime();
+    const bt = new Date(getLastActivityTs(b)).getTime();
+    return bt - at;
+  });
+}
+
+export async function listConversationsForUser(
+  userId,
+  { limit = 20, nextToken = null } = {},
+) {
+  if (!userId) return { items: [], nextToken: null };
+
+  const resp = await client.graphql({
+    query: LIST_MY_CONVERSATIONS,
+    variables: { sub: userId, limit, nextToken },
+    authMode: "userPool",
+  });
+
+  const page = resp?.data?.listConversations;
+
+  return {
+    items: page?.items || [],
+    nextToken: page?.nextToken || null,
+  };
+}
+
+export async function listAllConversationsForUser(
+  userId,
+  { limit = 100 } = {},
+) {
+  if (!userId) return [];
+
   let nextToken = null;
   const all = [];
 
   do {
-    const resp = await client.graphql({
-      query: LIST_MY_CONVERSATIONS,
-      variables: { sub: currentUserId, limit, nextToken },
-      authMode: "userPool",
+    const page = await listConversationsForUser(userId, {
+      limit,
+      nextToken,
     });
 
-    const page = resp?.data?.listConversations;
-    const items = page?.items || [];
-    all.push(...items);
-
-    nextToken = page?.nextToken ?? null;
+    all.push(...page.items);
+    nextToken = page.nextToken;
   } while (nextToken);
 
   return all;
+}
+
+export async function listConversationReadStateForUser(
+  userId,
+  { limit = 200 } = {},
+) {
+  if (!userId) return {};
+
+  let nextToken = null;
+  const map = {};
+
+  do {
+    const resp = await client.graphql({
+      query: CONVERSATION_PARTICIPANTS_BY_USER,
+      variables: {
+        userId,
+        limit,
+        nextToken,
+      },
+      authMode: "userPool",
+    });
+
+    const result = resp?.data?.conversationParticipantsByUser;
+    const items = result?.items || [];
+
+    items.forEach((participant) => {
+      if (participant?.conversationId) {
+        map[participant.conversationId] = participant.lastReadAt || null;
+      }
+    });
+
+    nextToken = result?.nextToken || null;
+  } while (nextToken);
+
+  return map;
+}
+
+export async function getLastNonSystemMessageForConversation(
+  conversationId,
+  { limit = 10 } = {},
+) {
+  if (!conversationId) return null;
+
+  const resp = await client.graphql({
+    query: LAST_MESSAGE_BY_CONVERSATION,
+    variables: {
+      conversationId,
+      limit,
+    },
+    authMode: "userPool",
+  });
+
+  const items = resp?.data?.messagesByConversation?.items || [];
+  return items.find((message) => message?.type !== "SYSTEM") || null;
 }
 
 async function tryGetConversation(id) {
@@ -200,7 +337,7 @@ export async function ensureDirectConversation({
     isGroup,
   });
 
-  const items = await listAllMyConversations(currentUserId);
+  const items = await listAllConversationsForUser(currentUserId);
   const desired = normalizeSet(uniqueMemberIds);
 
   const existing = items.find((c) => {
@@ -291,7 +428,7 @@ export async function ensureCareTeamConversation({
     return byId;
   }
 
-  const items = await listAllMyConversations(currentUserId);
+  const items = await listAllConversationsForUser(currentUserId);
 
   const candidates = (items || []).filter((c) => {
     if (!c?.isGroup) return false;
