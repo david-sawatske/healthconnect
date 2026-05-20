@@ -64,17 +64,6 @@ const OnCreateMessage = /* GraphQL */ `
   }
 `;
 
-const GetUser = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
-
 const GetConversationParticipant = /* GraphQL */ `
   query GetConversationParticipant($id: ID!) {
     getConversationParticipant(id: $id) {
@@ -223,6 +212,7 @@ export async function listMessagesByConversation(
     variables: { conversationId, limit },
     authMode: "userPool",
   });
+
   return res?.data?.messagesByConversation?.items ?? [];
 }
 
@@ -233,31 +223,6 @@ export function subscribeToNewMessages({ onMessage, onError } = {}) {
       next: ({ data }) => onMessage?.(data?.onCreateMessage ?? null),
       error: (err) => onError?.(err),
     });
-}
-
-export async function fetchUsersByIds(ids) {
-  const unique = [...new Set((ids || []).filter(Boolean))];
-  if (!unique.length) return {};
-
-  const results = await Promise.allSettled(
-    unique.map((id) =>
-      client.graphql({
-        query: GetUser,
-        variables: { id },
-        authMode: "userPool",
-      }),
-    ),
-  );
-
-  const map = {};
-  results.forEach((r) => {
-    if (r.status === "fulfilled") {
-      const u = r.value?.data?.getUser;
-      if (u?.id) map[u.id] = u;
-    }
-  });
-
-  return map;
 }
 
 export function buildParticipantId({ conversationId, userId }) {
@@ -312,6 +277,7 @@ export async function markConversationRead({ conversationId, userId }) {
   if (!participantId) return;
 
   const now = new Date().toISOString();
+
   await client.graphql({
     query: UpdateConversationParticipant,
     variables: { input: { id: participantId, lastReadAt: now } },
@@ -321,13 +287,16 @@ export async function markConversationRead({ conversationId, userId }) {
 
 export async function ensureParticipantAndMarkRead({ conversationId, userId }) {
   if (!conversationId || !userId) return;
+
   await ensureParticipantExists({ conversationId, userId });
   await markConversationRead({ conversationId, userId });
 }
 
 export async function bumpConversationLastMessageAt(conversationId) {
   if (!conversationId) return;
+
   const now = new Date().toISOString();
+
   await client.graphql({
     query: UpdateConversationLastMessageAt,
     variables: { input: { id: conversationId, lastMessageAt: now } },
@@ -368,18 +337,21 @@ function extFromName(name = "") {
 
 export function guessMessageTypeForFile({ mimeType, name } = {}) {
   const ext = extFromName(name);
+
   if (
     (mimeType || "").startsWith("image/") ||
     ["png", "jpg", "jpeg", "gif", "webp", "heic"].includes(ext)
   ) {
     return "IMAGE";
   }
+
   if (
     (mimeType || "").startsWith("video/") ||
     ["mp4", "mov", "m4v", "webm"].includes(ext)
   ) {
     return "VIDEO";
   }
+
   return "FILE";
 }
 
@@ -434,6 +406,7 @@ export async function sendMediaMessage({
 
 export async function getMediaUrl(mediaKey, { expiresIn = 300 } = {}) {
   if (!mediaKey) return null;
+
   const u = await getUrl({ key: mediaKey, options: { expiresIn } });
   return u?.url?.toString?.() || null;
 }

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as DocumentPicker from "expo-document-picker";
 
+import { getUserDisplayName, getUsersByIds } from "../../services/userService";
 import {
   bumpConversationLastMessageAt,
   ensureParticipantAndMarkRead,
-  fetchUsersByIds,
   guessMessageTypeForFile,
   listMessagesByConversation,
   sendMediaMessage,
@@ -17,10 +17,6 @@ function uniq(arr) {
   return [...new Set((arr || []).filter(Boolean))];
 }
 
-function displayNameForUser(user) {
-  return user?.displayName || user?.name || user?.email || null;
-}
-
 function buildConversationTitle({ conversation, myId, usersById, memberIds }) {
   if (conversation?.title) return conversation.title;
 
@@ -28,14 +24,15 @@ function buildConversationTitle({ conversation, myId, usersById, memberIds }) {
 
   if (!conversation?.isGroup) {
     if (others.length === 1) {
-      return displayNameForUser(usersById?.[others[0]]) || "Conversation";
+      return getUserDisplayName(usersById?.[others[0]], "Conversation");
     }
+
     return "Conversation";
   }
 
   if (others.length) {
     const names = others
-      .map((id) => displayNameForUser(usersById?.[id]))
+      .map((id) => getUserDisplayName(usersById?.[id], null))
       .filter(Boolean);
 
     if (names.length) return names.join(", ");
@@ -64,16 +61,20 @@ export function useChat({ conversationId, conversation, currentUser }) {
 
   const memberIds = useMemo(() => {
     if (memberIdsFromConversation.length) return memberIdsFromConversation;
+
     const first = messages?.[0];
+
     if (Array.isArray(first?.memberIds) && first.memberIds.length) {
       return first.memberIds;
     }
+
     return [];
   }, [memberIdsFromConversation.join("|"), messages]);
 
   const memberIdsToUseForSend = useMemo(() => {
     const base = memberIds.length ? memberIds : memberIdsFromConversation;
     const merged = uniq([...(base || []), myId]);
+
     return merged.length ? merged : myId ? [myId] : [];
   }, [
     memberIds.length ? memberIds.join("|") : "",
@@ -92,6 +93,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
 
   const markRead = useCallback(async () => {
     if (!conversationId || !myId) return;
+
     try {
       await ensureParticipantAndMarkRead({ conversationId, userId: myId });
     } catch (e) {
@@ -101,11 +103,14 @@ export function useChat({ conversationId, conversation, currentUser }) {
 
   const refreshMessages = useCallback(async () => {
     if (!conversationId) return;
+
     try {
       const items = await listMessagesByConversation(conversationId, {
         limit: 50,
       });
+
       if (activeConversationIdRef.current !== conversationId) return;
+
       setMessages(items);
     } catch (e) {
       console.log("[CHAT] fetchMessages error:", e);
@@ -114,6 +119,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
 
   useEffect(() => {
     if (!conversationId) return;
+
     refreshMessages();
     markRead();
   }, [conversationId, refreshMessages, markRead]);
@@ -124,8 +130,10 @@ export function useChat({ conversationId, conversation, currentUser }) {
     (async () => {
       if (!conversationId) return;
       if (!memberIds.length) return;
+
       try {
-        const map = await fetchUsersByIds(memberIds);
+        const map = await getUsersByIds(memberIds);
+
         if (!cancelled) {
           setUsersById((prev) => ({ ...prev, ...map }));
         }
@@ -150,6 +158,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
         setMessages((prev) =>
           prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
         );
+
         markRead();
       },
       onError: (err) => console.log("[CHAT] subscription error:", err),
@@ -163,6 +172,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
       try {
         sub?.unsubscribe?.();
       } catch (e) {}
+
       clearTimeout(retryTimer);
     };
   }, [conversationId, markRead, refreshMessages]);
@@ -173,6 +183,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
 
     try {
       setSending(true);
+
       const created = await sendTextMessage({
         conversationId,
         senderId: myId,
@@ -182,6 +193,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
 
       if (created) {
         await bumpConversationLastMessageAt(conversationId);
+
         setMessages((prev) =>
           prev.some((m) => m.id === created.id) ? prev : [...prev, created],
         );
@@ -228,6 +240,7 @@ export function useChat({ conversationId, conversation, currentUser }) {
 
     if (created) {
       await bumpConversationLastMessageAt(conversationId);
+
       setMessages((prev) =>
         prev.some((m) => m.id === created.id) ? prev : [...prev, created],
       );
@@ -239,21 +252,19 @@ export function useChat({ conversationId, conversation, currentUser }) {
   const roleForSender = useCallback(
     (senderId, type) => {
       if (String(type).toUpperCase() === "SYSTEM") return "SYSTEM";
-      const r = usersById?.[senderId]?.role;
-      return r || (senderId === myId ? "USER" : "USER");
+
+      return usersById?.[senderId]?.role || "USER";
     },
-    [usersById, myId],
+    [usersById],
   );
 
   const nameForSender = useCallback(
     (senderId, type) => {
       if (String(type).toUpperCase() === "SYSTEM") return "System";
-      const u = usersById?.[senderId];
-      return (
-        u?.displayName ||
-        u?.name ||
-        u?.email ||
-        (senderId === myId ? "You" : "Member")
+
+      return getUserDisplayName(
+        usersById?.[senderId],
+        senderId === myId ? "You" : "Member",
       );
     },
     [usersById, myId],
