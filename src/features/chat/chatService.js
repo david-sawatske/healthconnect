@@ -1,4 +1,5 @@
 import { getGraphqlClient } from "../../services/amplify/client";
+import { getConversationParticipantId } from "../../utils/ids";
 import { getUrl, uploadData } from "aws-amplify/storage";
 
 const client = getGraphqlClient();
@@ -261,7 +262,7 @@ export async function fetchUsersByIds(ids) {
 
 export function buildParticipantId({ conversationId, userId }) {
   if (!conversationId || !userId) return null;
-  return `${conversationId}:${userId}`;
+  return getConversationParticipantId(conversationId, userId);
 }
 
 export async function ensureParticipantExists({ conversationId, userId }) {

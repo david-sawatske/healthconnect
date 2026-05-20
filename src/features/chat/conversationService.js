@@ -1,4 +1,9 @@
 import { getGraphqlClient } from "../../services/amplify/client";
+import {
+  getCareTeamConversationId,
+  getDirectMessageConversationId,
+} from "../../utils/ids";
+
 const client = getGraphqlClient();
 
 const LIST_MY_CONVERSATIONS = /* GraphQL */ `
@@ -116,11 +121,6 @@ async function tryGetConversation(id) {
   }
 }
 
-function dmIdFor(a, b) {
-  const [minId, maxId] = [a, b].sort();
-  return `DM:${minId}:${maxId}`;
-}
-
 export async function ensureDirectConversation({
   currentUserId,
   memberIds,
@@ -136,7 +136,10 @@ export async function ensureDirectConversation({
 
   if (uniqueMemberIds.length === 2) {
     const desired = normalizeSet(uniqueMemberIds);
-    const deterministicId = dmIdFor(desired[0], desired[1]);
+    const deterministicId = getDirectMessageConversationId(
+      desired[0],
+      desired[1],
+    );
 
     log("ensureDirectConversation (DM) → getConversation", {
       deterministicId,
@@ -246,7 +249,7 @@ export async function ensureCareTeamConversation({
   if (!patientId) throw new Error("Missing patientId");
   if (!providerId) throw new Error("Missing providerId");
 
-  const careTeamId = `CARE_TEAM:${patientId}:${providerId}`;
+  const careTeamId = getCareTeamConversationId(patientId, providerId);
 
   const desiredMemberIds = normalizeSet([
     patientId,
@@ -299,15 +302,16 @@ export async function ensureCareTeamConversation({
   const exact = candidates.find((c) =>
     sameSet(normalizeSet(c.memberIds), desiredMemberIds),
   );
+
   if (exact) {
     log("Found care team by exact member set", exact.id);
     return exact;
   }
 
-  const prefix = `CARE_TEAM:${patientId}:${providerId}`;
   const byTitlePrefix = candidates.find(
-    (c) => typeof c.title === "string" && c.title.startsWith(prefix),
+    (c) => typeof c.title === "string" && c.title.startsWith(careTeamId),
   );
+
   if (byTitlePrefix) {
     log("Found care team by title prefix fallback", byTitlePrefix.id);
     return byTitlePrefix;
