@@ -1,4 +1,5 @@
 import { getGraphqlClient } from "../../services/amplify/client";
+import { getUserDisplayName, getUsersByIds } from "../../services/userService";
 
 const client = getGraphqlClient();
 
@@ -34,60 +35,8 @@ const ADVOCATE_ASSIGNMENTS_FOR_PATIENT = /* GraphQL */ `
   }
 `;
 
-const GET_USER = /* GraphQL */ `
-  query GetUser($id: ID!) {
-    getUser(id: $id) {
-      id
-      displayName
-      role
-      email
-    }
-  }
-`;
-
-const devLog = (...args) => {
-  if (__DEV__) console.log("[PATIENT_CARE_TEAM_SERVICE]", ...args);
-};
-
-function uniq(values = []) {
-  return [...new Set(values.filter(Boolean))];
-}
-
 function getUserSortName(user) {
-  return (user?.displayName || user?.email || "").toLowerCase();
-}
-
-function getProviderName(user) {
-  return user?.displayName || user?.email || "Provider";
-}
-
-async function fetchUserById(id) {
-  if (!id) return null;
-
-  try {
-    const { data } = await client.graphql({
-      query: GET_USER,
-      variables: { id },
-      authMode: "userPool",
-    });
-
-    return data?.getUser || null;
-  } catch (err) {
-    devLog("fetchUserById error:", id, err);
-    return null;
-  }
-}
-
-async function fetchUsersById(ids = []) {
-  const uniqueIds = uniq(ids);
-  if (!uniqueIds.length) return {};
-
-  const users = await Promise.all(uniqueIds.map((id) => fetchUserById(id)));
-
-  return users.reduce((map, user) => {
-    if (user?.id) map[user.id] = user;
-    return map;
-  }, {});
+  return getUserDisplayName(user, "").toLowerCase();
 }
 
 async function listProviderPatientsForPatient(patientId) {
@@ -144,7 +93,9 @@ function buildAdvocateRows({ advocateIds, advocateToProviders, usersById }) {
       ).filter(Boolean);
 
       const providerNames = providerIds
-        .map((providerId) => getProviderName(usersById[providerId]))
+        .map((providerId) =>
+          getUserDisplayName(usersById[providerId], "Provider"),
+        )
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b));
 
@@ -218,7 +169,7 @@ export async function getPatientCareTeam(patientId) {
     (providerId) => !embeddedProviderUsersById[providerId],
   );
 
-  const fetchedUsersById = await fetchUsersById([
+  const fetchedUsersById = await getUsersByIds([
     ...providerIdsMissingUsers,
     ...advocateIds,
   ]);
