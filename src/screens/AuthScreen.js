@@ -307,7 +307,7 @@ export default function AuthScreen({ navigation }) {
           "Account setup issue",
           "Your account was found, but the app profile record is missing.",
         );
-        navigation.replace("Home");
+        navigation.replace("Auth");
         return;
       }
 
@@ -317,10 +317,16 @@ export default function AuthScreen({ navigation }) {
       else if (role === "ADVOCATE") navigation.replace("AdvocateHome");
       else if (role === "PATIENT") navigation.replace("PatientHome");
       else if (role === "ADMIN") navigation.replace("AdminHome");
-      else navigation.replace("Home");
+      else {
+        Alert.alert(
+          "Account setup issue",
+          "Your account has an unsupported role. Please use a configured demo account.",
+        );
+        navigation.replace("Auth");
+      }
     } catch (err) {
       devLog("routeByUserRecord error", err);
-      navigation.replace("Home");
+      navigation.replace("Auth");
     }
   }, [navigation]);
 

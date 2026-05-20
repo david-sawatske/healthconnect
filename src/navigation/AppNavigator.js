@@ -17,7 +17,6 @@ import { StatusBar } from "expo-status-bar";
 import { signOut, getCurrentUser } from "aws-amplify/auth";
 
 import AuthScreen from "../screens/AuthScreen";
-import HomeScreen from "../screens/HomeScreen";
 import ChatScreen from "../screens/ChatScreen";
 import AdminHomeScreen from "../screens/AdminHomeScreen";
 import ProviderHomeScreen from "../screens/ProviderHomeScreen";
@@ -192,7 +191,6 @@ export default function AppNavigator() {
             })}
           >
             <Stack.Screen name="Auth" component={AuthScreen} />
-            <Stack.Screen name="Home" component={HomeScreen} />
             <Stack.Screen name="Chat" component={ChatScreen} />
 
             {Platform.OS !== "web" && CallScreen ? (
