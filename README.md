@@ -23,6 +23,7 @@ Web demo: https://healthconnect.expo.app
 * [Demo Experience](#demo-experience)
 * [Key Workflows](#key-workflows)
 * [Architecture Summary](#architecture-summary)
+* [Architecture Diagrams](#architecture-diagrams)
 * [Tech Stack](#tech-stack)
 * [AWS Services Used](#aws-services-used)
 * [Frontend Architecture](#frontend-architecture)
@@ -306,6 +307,25 @@ High-level design principles:
 * Use idempotent backend operations where possible.
 * Keep frontend role flows clear and domain-focused.
 * Use AWS-managed services for auth, APIs, data, and backend workflow execution.
+
+---
+
+## Architecture Diagrams
+
+HealthConnect includes Mermaid architecture diagrams to make the system easier to review from both product and engineering perspectives.
+
+These diagrams are intended for technical hiring managers, senior engineers, and recruiters who want to understand the project structure without reading the entire codebase first.
+
+| Diagram | What It Shows |
+| ------- | ------------- |
+| [System Overview](docs/diagrams/system-overview.md) | Major frontend, backend, authentication, API, data, deployment, and observability pieces |
+| [Frontend-to-Backend Request Flow](docs/diagrams/frontend-backend-flow.md) | Login, Cognito tokens, GraphQL requests, REST admin endpoints, DynamoDB access, and error flow |
+| [Realtime Messaging Flow](docs/diagrams/realtime-messaging-flow.md) | Message creation, DynamoDB persistence, AppSync subscriptions, open chat updates, and global incoming message banners |
+| [Conversation Data Model](docs/diagrams/conversation-data-model.md) | Users, conversations, participants, messages, provider/patient relationships, advocate assignments, and invite records |
+| [Admin Relationship Creation Flow](docs/diagrams/admin-relationship-flow.md) | Admin-created patient/provider relationships, canonical care-team conversations, and idempotent backend operations |
+| [Advocate Invite Approval Flow](docs/diagrams/advocate-invite-approval-flow.md) | Pending advocate invites, patient approval/decline, advocate assignment creation, care-team membership, and duplicate prevention |
+
+The diagrams are written in Mermaid so they can render directly in GitHub Markdown.
 
 ---
 
@@ -665,6 +685,7 @@ For a quick review, follow this path:
 8. Open chat screens and review realtime messaging behavior.
 9. Review the code organization under `src/features`, `src/screens`, `src/navigation`, and `src/services`.
 10. Review Amplify backend resources under `amplify/backend`.
+11. Review the architecture diagrams under `docs/diagrams`.
 
 Suggested files/directories to inspect:
 
@@ -675,6 +696,7 @@ src/features/chat/
 src/features/calls/
 src/services/amplify/
 src/services/realtime/
+docs/diagrams/
 amplify/backend/api/
 amplify/backend/function/
 ```
@@ -710,7 +732,7 @@ Potential future improvements include:
 * Add more complete profile management.
 * Add file attachment support with stronger access controls.
 * Improve deployment documentation.
-* Add architecture diagrams and screenshots to documentation.
+* Add screenshots and short demo walkthroughs to documentation.
 
 ---
 
