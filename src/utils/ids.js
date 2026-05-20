@@ -14,3 +14,9 @@ export const getAdvocateAssignmentId = (patientId, providerId, advocateId) =>
 
 export const getConversationParticipantId = (conversationId, userId) =>
   `${conversationId}:${userId}`;
+
+export const isDirectMessageConversationId = (conversationId) =>
+  typeof conversationId === "string" && conversationId.startsWith("DM:");
+
+export const isCareTeamConversationId = (conversationId) =>
+  typeof conversationId === "string" && conversationId.startsWith("CARE_TEAM:");

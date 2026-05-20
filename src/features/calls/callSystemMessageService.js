@@ -3,6 +3,7 @@ import {
   postCallEndedSystemMessage,
   updateCallSession,
 } from "./callSignalsService";
+import { isDirectMessageConversationId } from "../../utils/ids";
 
 export const CALL_SYSTEM_TYPES = {
   DECLINED: "DECLINED",
@@ -15,7 +16,7 @@ function uniqueNonEmpty(values = []) {
 }
 
 function memberIdsFromDmConversationId(conversationId) {
-  if (!conversationId?.startsWith("DM:")) return [];
+  if (!isDirectMessageConversationId(conversationId)) return [];
 
   const parts = conversationId.split(":");
 
